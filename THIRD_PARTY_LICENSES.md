@@ -23,7 +23,15 @@ SubRec (字录) is released under **GPL-3.0** ([LICENSE](LICENSE)); the maintain
 
 **如何提供 / How it is provided：** 不随仓库提供。构建时用 `-DFFMPEG_ROOT=<path>` 或环境变量 `SUBREC_FFMPEG_ROOT` 指定含 `include/`、`lib/`、`bin/` 的 FFmpeg **共享（shared）**构建；未提供时 CMake 报错（`cmake/SubRecFFmpeg.cmake`）。CMake 会把 `${FFMPEG_ROOT}/bin/*.dll` 复制到输出目录与安装目录（`CMakeLists.txt`）。
 
-**开发所用版本 / Version used in development [文件]：** `FFmpeg version N-119453-g37064b2d16-20250509`（git master 快照，2025-05-09，不是正式发布版）。DLL：`avcodec-62 avformat-62 avutil-60 avfilter-11 avdevice-62 swresample-6 swscale-9`。其它 FFmpeg 版本需自行验证 API 兼容性。
+**开发所用版本 / Version used in development [文件]：** `FFmpeg version N-119453-g37064b2d16-20250509`（git master 快照，2025-05-09，**不是正式发布版**），commit `37064b2d16`；libavutil 60.2.100、libavcodec 62.3。DLL：`avutil-60 avcodec-62 avformat-62 avfilter-11 avdevice-62 swscale-9 swresample-6`。其它 FFmpeg 版本需自行验证 API 兼容性。
+
+**对应源码获取位置 / Where to get the corresponding source：**
+
+- FFmpeg commit `37064b2d16`：<https://git.ffmpeg.org/ffmpeg.git>；GitHub 镜像 <https://github.com/FFmpeg/FFmpeg/commit/37064b2d16>。
+- x264、x265 及该构建启用的其它外部库：**TODO**——需记录实际构建所用的确切版本/commit 与完整 `./configure` 命令行。**x264/x265 的确切版本目前未知。**
+- 同样的信息见 [`reference/ffmpeg-fftools/NOTICE.md`](reference/ffmpeg-fftools/NOTICE.md)。
+
+*(English)* Development FFmpeg: `N-119453-g37064b2d16-20250509`, a 2025-05-09 git-master snapshot (not an official release), commit `37064b2d16`, libavutil 60.2.100, libavcodec 62.3; GPL-3.0-or-later build (`--enable-gpl --enable-version3`, with x264 and x265). Source: <https://git.ffmpeg.org/ffmpeg.git> and <https://github.com/FFmpeg/FFmpeg/commit/37064b2d16>. TODO: exact x264/x265 versions and the full configure line are not yet recorded.
 
 **该构建的配置 / Build configuration [文件，取自 DLL 内嵌的 configure 字符串]：**
 
@@ -49,7 +57,7 @@ SubRec (字录) is released under **GPL-3.0** ([LICENSE](LICENSE)); the maintain
 **与 GPLv3 的兼容性 / Compatibility with GPLv3：**
 
 - 本项目（GPL-3.0）+ FFmpeg（GPL-3.0-or-later）动态链接：**兼容**，合并作品按 GPL-3.0 发布。该 FFmpeg 未启用 nonfree，因此**可合法再分发**（一旦 `--enable-nonfree`，二进制将不可再分发）。
-- **分发义务 / Obligations when distributing binaries：** 若发布的压缩包/安装包**包含** FFmpeg DLL，必须随二进制提供（或书面承诺提供）**对应源码**：所用 FFmpeg 的精确版本及全部被启用的 GPL 组件（x264、x265 等）的源码与构建脚本，以及 GPL-3.0 许可证文本。**仅发布源码、让用户自行提供 FFmpeg 时，本项目不分发 FFmpeg。** 本仓库的 CI（`.github/workflows/windows-build.yml`）会把下载的 FFmpeg DLL 打进发布包，维护者在发布前必须履行上述义务。
+- **分发义务 / Obligations when distributing binaries：** 若发布的压缩包/安装包**包含** FFmpeg DLL，必须随二进制提供（或书面承诺提供）**对应源码**：所用 FFmpeg 的精确版本（commit `37064b2d16`）及全部被启用的 GPL 组件（x264、x265 等，**须为实际构建所用的版本——目前未记录，TODO**）的源码、构建脚本与完整 configure 配置，以及 GPL-3.0 许可证文本。**仅发布源码、让用户自行提供 FFmpeg 时，本项目不分发 FFmpeg。** 本仓库的 CI（`.github/workflows/windows-build.yml`）会把下载的 FFmpeg DLL 打进发布包，维护者在发布前必须履行上述义务。
 - 若项目选择 **GPL-3.0-only**：与 GPL-3.0-or-later 的 FFmpeg 组合没有问题；若想写 “GPL-2.0-or-later” 则**不可行**（被 version3 组件阻断）。
 
 **与“GPLv3 + 商业授权”的兼容性 / Compatibility with dual-licensing：**
@@ -95,7 +103,7 @@ SubRec (字录) is released under **GPL-3.0** ([LICENSE](LICENSE)); the maintain
 | MinGW-w64 运行库（`libstdc++-6.dll`、`libgcc_s_seh-1.dll`、`libwinpthread-1.dll`） | `CMakeLists.txt` 在构建后复制并安装（MinGW 构建时） | libstdc++/libgcc：GPL-3.0 **+ GCC Runtime Library Exception**；winpthreads：MIT/ZPL 类宽松许可 [知识] | 因有 Runtime Exception，可随闭源/开源程序分发；GPL 项目无冲突。需附许可证文本。DLL 本身不在仓库中，由构建机提供。 |
 | **AMD AMF / NVIDIA NVENC / Intel QSV 运行时** | 通过 FFmpeg 编码器名 `h264_amf/h264_nvenc/h264_qsv` 调用（`encoder/ffvencoder.cpp`） | 驱动由用户机器的 GPU 厂商提供 | 不随本项目分发，无再分发问题。 |
 | **screen-capture-recorder / virtual-audio-capturer**（第三方 DirectShow 组件） | `capture/dshow_capture_backend.cpp`、`recorder/ffrecorder_p.h` 以设备名 `video=screen-capture-recorder`、`audio=virtual-audio-capturer` 引用 | 未验证 [需核查上游许可证] | **不在仓库内**；用户自行安装。README 已说明。请勿在未核对许可证前把它们打进安装包。 |
-| **`reference/ffmpeg-fftools/ffmpeg_mux.c`** | 892 行；FFmpeg `fftools/ffmpeg_mux.c` 的整文件原样拷贝，**逐字节未改**；不参与编译（任何 CMake 目标都未引用）；说明见同目录 [`NOTICE.md`](reference/ffmpeg-fftools/NOTICE.md) | **LGPL-2.1-or-later**，版权人为 FFmpeg 项目贡献者；文件头 “This file is part of FFmpeg … GNU Lesser General Public License … version 2.1 or later” | **不是本项目作者的代码。** 原版权头保持不变；许可证文本见 [`LICENSES/LGPL-2.1.txt`](LICENSES/LGPL-2.1.txt)；仅作设计对照参考；商业版分发包不要包含它；[`CLA.md`](CLA.md) 不覆盖它，不接受对它的修改性贡献。LGPL-2.1-or-later 允许按 GPL 条款再分发，放在 GPLv3 仓库没有文件层面的冲突。它引用的 `ffmpeg.h`、`ffmpeg_mux.h`、`ffmpeg_utils.h`、`sync_queue.h` 是 FFmpeg 内部头，所以也无法单独编译。 |
+| **`reference/ffmpeg-fftools/ffmpeg_mux.c`** | 892 行；FFmpeg `fftools/ffmpeg_mux.c` 的整文件原样拷贝，**逐字节未改**；不参与编译（任何 CMake 目标都未引用）；说明见同目录 [`NOTICE.md`](reference/ffmpeg-fftools/NOTICE.md)。**此拷贝取自哪个 FFmpeg 版本未记录、也未能核对，不声称与开发所用的 `37064b2d16` 一致**（待维护者用 FFmpeg 源码树比对，TODO） | **LGPL-2.1-or-later**，版权人为 FFmpeg 项目贡献者；文件头 “This file is part of FFmpeg … GNU Lesser General Public License … version 2.1 or later” | **不是本项目作者的代码。** 原版权头保持不变；许可证文本见 [`LICENSES/LGPL-2.1.txt`](LICENSES/LGPL-2.1.txt)；仅作设计对照参考；商业版分发包不要包含它；[`CLA.md`](CLA.md) 不覆盖它，不接受对它的修改性贡献。LGPL-2.1-or-later 允许按 GPL 条款再分发，放在 GPLv3 仓库没有文件层面的冲突。它引用的 `ffmpeg.h`、`ffmpeg_mux.h`、`ffmpeg_utils.h`、`sync_queue.h` 是 FFmpeg 内部头，所以也无法单独编译。 |
 | 图标 `icons/*.png`（12 个） | `res.qrc` 嵌入可执行文件 | **本项目自有作品**，GPL-3.0（由项目维护者本人制作） | 不是第三方材料；和代码一样适用 GPL-3.0 与 `CLA.md`。 |
 | 字体 | QML 指定 `Segoe UI` | Microsoft 系统字体，未随包分发 | 不随包分发则无问题；不要把字体文件加入发行包。 |
 

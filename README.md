@@ -41,7 +41,7 @@
 
 - Qt **6.5+**（工程预设使用 6.8.0），模块：Core、Gui、Widgets、Qml、Quick、Multimedia（QML 还使用 Quick Controls / Layouts / Effects、`Qt.labs.platform`、`Qt.labs.folderlistmodel`）。
 - CMake ≥ 3.21（使用 `CMakePresets.json` 需 ≥ 3.25），Ninja，C++17 编译器（CI 与预设使用 MinGW 13.1 x64）。
-- **FFmpeg 共享库（shared）**：**本仓库不含 FFmpeg，需自行提供。** 需要 `include/`、`lib/`（`avcodec` `avformat` `avutil` `swscale` `swresample` `avfilter` `avdevice` 的 `.lib`/`.dll.a`）、`bin/`（DLL）。用 `-DFFMPEG_ROOT=<目录>` 或环境变量 `SUBREC_FFMPEG_ROOT` 指定；**未指定时 CMake 会报错并给出提示**。开发时使用的是 GPL 共享构建（DLL 如 `avcodec-62`、`avutil-60`）；其它版本需自行验证 API 兼容性。
+- **FFmpeg 共享库（shared）**：**本仓库不含 FFmpeg，需自行提供。** 需要 `include/`、`lib/`（`avcodec` `avformat` `avutil` `swscale` `swresample` `avfilter` `avdevice` 的 `.lib`/`.dll.a`）、`bin/`（DLL）。用 `-DFFMPEG_ROOT=<目录>` 或环境变量 `SUBREC_FFMPEG_ROOT` 指定；**未指定时 CMake 会报错并给出提示**。开发时使用的是 FFmpeg `N-119453-g37064b2d16-20250509`（2025-05-09 的 git master 快照，commit `37064b2d16`，**非正式发行版**；libavutil 60.2.100 / libavcodec 62.3；DLL：`avutil-60` `avcodec-62` `avformat-62` `avfilter-11` `avdevice-62` `swscale-9` `swresample-6`）的 GPLv3 共享构建；其它版本需自行验证 API 兼容性。源码：<https://git.ffmpeg.org/ffmpeg.git>、<https://github.com/FFmpeg/FFmpeg/commit/37064b2d16>。
 
 ```powershell
 # 1. 配置（MinGW g++ 与 Ninja 需在 PATH 中），显式传参；或设置 QT_ROOT 与 SUBREC_FFMPEG_ROOT 环境变量后改用 `cmake --preset windows-mingw-release`：
@@ -119,7 +119,7 @@ Requirements:
 
 - Qt **6.5+** (presets use 6.8.0): Core, Gui, Widgets, Qml, Quick, Multimedia (QML additionally uses Quick Controls / Layouts / Effects, `Qt.labs.platform`, `Qt.labs.folderlistmodel`).
 - CMake ≥ 3.21 (≥ 3.25 to use `CMakePresets.json`), Ninja, a C++17 compiler (CI and the preset use MinGW 13.1 x64).
-- **FFmpeg shared libraries**: **this repository does not include FFmpeg; you must provide it.** You need `include/`, `lib/` (import libraries for `avcodec avformat avutil swscale swresample avfilter avdevice`) and `bin/` (DLLs). Point to it with `-DFFMPEG_ROOT=<dir>` or the `SUBREC_FFMPEG_ROOT` environment variable; **CMake stops with a clear error if it is not set**. Development used a GPL shared build (DLLs such as `avcodec-62`, `avutil-60`); other versions need their API compatibility checked.
+- **FFmpeg shared libraries**: **this repository does not include FFmpeg; you must provide it.** You need `include/`, `lib/` (import libraries for `avcodec avformat avutil swscale swresample avfilter avdevice`) and `bin/` (DLLs). Point to it with `-DFFMPEG_ROOT=<dir>` or the `SUBREC_FFMPEG_ROOT` environment variable; **CMake stops with a clear error if it is not set**. Development used a GPLv3 shared build of FFmpeg `N-119453-g37064b2d16-20250509` (a 2025-05-09 git-master snapshot, commit `37064b2d16`, **not an official release**; libavutil 60.2.100 / libavcodec 62.3; DLLs: `avutil-60` `avcodec-62` `avformat-62` `avfilter-11` `avdevice-62` `swscale-9` `swresample-6`); other versions need their API compatibility checked. Source: <https://git.ffmpeg.org/ffmpeg.git>, <https://github.com/FFmpeg/FFmpeg/commit/37064b2d16>.
 
 ```powershell
 # 1. Configure (MinGW g++ and Ninja on PATH) with explicit paths; or set QT_ROOT and SUBREC_FFMPEG_ROOT and use `cmake --preset windows-mingw-release` instead:
