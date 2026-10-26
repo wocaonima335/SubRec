@@ -1,3 +1,10 @@
+// Instantiate SDK property keys (notably PKEY_Device_FriendlyName) here:
+// MinGW's uuid/propsys libraries do not supply them. KS format GUIDs use
+// DEFINE_GUIDEX instead and are supplied by capture_module's ksuser dependency.
+// Keep this before any header that could transitively include the Windows SDK;
+// do not put INITGUID in the shared wasapi_native.h header.
+#include <initguid.h>
+
 #include "wasapi_loopback_capture.h"
 #include "wasapi_native.h"
 #include "wasapi_audio_pipeline.h"
