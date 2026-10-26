@@ -36,8 +36,8 @@ Scanned from the SubRec sources (tests listed separately). Paths are repo-relati
 | Muxer (dead code) | `rtsp` branch, never reached (no caller passes a format) | `muxer/ffmuxer.cpp:187-189` |
 | Protocol | `file` (`avio_open2`) | `muxer/ffmuxer.cpp:276` |
 | Network | only `avformat_network_init()`; no network protocol used | `demuxer/demuxer.cpp:374`, `recorder/ffrecoder.cpp:227` |
-| Audio filters | `abuffer`, `volume`, `amix`, `abuffersink` (+ `aresample`/`aformat` auto-inserted by `AVFILTER_AUTO_CONVERT_ALL`) | `filter/ffafilter.cpp:293,330,353,370`, auto-convert `:235,279` |
-| Audio filter (unused) | `afftdn`: `createNoiseReductionFilter()` is never called | `filter/ffafilter.cpp:357-359` |
+| Audio filters | `abuffer`, `volume`, `amix`, `abuffersink` (+ `aresample`/`aformat` auto-inserted by `AVFILTER_AUTO_CONVERT_ALL`). **No recording path builds this graph today**: `FFAFilterThread` only calls the pass-through `processSingleAudioFrame()` (`thread/ffafilterthread.cpp:194,233`); the graph is exercised by `tests/audio_filter_dual` | `filter/ffafilter.cpp:344,381,404,424`, auto-convert `:269,329` |
+| Audio filter (unused) | `afftdn`: `createNoiseReductionFilter()` is never called | `filter/ffafilter.cpp:411-413` |
 | Video filters | `buffer`, `buffersink` (+ `scale` auto-insert), but `FFVFilter::initFilter` returns before building the graph | `filter/ffvfilter.cpp:121,160,202` |
 | swscale | `sws_getContext` (`SWS_FAST_BILINEAR`, `SWS_BILINEAR`, ITU-601 coefficients), `sws_scale` | `resampler/ffvresampler.cpp:76-78`, `capture/media/media_conversion.cpp:112-141` |
 | swresample | `swr_alloc_set_opts2`, `swr_convert`, `swr_get_out_samples` (48 kHz FLTP stereo target) | `resampler/ffaresampler.cpp:82`, `capture/media/media_conversion.cpp:156-238`, `recorder/ffrecoder.cpp:191` |
@@ -74,7 +74,15 @@ Code notes found while scanning:
   applied). Fixed: the filter is now created with `avfilter_graph_alloc_filter`, the new array
   option `sample_formats` is set to `fltp` **before** `avfilter_init_str` (init appends the list
   terminator, so setting it afterwards would leave an unterminated list), and every return value is
-  checked. Not run here; PC2 should exercise it with a recording that has audio.
+  checked. **A recording does not exercise this**: no recording path builds an audio filter graph
+  (single source = pass-through). It is covered by the synthetic test `tests/audio_filter_dual`
+  (S16 `abuffer` → restricted sink must deliver FLTP), which runs with the main project's `ctest`.
+- The same test found and now covers three more bugs of the (unused) dual graph in
+  `FFAFilter::initializeDualAudioFilter`: both `volume` filters were linked to `amix` input pad 0
+  (`avfilter_link` returns `EINVAL` for an occupied pad), the `abuffer` → `volume` links were
+  missing, and a failed init left a half-built graph behind. Runtime volume changes used
+  `av_opt_set_double(ctx, "volume", ...)` on the `AVFilterContext`, which cannot reach the
+  filter's private string option; they now use `avfilter_process_command(ctx, "volume", ...)`.
 - A user-chosen output name with another extension is still written as MP4 (`muxer/ffmuxer.h:24`).
 
 ## 2. Configure line (variant `gpl`, test components on)
@@ -213,4 +221,5 @@ CRT mismatch with Qt's MinGW is acceptable. The toolchain is recorded in `BUILD_
 - Confirm that the libvpl and OpenH264 pins are commit ids (see `versions.env`), and run the
   `lgpl` / `lgpl-openh264` variants before relying on them.
 - Test on machines with NVIDIA (old and new drivers), AMD, Intel, and no GPU encoder. Test
-  webcams with YUY2, NV12 and MJPG output. Record a clip with audio to exercise the corrected `abuffersink` setup.
+  webcams with YUY2, NV12 and MJPG output. Run `ctest` of the main project (includes
+  `audio_filter_dual`, which checks the corrected `abuffersink` setup; a recording does not).

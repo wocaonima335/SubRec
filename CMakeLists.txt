@@ -86,10 +86,11 @@ add_subdirectory(recorder)
 add_subdirectory(encoder)
 add_subdirectory(opengl)
 
-option(SUBREC_BUILD_LIFECYCLE_TESTS "Build the capture lifecycle harness" ON)
+option(SUBREC_BUILD_LIFECYCLE_TESTS "Build the in-tree test harnesses (capture_lifecycle, audio_filter_dual)" ON)
 if(SUBREC_BUILD_LIFECYCLE_TESTS AND WIN32)
     enable_testing()
     add_subdirectory(tests/capture_lifecycle)
+    add_subdirectory(tests/audio_filter_dual)
 endif()
 
 # 主可执行文件

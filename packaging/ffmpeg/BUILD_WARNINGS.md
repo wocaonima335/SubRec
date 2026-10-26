@@ -99,9 +99,9 @@ and `ffmpeg.exe` is not shipped in the SubRec package (see `README.md`, "ffmpeg.
 - Runtime issue found afterwards (not a build warning): `filter/ffafilter.cpp` set the
   `sample_fmts` option of `abuffersink` with a string. In n8.0.3 that option is a binary (hex)
   option, so the call failed with `EINVAL` (ignored) and the restriction never applied. Now fixed
-  with `sample_formats` set before `avfilter_init_str` (see `README.md`, "Code notes"); the fix has
-  not been run yet, so check on a first real recording with audio that the audio filter graph
-  initializes.
+  with `sample_formats` set before `avfilter_init_str` (see `README.md`, "Code notes"). A
+  recording does **not** check this (no recording path builds an audio filter graph); the
+  synthetic ctest `tests/audio_filter_dual` does.
 
 ## Policy for future builds
 Any new line containing `warning` that is not in the table above should be classified here

@@ -92,6 +92,9 @@ public:
     void logError(int errorCode) const;
 
 private:
+    void resetDualAudioFilter();
+    void applyVolume(AVFilterContext *volumeContext, double volume);
+
     FFAFrameQueue *m_encoderFrmQueue = nullptr;
     FFADecoder *m_systemAudioDecoder = nullptr;
     FFADecoder *m_microphoneAudioDecoder = nullptr;

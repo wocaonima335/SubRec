@@ -4,10 +4,17 @@
 #include "recorder/ffrecorder.h"
 
 #include <sstream>
+#include <stdexcept>
 
 FFAFilter::FFAFilter() {}
 
-FFAFilter::~FFAFilter() {}
+FFAFilter::~FFAFilter()
+{
+    resetDualAudioFilter();
+    for (auto &graph : m_individualFilterGraphs) {
+        avfilter_graph_free(&graph);
+    }
+}
 
 void FFAFilter::initalize(FFAFrameQueue *encoderFrameQueue,
                           FFADecoder *systemAudioDecoder,
@@ -23,38 +30,54 @@ int FFAFilter::processDualtAudioFrames(AVFrame *audioFrame,
                                        int64_t startTime,
                                        int64_t pauseTime)
 {
+    Q_UNUSED(startTime);
+    Q_UNUSED(pauseTime);
+
     std::lock_guard<std::mutex> lock(m_processingMutex);
+    // Like processSingleAudioFrame(), this takes ownership of both input frames on every path.
+    auto releaseInputs = [&audioFrame, &microphoneFrame]() {
+        av_frame_free(&audioFrame);
+        av_frame_free(&microphoneFrame);
+    };
+
     if (!audioFrame || !microphoneFrame) {
-        if (audioFrame) {
-            av_frame_unref(audioFrame);
-            av_frame_free(&audioFrame);
-        }
-        if (microphoneFrame) {
-            av_frame_unref(microphoneFrame);
-            av_frame_free(&microphoneFrame);
-        }
+        releaseInputs();
         return 0;
     }
 
-    if (!m_audioBufferContext || !m_microphoneBufferContext) {
-        initializeDualAudioFilter(m_systemAudioDecoder->getCodecCtx(),
-                                  m_microphoneAudioDecoder->getCodecCtx(),
-                                  m_systemAudioDecoder->getStream(),
-                                  m_microphoneAudioDecoder->getStream());
-    }
-
-    int ret = av_buffersrc_add_frame_flags(m_audioBufferContext,
-                                           audioFrame,
-                                           AV_BUFFERSRC_FLAG_KEEP_REF);
-    if (ret < 0) {
-        qDebug() << "Failed to send frame to buffer1";
-        logError(ret);
+    if (!m_encoderFrmQueue) {
+        releaseInputs();
         return -1;
     }
 
-    ret = av_buffersrc_add_frame_flags(m_microphoneBufferContext,
-                                       microphoneFrame,
-                                       AV_BUFFERSRC_FLAG_KEEP_REF);
+    if (!m_dualFilterGraph) {
+        if (!m_systemAudioDecoder || !m_microphoneAudioDecoder) {
+            qDebug() << "Dual audio filter has neither a graph nor decoders to build one";
+            releaseInputs();
+            return -1;
+        }
+        try {
+            initializeDualAudioFilter(m_systemAudioDecoder->getCodecCtx(),
+                                      m_microphoneAudioDecoder->getCodecCtx(),
+                                      m_systemAudioDecoder->getStream(),
+                                      m_microphoneAudioDecoder->getStream());
+        } catch (const std::exception &error) {
+            qDebug() << "Failed to initialize dual audio filter:" << error.what();
+            releaseInputs();
+            return -1;
+        }
+    }
+
+    int ret = av_buffersrc_add_frame_flags(m_audioBufferContext, audioFrame, 0);
+    if (ret < 0) {
+        qDebug() << "Failed to send frame to buffer1";
+        logError(ret);
+        releaseInputs();
+        return -1;
+    }
+
+    ret = av_buffersrc_add_frame_flags(m_microphoneBufferContext, microphoneFrame, 0);
+    releaseInputs();
     if (ret < 0) {
         qDebug() << "Failed to send frame to buffer2";
         logError(ret);
@@ -63,6 +86,9 @@ int FFAFilter::processDualtAudioFrames(AVFrame *audioFrame,
 
     while (true) {
         AVFrame *filterFrame = av_frame_alloc();
+        if (!filterFrame) {
+            return -1;
+        }
         ret = av_buffersink_get_frame(m_bufferSinkContext, filterFrame);
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
             av_frame_free(&filterFrame);
@@ -74,16 +100,12 @@ int FFAFilter::processDualtAudioFrames(AVFrame *audioFrame,
             av_frame_free(&filterFrame);
             return -1;
         }
+        // enqueue() moves the reference out of filterFrame. The pts is left as the graph made
+        // it, like on the single-source path; RecorderSyncQueue/FFAEncoderThread own the
+        // output timeline. (The old wall-clock pts was written after enqueue: never used.)
         m_encoderFrmQueue->enqueue(filterFrame);
-
-        //调整时间戳
-        auto end = av_gettime_relative();
-        int64_t duration = 10 * (end - startTime);
-        filterFrame->pts = av_gettime_relative() * 10 + duration - pauseTime * 10;
-
-        av_frame_unref(filterFrame);
         av_frame_free(&filterFrame);
-    };
+    }
 
     return 0;
 }
@@ -138,17 +160,9 @@ void FFAFilter::setSystemAudioVolume(double volume)
     std::lock_guard<std::mutex> lock(m_processingMutex);
     m_audioVolume = volume;
 
-    if (m_systemaudioVolumeContext) {
-        av_opt_set_double(m_systemaudioVolumeContext, "volume", volume, 0);
-    }
-
-    if (m_individualVolumeContexts[static_cast<size_t>(AudioSourceType::AUDIO_SOURCE_SYSTEM)]) {
-        av_opt_set_double(m_individualVolumeContexts[static_cast<size_t>(
-                              AudioSourceType::AUDIO_SOURCE_SYSTEM)],
-                          "volume",
-                          volume,
-                          0);
-    }
+    applyVolume(m_systemaudioVolumeContext, volume);
+    applyVolume(m_individualVolumeContexts[static_cast<size_t>(AudioSourceType::AUDIO_SOURCE_SYSTEM)],
+                volume);
 }
 
 void FFAFilter::setMicrophoneAudioVolume(double volume)
@@ -156,16 +170,25 @@ void FFAFilter::setMicrophoneAudioVolume(double volume)
     std::lock_guard<std::mutex> lock(m_processingMutex);
     m_microphoneVolume = volume;
 
-    if (m_microphoneaudioVolumeContext) {
-        av_opt_set_double(m_microphoneaudioVolumeContext, "volume", volume, 0);
-    }
+    applyVolume(m_microphoneaudioVolumeContext, volume);
+    applyVolume(m_individualVolumeContexts[static_cast<size_t>(
+                    AudioSourceType::AUDIO_SOURCE_MICROPHONE)],
+                volume);
+}
 
-    if (m_individualVolumeContexts[static_cast<size_t>(AudioSourceType::AUDIO_SOURCE_MICROPHONE)]) {
-        av_opt_set_double(m_individualVolumeContexts[static_cast<size_t>(
-                              AudioSourceType::AUDIO_SOURCE_MICROPHONE)],
-                          "volume",
-                          volume,
-                          0);
+void FFAFilter::applyVolume(AVFilterContext *volumeContext, double volume)
+{
+    if (!volumeContext) {
+        return;
+    }
+    // "volume" is a string expression of the volume filter's private context, so
+    // av_opt_set_double() on the AVFilterContext never reached it. The filter applies runtime
+    // changes through its "volume" command (eval=frame: from the next frame on).
+    char value[32];
+    snprintf(value, sizeof(value), "%.4f", volume);
+    int result = avfilter_process_command(volumeContext, "volume", value, nullptr, 0, 0);
+    if (result < 0) {
+        logError(result);
     }
 }
 
@@ -194,6 +217,11 @@ void FFAFilter::initializeDualAudioFilter(AVCodecContext *systemAudioDecoderCtx,
                                           AVStream *sysAudioStream,
                                           AVStream *micAudioStream)
 {
+    resetDualAudioFilter();
+    if (!systemAudioDecoderCtx || !microphoneAudioDecoderCtx || !sysAudioStream
+        || !micAudioStream) {
+        throw std::invalid_argument("Dual audio filter needs both codec contexts and streams");
+    }
     m_systemAudioDecoderContext = systemAudioDecoderCtx;
     m_microphoneAudioDecoderContext = microphoneAudioDecoderCtx;
 
@@ -202,42 +230,65 @@ void FFAFilter::initializeDualAudioFilter(AVCodecContext *systemAudioDecoderCtx,
         throw std::runtime_error("Failed to allocate filter graph");
     }
 
-    createAudioBufferFilter(m_dualFilterGraph,
-                            &m_audioBufferContext,
-                            m_systemAudioDecoderContext,
-                            sysAudioStream,
-                            "in2");
-    createAudioBufferFilter(m_dualFilterGraph,
-                            &m_microphoneBufferContext,
-                            m_microphoneAudioDecoderContext,
-                            micAudioStream,
-                            "in2");
+    try {
+        createAudioBufferFilter(m_dualFilterGraph,
+                                &m_audioBufferContext,
+                                m_systemAudioDecoderContext,
+                                sysAudioStream,
+                                "in_system");
+        createAudioBufferFilter(m_dualFilterGraph,
+                                &m_microphoneBufferContext,
+                                m_microphoneAudioDecoderContext,
+                                micAudioStream,
+                                "in_microphone");
 
-    createVolumeControlFilter(m_dualFilterGraph,
-                              &m_systemaudioVolumeContext,
-                              m_audioVolume,
-                              "volume1");
+        createVolumeControlFilter(m_dualFilterGraph,
+                                  &m_systemaudioVolumeContext,
+                                  m_audioVolume,
+                                  "volume1");
 
-    createVolumeControlFilter(m_dualFilterGraph,
-                              &m_microphoneaudioVolumeContext,
-                              m_microphoneVolume,
-                              "volume2");
+        createVolumeControlFilter(m_dualFilterGraph,
+                                  &m_microphoneaudioVolumeContext,
+                                  m_microphoneVolume,
+                                  "volume2");
 
-    createAudioMixerFilter(m_dualFilterGraph);
+        createAudioMixerFilter(m_dualFilterGraph);
 
-    createBufferSinkFilter(m_dualFilterGraph, &m_bufferSinkContext, "out");
+        createBufferSinkFilter(m_dualFilterGraph, &m_bufferSinkContext, "out");
 
-    linkFilters(m_systemaudioVolumeContext, 0, m_audioMixerContext, 0);
-    linkFilters(m_microphoneaudioVolumeContext, 0, m_audioMixerContext, 0);
-    linkFilters(m_audioMixerContext, 0, m_bufferSinkContext, 0);
+        // abuffer -> volume -> amix input N. Each source needs its own amix input pad:
+        // linking both volumes to pad 0 made avfilter_link() fail with EINVAL, and the
+        // abuffer -> volume links were missing entirely.
+        linkFilters(m_audioBufferContext, 0, m_systemaudioVolumeContext, 0);
+        linkFilters(m_microphoneBufferContext, 0, m_microphoneaudioVolumeContext, 0);
+        linkFilters(m_systemaudioVolumeContext, 0, m_audioMixerContext, 0);
+        linkFilters(m_microphoneaudioVolumeContext, 0, m_audioMixerContext, 1);
+        linkFilters(m_audioMixerContext, 0, m_bufferSinkContext, 0);
 
-    // 配置滤镜图
-    avfilter_graph_set_auto_convert(m_dualFilterGraph, AVFILTER_AUTO_CONVERT_ALL);
-    int ret = avfilter_graph_config(m_dualFilterGraph, nullptr);
-    if (ret < 0) {
-        logError(ret);
-        throw std::runtime_error("Filter graph config failed");
+        // 配置滤镜图
+        avfilter_graph_set_auto_convert(m_dualFilterGraph, AVFILTER_AUTO_CONVERT_ALL);
+        int ret = avfilter_graph_config(m_dualFilterGraph, nullptr);
+        if (ret < 0) {
+            logError(ret);
+            throw std::runtime_error("Filter graph config failed");
+        }
+    } catch (...) {
+        // Never leave a half-built graph behind: processDualtAudioFrames() would use it.
+        resetDualAudioFilter();
+        throw;
     }
+}
+
+void FFAFilter::resetDualAudioFilter()
+{
+    avfilter_graph_free(&m_dualFilterGraph);
+    m_audioBufferContext = nullptr;
+    m_microphoneBufferContext = nullptr;
+    m_bufferSinkContext = nullptr;
+    m_audioMixerContext = nullptr;
+    m_noiseReductionContext = nullptr;
+    m_systemaudioVolumeContext = nullptr;
+    m_microphoneaudioVolumeContext = nullptr;
 }
 
 void FFAFilter::initializeIndividualFilter(AVCodecContext *codecCtx,
@@ -351,6 +402,9 @@ void FFAFilter::createVolumeControlFilter(AVFilterGraph *filterGraph,
 void FFAFilter::createAudioMixerFilter(AVFilterGraph *filterGraph)
 {
     const AVFilter *amixFilter = avfilter_get_by_name("amix");
+    if (!amixFilter) {
+        throw std::runtime_error("amix filter not found");
+    }
     m_audioMixerContext = createFilter(filterGraph, amixFilter, "amix", "inputs=2:duration=longest");
 }
 
