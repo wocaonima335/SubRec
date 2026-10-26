@@ -1,5 +1,7 @@
 #include "capture_scheduler.h"
 
+#include "capture/ddagrab_capture_backend.h"
+#include "capture/ddagrab_screen_source.h"
 #include "capture/dshow_capture_backend.h"
 #include "recorder/ffrecorder.h"
 
@@ -10,6 +12,7 @@ extern "C" {
 #include <QDebug>
 #include <QDir>
 #include <QMetaObject>
+#include <QSettings>
 #include <QThread>
 
 #include <algorithm>
@@ -27,9 +30,38 @@ QString captureSchedulerStateName(CaptureSchedulerState state)
     return QStringLiteral("Unknown");
 }
 
+namespace {
+const char *const kScreenBackendKey = "capture/screenBackend";
+// HKCU\Software\SubRec\SubRec on Windows.
+const char *const kSettingsOrganization = "SubRec";
+const char *const kSettingsApplication = "SubRec";
+} // namespace
+
 CaptureScheduler::CaptureScheduler(FFRecorder &recorder)
     : QObject(nullptr), m_recorder(recorder)
-{}
+{
+    const QString fromEnv = qEnvironmentVariable("SUBREC_CAPTURE_BACKEND");
+    if (!fromEnv.trimmed().isEmpty()) {
+        if (const auto parsed = parseScreenBackendPreference(fromEnv)) {
+            m_screenBackendPreference = *parsed;
+            m_screenBackendFromEnv = true;
+        } else {
+            qWarning() << "[CaptureScheduler] ignoring SUBREC_CAPTURE_BACKEND=" << fromEnv
+                       << "(expected auto, ddagrab or dshow)";
+        }
+    }
+    if (!m_screenBackendFromEnv) {
+        QSettings settings(QString::fromLatin1(kSettingsOrganization),
+                           QString::fromLatin1(kSettingsApplication));
+        const QString saved = settings.value(kScreenBackendKey).toString();
+        if (const auto parsed = parseScreenBackendPreference(saved)) {
+            m_screenBackendPreference = *parsed;
+        }
+    }
+    qInfo() << "[CaptureScheduler] screen backend preference"
+            << screenBackendPreferenceName(m_screenBackendPreference)
+            << (m_screenBackendFromEnv ? "(SUBREC_CAPTURE_BACKEND)" : "(settings)");
+}
 
 CaptureScheduler::~CaptureScheduler()
 {
@@ -172,6 +204,9 @@ bool CaptureScheduler::changeVideoSource(bool useScreen)
     }
     m_useScreen = useScreen;
     m_selectedVideoDeviceId.clear();
+    // Pick the first device of the new kind now; before, the id stayed empty until the next
+    // refreshDevices() and a start in between failed with "No ... device is selected".
+    selectDefaultDevicesLocked();
     qDebug() << "[CaptureScheduler] video source set to" << (useScreen ? "screen" : "camera");
     QMetaObject::invokeMethod(&m_recorder, "notifyDeviceConfigurationChanged", Qt::QueuedConnection);
     return true;
@@ -187,6 +222,7 @@ bool CaptureScheduler::changeAudioSource(bool useSystemAudio)
     }
     m_useSystemAudio = useSystemAudio;
     m_selectedAudioDeviceId.clear();
+    selectDefaultDevicesLocked();
     qDebug() << "[CaptureScheduler] audio source set to" << (useSystemAudio ? "system" : "microphone");
     QMetaObject::invokeMethod(&m_recorder, "notifyAudioSourceChanged", Qt::QueuedConnection);
     QMetaObject::invokeMethod(&m_recorder, "notifyDeviceConfigurationChanged", Qt::QueuedConnection);
@@ -200,27 +236,13 @@ void CaptureScheduler::refreshDevices()
         std::lock_guard<std::mutex> lock(m_mutex);
         if (!configurationMutableLocked()) return;
     }
-    DirectShowCaptureBackend backend;
-    const QList<CaptureDevice> devices = backend.enumerate();
+    QList<CaptureDevice> devices = DirectShowCaptureBackend().enumerate();
+    // Desktop Duplication screens are listed too (marked unavailable without ddagrab).
+    devices.append(DdagrabCaptureBackend().enumerate());
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_devices = devices;
-        const auto selectFirst = [this](CaptureDeviceKind kind, QString &selectedId) {
-            const auto existing = std::find_if(m_devices.cbegin(), m_devices.cend(),
-                                               [&selectedId, kind](const CaptureDevice &device) {
-                                                   return device.id == selectedId && device.kind == kind && device.available;
-                                               });
-            if (existing != m_devices.cend()) return;
-            const auto fallback = std::find_if(m_devices.cbegin(), m_devices.cend(),
-                                               [kind](const CaptureDevice &device) {
-                                                   return device.kind == kind && device.available;
-                                               });
-            selectedId = fallback == m_devices.cend() ? QString() : fallback->id;
-        };
-        selectFirst(m_useScreen ? CaptureDeviceKind::Screen : CaptureDeviceKind::Camera,
-                    m_selectedVideoDeviceId);
-        selectFirst(m_useSystemAudio ? CaptureDeviceKind::SystemAudio : CaptureDeviceKind::Microphone,
-                    m_selectedAudioDeviceId);
+        selectDefaultDevicesLocked();
     }
     qInfo() << "[CaptureScheduler] device refresh completed count=" << devices.size();
     QMetaObject::invokeMethod(&m_recorder, "notifyDeviceConfigurationChanged", Qt::QueuedConnection);
@@ -303,14 +325,30 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
         return CaptureStartResult::failure(std::move(error));
     }
 
+    std::optional<QString> dshowScreenId;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
-        config->video = {CaptureBackend::DirectShow,
+        // The selected device decides the video backend ("ddagrab:N" screens use Desktop
+        // Duplication; DirectShow screens, cameras and all audio use DirectShow).
+        const auto selectedVideo = std::find_if(m_devices.cbegin(), m_devices.cend(),
+                                                [this](const CaptureDevice &device) {
+                                                    return device.id == m_selectedVideoDeviceId;
+                                                });
+        const CaptureBackend videoBackend =
+            selectedVideo != m_devices.cend() ? selectedVideo->backend : CaptureBackend::DirectShow;
+        config->video = {videoBackend,
                          m_useScreen ? CaptureDeviceKind::Screen : CaptureDeviceKind::Camera,
                          m_selectedVideoDeviceId};
         config->audio = {CaptureBackend::DirectShow,
                          m_useSystemAudio ? CaptureDeviceKind::SystemAudio : CaptureDeviceKind::Microphone,
                          m_selectedAudioDeviceId};
+        const auto dshowScreen = std::find_if(m_devices.cbegin(), m_devices.cend(),
+                                              [](const CaptureDevice &device) {
+                                                  return device.kind == CaptureDeviceKind::Screen
+                                                      && device.backend == CaptureBackend::DirectShow
+                                                      && device.available;
+                                              });
+        if (dshowScreen != m_devices.cend()) dshowScreenId = dshowScreen->id;
     }
     const auto videoKind = config->video.kind;
     const auto audioKind = config->audio.kind;
@@ -333,12 +371,112 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
         return CaptureStartResult::failure(std::move(error));
     }
 
-    DirectShowCaptureBackend backend;
-    CaptureStartResult result = backend.makeInputRequest(videoKind, config->video.deviceId, &config->videoInput);
+    DirectShowCaptureBackend dshow;
+    CaptureStartResult result = CaptureStartResult::success();
+    if (config->video.backend == CaptureBackend::DesktopDuplication) {
+        result = DdagrabCaptureBackend().makeInputRequest(videoKind, config->video.deviceId,
+                                                          &config->videoInput);
+        if (!result.ok) return result;
+        // Keep DirectShow screen-capture-recorder as the fallback if ddagrab cannot open.
+        if (dshowScreenId) {
+            InputRequest fallback;
+            if (dshow.makeInputRequest(CaptureDeviceKind::Screen, *dshowScreenId, &fallback).ok)
+                config->videoFallbackInput = fallback;
+        }
+    } else {
+        result = dshow.makeInputRequest(videoKind, config->video.deviceId, &config->videoInput);
+        if (!result.ok) return result;
+    }
+    result = dshow.makeInputRequest(audioKind, config->audio.deviceId, &config->audioInput);
     if (!result.ok) return result;
-    result = backend.makeInputRequest(audioKind, config->audio.deviceId, &config->audioInput);
-    if (!result.ok) return result;
+    qInfo() << "[CaptureScheduler] video backend" << captureBackendName(config->videoInput.backend)
+            << "device" << config->videoInput.deviceId
+            << "fallback" << (config->videoFallbackInput ? config->videoFallbackInput->deviceId : QString())
+            << "audio device" << config->audioInput.deviceId;
     return CaptureStartResult::success();
+}
+
+void CaptureScheduler::selectDefaultDevicesLocked()
+{
+    const auto selectFirst = [this](CaptureDeviceKind kind, QString &selectedId,
+                                    std::optional<CaptureBackend> preferredBackend) {
+        const auto existing = std::find_if(m_devices.cbegin(), m_devices.cend(),
+                                           [&selectedId, kind](const CaptureDevice &device) {
+                                               return device.id == selectedId && device.kind == kind && device.available;
+                                           });
+        if (existing != m_devices.cend()) return;
+        auto fallback = m_devices.cend();
+        if (preferredBackend) {
+            fallback = std::find_if(m_devices.cbegin(), m_devices.cend(),
+                                    [kind, preferredBackend](const CaptureDevice &device) {
+                                        return device.kind == kind && device.available
+                                            && device.backend == *preferredBackend;
+                                    });
+        }
+        if (fallback == m_devices.cend()) {
+            fallback = std::find_if(m_devices.cbegin(), m_devices.cend(),
+                                    [kind](const CaptureDevice &device) {
+                                        return device.kind == kind && device.available;
+                                    });
+        }
+        selectedId = fallback == m_devices.cend() ? QString() : fallback->id;
+    };
+    if (m_useScreen) {
+        selectFirst(CaptureDeviceKind::Screen, m_selectedVideoDeviceId, effectiveScreenBackendLocked());
+    } else {
+        selectFirst(CaptureDeviceKind::Camera, m_selectedVideoDeviceId, std::nullopt);
+    }
+    selectFirst(m_useSystemAudio ? CaptureDeviceKind::SystemAudio : CaptureDeviceKind::Microphone,
+                m_selectedAudioDeviceId, std::nullopt);
+}
+
+CaptureBackend CaptureScheduler::effectiveScreenBackendLocked() const
+{
+    switch (m_screenBackendPreference) {
+    case ScreenBackendPreference::DirectShow:
+        return CaptureBackend::DirectShow;
+    case ScreenBackendPreference::DesktopDuplication:
+        return CaptureBackend::DesktopDuplication;
+    case ScreenBackendPreference::Auto:
+        break;
+    }
+    return DdagrabScreenSource::isAvailable() ? CaptureBackend::DesktopDuplication
+                                              : CaptureBackend::DirectShow;
+}
+
+bool CaptureScheduler::setScreenBackendPreference(ScreenBackendPreference preference)
+{
+    if (!onControlThread("setScreenBackendPreference")) return false;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!configurationMutableLocked()) return false;
+        m_screenBackendPreference = preference;
+        m_screenBackendFromEnv = false;
+        // Re-pick the screen for the new backend (a camera selection is kept).
+        if (m_useScreen) {
+            m_selectedVideoDeviceId.clear();
+            selectDefaultDevicesLocked();
+        }
+    }
+    QSettings settings(QString::fromLatin1(kSettingsOrganization),
+                       QString::fromLatin1(kSettingsApplication));
+    settings.setValue(kScreenBackendKey, screenBackendPreferenceName(preference));
+    qInfo() << "[CaptureScheduler] screen backend preference set to"
+            << screenBackendPreferenceName(preference);
+    QMetaObject::invokeMethod(&m_recorder, "notifyDeviceConfigurationChanged", Qt::QueuedConnection);
+    return true;
+}
+
+ScreenBackendPreference CaptureScheduler::screenBackendPreference() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_screenBackendPreference;
+}
+
+bool CaptureScheduler::screenBackendFromEnvironment() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_screenBackendFromEnv;
 }
 
 bool CaptureScheduler::configurationMutableLocked() const

@@ -45,6 +45,7 @@ FFEvent::FFEvent(FFRecorder *recoderContext_)
 
     muxer = this->recoderContext->getMuxer();
     muxerThread = this->recoderContext->getMuxerThread();
+    screenGrabThread = this->recoderContext->getScreenGrabThread();
 }
 
 FFEvent::~FFEvent() {}

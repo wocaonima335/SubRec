@@ -17,6 +17,8 @@ qt_add_library(thread_module STATIC
     ffvencoderthread.cpp
     ffmuxerthread.h
     ffmuxerthread.cpp
+    ffscreengrabthread.h
+    ffscreengrabthread.cpp
 )
 
 target_link_libraries(thread_module
@@ -26,7 +28,8 @@ target_link_libraries(thread_module
     queue_module
     opengl_module
     event_module
-    decoder_module)
+    decoder_module
+    capture_module)
 
 target_include_directories(thread_module PRIVATE
     ${FFMPEG_INCLUDE_DIR}

@@ -1,5 +1,7 @@
 #include "ffopensourceevent.h"
 
+#include "thread/ffscreengrabthread.h"
+
 extern "C" {
 #include <libavutil/time.h>
 }
@@ -84,7 +86,14 @@ CaptureStartResult FFOpenSourceEvent::openAndStartResult(const std::function<boo
 {
   startupResult = CaptureStartResult::success();
   preparedScreen = false;
+  usingScreenGrab = false;
   const auto unwind = [this] {
+    if (preparedScreen && usingScreenGrab && screenGrabThread) {
+      screenGrabThread->requestAbort();
+      screenGrabThread->wait();
+      screenGrabThread->close();
+      preparedScreen = false;
+    }
     if (preparedScreen) {
       // Joining can wait for a non-interruptible third-party driver open.
       vDemuxerThread[videoIndex]->requestAbort();
@@ -240,6 +249,15 @@ bool FFOpenSourceEvent::initVideo(const std::function<bool()> &shouldStart)
   muxerThread->close();
 
   if (!checkContinue(videoInput, shouldStart)) return false;
+  if (videoSourceType == demuxerType::SCREEN
+      && videoInput.backend == CaptureBackend::DesktopDuplication) {
+    qDebug() << "[initVideo] Step 19: Opening ddagrab screen source...";
+    if (!openScreenGrab(shouldStart)) {
+      if (!videoFallback || !checkContinue(videoInput, shouldStart)) return false;
+      switchToVideoFallback();
+    }
+  }
+  if (!usingScreenGrab) {
   qDebug() << "[initVideo] Step 19: Initializing vDemuxer...";
   const bool threadOwnedScreenOpen = (videoSourceType == demuxerType::SCREEN);
   vDemuxer[videoIndex]->init(videoUrl,
@@ -278,6 +296,7 @@ bool FFOpenSourceEvent::initVideo(const std::function<bool()> &shouldStart)
                              vFrmQueue[videoIndex]);
   qDebug() << "[initVideo] Step 22: Initializing vDecoderThread...";
   vDecoderThread[videoIndex]->init(vDecoder[videoIndex], vPktQueue[videoIndex]);
+  } // !usingScreenGrab
 
   if (!checkContinue(videoInput, shouldStart)) return false;
   qDebug() << "[initVideo] Step 23: Initializing vEncoder...";
@@ -297,8 +316,17 @@ bool FFOpenSourceEvent::initVideo(const std::function<bool()> &shouldStart)
                        recoderContext);
 
   qDebug() << "[initVideo] Step 25: Getting video stream info...";
-  AVStream *vStream = vDemuxer[videoIndex]->getVStream();
-  if (vStream && vStream->codecpar)
+  AVStream *vStream = usingScreenGrab ? nullptr : vDemuxer[videoIndex]->getVStream();
+  if (usingScreenGrab)
+  {
+    QString resolutionStr = QString("%1 X %2 : Screen")
+                                .arg(screenGrabThread->width())
+                                .arg(screenGrabThread->height());
+    QMetaObject::invokeMethod(recoderContext, "setVideoResolution",
+                              Qt::QueuedConnection,
+                              Q_ARG(QString, resolutionStr));
+  }
+  else if (vStream && vStream->codecpar)
   {
     int width = vStream->codecpar->width;
     int height = vStream->codecpar->height;
@@ -364,13 +392,18 @@ void FFOpenSourceEvent::startVideo()
   vFrmQueue[videoIndex]->start();
   vFilterEncoderFrmQueue->start();
 
-  if (videoSourceType == demuxerType::SCREEN) {
-    vDemuxerThread[videoIndex]->resumePreparedDemux();
+  if (usingScreenGrab) {
+    // Frames go straight into vFrmQueue[SCREEN]; no demuxer/decoder thread runs.
+    screenGrabThread->resume();
   } else {
-    vDemuxerThread[videoIndex]->start();
-  }
+    if (videoSourceType == demuxerType::SCREEN) {
+      vDemuxerThread[videoIndex]->resumePreparedDemux();
+    } else {
+      vDemuxerThread[videoIndex]->start();
+    }
 
-  vDecoderThread[videoIndex]->start();
+    vDecoderThread[videoIndex]->start();
+  }
 
   vFilterThread->start();
   vFilterThread->startEncoder();
@@ -378,4 +411,46 @@ void FFOpenSourceEvent::startVideo()
   muxerThread->start();
 
   std::cout << "start opensource " << std::endl;
+}
+
+bool FFOpenSourceEvent::openScreenGrab(const std::function<bool()> &shouldStart)
+{
+  if (!screenGrabThread) {
+    return fail(videoInput, CaptureErrorStage::Configuration, AVERROR(EINVAL),
+                QStringLiteral("Screen grab thread not initialized."));
+  }
+  // A previous session may have left the thread finished but not closed.
+  screenGrabThread->requestAbort();
+  screenGrabThread->wait();
+  screenGrabThread->close();
+  vFrmQueue[videoIndex]->start();
+
+  preparedScreen = true;
+  usingScreenGrab = true; // unwind() aborts the grab thread while this is set
+  startupResult = screenGrabThread->prepareOpenAndWait(
+      videoInput, vFrmQueue[videoIndex], recoderContext, 10000, shouldStart);
+  if (startupResult.ok) {
+    qInfo().noquote() << "[initVideo] ddagrab screen ready:" << screenGrabThread->describe();
+    return true;
+  }
+  qWarning().noquote() << "[initVideo] ddagrab screen failed:"
+                       << (startupResult.error ? startupResult.error->userMessage : QString());
+  screenGrabThread->requestAbort();
+  screenGrabThread->wait();
+  screenGrabThread->close();
+  preparedScreen = false;
+  usingScreenGrab = false;
+  return false;
+}
+
+void FFOpenSourceEvent::switchToVideoFallback()
+{
+  qWarning().noquote() << "[initVideo] falling back to DirectShow screen:"
+                       << videoFallback->displayName;
+  videoInput = *videoFallback;
+  videoUrl = videoInput.url.toStdString();
+  videoFormat = videoInput.format.toStdString();
+  // requestAbort() above closed the shared frame queue; the dshow decoder writes into it.
+  vFrmQueue[videoIndex]->start();
+  startupResult = CaptureStartResult::success();
 }

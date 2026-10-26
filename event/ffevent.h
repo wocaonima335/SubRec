@@ -27,6 +27,7 @@ class FFADecoderThread;
 class FFVDecoderThread;
 class FFDemuxerThread;
 class FFDemuxerThread;
+class FFScreenGrabThread;
 
 class FFEvent
 {
@@ -78,6 +79,8 @@ protected:
     FFVEncoderThread *vEncoderThread = nullptr; // 视频编码线程
 
     FFMuxerThread *muxerThread = nullptr; // 复用线程
+
+    FFScreenGrabThread *screenGrabThread = nullptr; // ddagrab 屏幕帧源线程
 };
 
 #endif // FFEVENT_H

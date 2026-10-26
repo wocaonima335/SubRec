@@ -190,7 +190,7 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
-                            text: "DirectShow devices: " + recorder.captureDevices.length
+                            text: "Capture devices: " + recorder.captureDevices.length
                             color: recorder.captureDevices.length > 0 ? "#A8DDA8" : "#F0B1B1"
                             font.pixelSize: 12
                             Layout.fillWidth: true
@@ -205,6 +205,42 @@ Item {
                         visible: recorder.captureDevices.length === 0
                         text: "No DirectShow capture devices were found. Install or select a supported input before recording."
                         color: "#D99B9B"
+                        font.pixelSize: 12
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: "Screen backend"
+                            color: "#FFFFFF"
+                            font.pixelSize: 12
+                            opacity: 0.8
+                        }
+                        ComboBox {
+                            id: screenBackendBox
+                            Layout.fillWidth: true
+                            // SUBREC_CAPTURE_BACKEND overrides the setting; no change while recording.
+                            enabled: !recorder.screenCaptureBackendFromEnvironment && recorder.canStartCapture
+                            textRole: "text"
+                            valueRole: "value"
+                            model: [
+                                { value: "auto", text: "Auto (Desktop Duplication if available)" },
+                                { value: "ddagrab", text: "Desktop Duplication (ddagrab)" },
+                                { value: "dshow", text: "DirectShow (screen-capture-recorder)" }
+                            ]
+                            currentIndex: Math.max(0, model.findIndex(function(item) {
+                                return item.value === recorder.screenCaptureBackend
+                            }))
+                            onActivated: recorder.setScreenCaptureBackend(currentValue)
+                        }
+                    }
+
+                    Text {
+                        visible: recorder.screenCaptureBackendFromEnvironment
+                        text: "Screen backend is set by SUBREC_CAPTURE_BACKEND=" + recorder.screenCaptureBackend
+                        color: "#D9C99B"
                         font.pixelSize: 12
                         wrapMode: Text.Wrap
                         Layout.fillWidth: true

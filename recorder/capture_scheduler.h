@@ -44,6 +44,11 @@ public:
     void refreshDevices();
     bool selectVideoDevice(const QString &deviceId);
     bool selectAudioDevice(const QString &deviceId);
+    // Screen backend: SUBREC_CAPTURE_BACKEND (auto|ddagrab|dshow) wins over the saved setting
+    // (QSettings "capture/screenBackend"); setScreenBackendPreference() saves the setting.
+    bool setScreenBackendPreference(ScreenBackendPreference preference);
+    ScreenBackendPreference screenBackendPreference() const;
+    bool screenBackendFromEnvironment() const;
 
     CaptureSchedulerState state() const;
     QString lastError() const;
@@ -55,6 +60,8 @@ public:
 private:
     CaptureStartResult buildCurrentConfig(CaptureConfig *config) const;
     bool configurationMutableLocked() const;
+    void selectDefaultDevicesLocked();
+    CaptureBackend effectiveScreenBackendLocked() const;
     void onSessionStarted(std::uint64_t sessionId, const CaptureStartResult &result);
     bool onControlThread(const char *operation) const;
     friend class CaptureLifecycleTest;
@@ -81,6 +88,8 @@ private:
     QString m_selectedAudioDeviceId;
     bool m_useScreen = true;
     bool m_useSystemAudio = true;
+    ScreenBackendPreference m_screenBackendPreference = ScreenBackendPreference::Auto;
+    bool m_screenBackendFromEnv = false;
 };
 
 #endif // CAPTURE_SCHEDULER_H

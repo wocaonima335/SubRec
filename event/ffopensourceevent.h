@@ -3,6 +3,7 @@
 
 #include "ffevent.h"
 #include <functional>
+#include <optional>
 #include <string>
 
 class FFOpenSourceEvent : public FFEvent
@@ -23,6 +24,8 @@ public:
     CaptureStartResult openAndStartResult(const std::function<bool()> &shouldStart = {});
     bool openAndStart(const std::function<bool()> &shouldStart = {});
     virtual bool requiresSerialization() const override { return true; }
+    // DirectShow screen request used when the ddagrab screen cannot be opened.
+    void setVideoFallback(const std::optional<InputRequest> &fallback) { videoFallback = fallback; }
 
 private:
     bool initVideo(const std::function<bool()> &shouldStart);
@@ -33,6 +36,11 @@ private:
     InputRequest videoInput;
     InputRequest audioInput;
     bool preparedScreen = false;
+    // Screen comes from FFScreenGrabThread (ddagrab) instead of demuxer + decoder.
+    bool usingScreenGrab = false;
+    std::optional<InputRequest> videoFallback;
+    bool openScreenGrab(const std::function<bool()> &shouldStart);
+    void switchToVideoFallback();
     void startVideo();
     void startAudio();
 

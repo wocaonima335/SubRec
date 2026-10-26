@@ -1,5 +1,7 @@
 #include "ffclosesourceevent.h"
 
+#include "thread/ffscreengrabthread.h"
+
 FFCloseSourceEvent::FFCloseSourceEvent(FFRecorder *recordCtx, demuxerType sourceType_)
     : FFEvent(recordCtx)
 {
@@ -126,6 +128,16 @@ void FFCloseSourceEvent::stopAudioInputPath()
 
 void FFCloseSourceEvent::stopVideoInputPath()
 {
+    // ddagrab screen: the grab thread is the producer of vDecoderFrmQueue[SCREEN]; stopping
+    // it sends EOF there. The (idle) screen demuxer/decoder below are then no-ops.
+    if (sourceType == SCREEN && screenGrabThread && screenGrabThread->isActive()) {
+        qDebug() << "[FFCloseSourceEvent] screen grab drain";
+        screenGrabThread->requestDrainStop();
+        screenGrabThread->wait();
+        screenGrabThread->close();
+        qDebug() << "[FFCloseSourceEvent] screen grab thread closed";
+    }
+
     if (vDemuxerThread[index]) {
         qDebug() << "[FFCloseSourceEvent] video demuxer drain";
         vDemuxerThread[index]->requestDrainStop();

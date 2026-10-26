@@ -6,6 +6,25 @@
 #include <QDebug>
 #include <QStandardPaths>
 
+#include <cstdarg>
+
+extern "C" {
+#include <libavutil/log.h>
+}
+
+namespace {
+void ffmpegLogToQt(void *avcl, int level, const char *fmt, va_list vl) {
+  if (level > av_log_get_level())
+    return;
+  char line[1024];
+  int printPrefix = 1;
+  av_log_format_line2(avcl, level, fmt, vl, line, sizeof(line), &printPrefix);
+  const QString text = QString::fromUtf8(line).trimmed();
+  if (!text.isEmpty())
+    qDebug().noquote() << "[FFmpeg]" << text;
+}
+} // namespace
+
 FFRecorder *FFRecorder::m_instance = nullptr;
 std::mutex FFRecorder::m_mutex;
 
@@ -28,7 +47,17 @@ void FFRecorder::initialize() {
   if (m_isRecording.load(std::memory_order_acquire) ||
       m_initialized.load(std::memory_order_acquire))
     return;
-  av_log_set_level(AV_LOG_QUIET);
+  // FFmpeg's own messages are off unless SUBREC_FFMPEG_LOG=info|verbose|debug (diagnostics
+  // for ddagrab / encoder problems; the lines go to SubRec.log with an "[FFmpeg]" prefix).
+  const QString ffmpegLog = qEnvironmentVariable("SUBREC_FFMPEG_LOG").trimmed().toLower();
+  if (ffmpegLog.isEmpty()) {
+    av_log_set_level(AV_LOG_QUIET);
+  } else {
+    av_log_set_level(ffmpegLog == QLatin1String("debug")     ? AV_LOG_DEBUG
+                     : ffmpegLog == QLatin1String("verbose") ? AV_LOG_VERBOSE
+                                                              : AV_LOG_INFO);
+    av_log_set_callback(ffmpegLogToQt);
+  }
 
   registerMetaTypes();
   initCoreComponents();
@@ -181,6 +210,7 @@ void FFRecorder::initCoreComponents() {
 
   d->aFilterThread = new FFAFilterThread;
   d->vFilterThread = new FFVFilterThread;
+  d->screenGrabThread = new FFScreenGrabThread;
 
   d->muxerThread = new FFMuxerThread;
   d->aEncoderThread = new FFAEncoderThread;
@@ -333,6 +363,10 @@ FFAFilterThread *FFRecorder::getAFilterThread() {
 
 FFMuxerThread *FFRecorder::getMuxerThread() {
   return d ? d->muxerThread : nullptr;
+}
+
+FFScreenGrabThread *FFRecorder::getScreenGrabThread() {
+  return d ? d->screenGrabThread : nullptr;
 }
 
 FFAPacketQueue *FFRecorder::getADecoderPktQueue(int index) {
@@ -490,6 +524,24 @@ bool FFRecorder::selectVideoCaptureDevice(const QString &deviceId) {
 
 bool FFRecorder::selectAudioCaptureDevice(const QString &deviceId) {
   return m_scheduler && m_scheduler->selectAudioDevice(deviceId);
+}
+
+QString FFRecorder::screenCaptureBackend() const {
+  return m_scheduler ? screenBackendPreferenceName(m_scheduler->screenBackendPreference())
+                     : QStringLiteral("auto");
+}
+
+bool FFRecorder::screenCaptureBackendFromEnvironment() const {
+  return m_scheduler && m_scheduler->screenBackendFromEnvironment();
+}
+
+bool FFRecorder::setScreenCaptureBackend(const QString &name) {
+  const auto preference = parseScreenBackendPreference(name);
+  if (!preference || !m_scheduler) {
+    qWarning() << "[FFRecorder] unknown screen capture backend" << name;
+    return false;
+  }
+  return m_scheduler->setScreenBackendPreference(*preference);
 }
 
 void FFRecorder::retryCapture() {

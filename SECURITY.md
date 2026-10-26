@@ -44,7 +44,7 @@ In scope: first-party code in this repository, e.g. output path handling, log fi
 - FFmpeg、Qt、OpenCV 等第三方库自身的漏洞——请报告给上游；但如果是我们**捆绑的版本过旧**导致的已知 CVE，欢迎报告。
   Vulnerabilities in third-party libraries themselves — report upstream. A known CVE caused by an outdated **bundled version** is welcome, though.
 - 需要本地管理员权限或已完全控制本机才能利用的问题。
-- 用户自行安装的第三方 DirectShow 组件（`screen-capture-recorder`、`virtual-audio-capturer`）的问题。
+- 用户自行安装的第三方 DirectShow 组件（`screen-capture-recorder`、`virtual-audio-capturer`）的问题。（默认的 Desktop Duplication 屏幕采集走 FFmpeg 的 `ddagrab`，属于 FFmpeg 本身。）
 
 ## 隐私提示 / Privacy note
 

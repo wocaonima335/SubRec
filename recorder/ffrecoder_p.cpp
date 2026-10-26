@@ -40,6 +40,7 @@ FFRecorderPrivate::FFRecorderPrivate()
     vEncoderThread = nullptr;
     vFilter = nullptr;
     vFilterThread = nullptr;
+    screenGrabThread = nullptr;
     aFilter = nullptr;
     aFilterThread = nullptr;
 
@@ -58,6 +59,7 @@ FFRecorderPrivate::~FFRecorderPrivate()
         }
     };
 
+    stopAndDeleteThread(screenGrabThread);
     stopAndDeleteThread(muxerThread);
     stopAndDeleteThread(aEncoderThread);
     stopAndDeleteThread(vEncoderThread);

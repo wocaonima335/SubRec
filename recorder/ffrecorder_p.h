@@ -23,6 +23,7 @@
 #include "thread/ffafilterthread.h"
 #include "thread/ffdemuxerthread.h"
 #include "thread/ffmuxerthread.h"
+#include "thread/ffscreengrabthread.h"
 #include "thread/ffvdecoderthread.h"
 #include "thread/ffvencoderthread.h"
 #include "thread/ffvfilterthread.h"
@@ -143,6 +144,9 @@ namespace FFRecordURLS
 
         // 视频过滤线程
         FFVFilterThread *vFilterThread;
+
+        // ddagrab 屏幕帧源（替代屏幕的 demuxer + decoder，帧写入 vDecoderFrmQueue[SCREEN]）
+        FFScreenGrabThread *screenGrabThread;
 
         // 音频过滤器
         FFAFilter *aFilter;

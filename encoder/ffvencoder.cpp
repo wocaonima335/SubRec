@@ -9,6 +9,11 @@
 #include <iostream>
 #include <thread>
 
+extern "C" {
+#include <libavutil/hwcontext.h>
+#include <libswscale/swscale.h>
+}
+
 
 namespace {
 QByteArray framePlaneMd5(const AVFrame *frame)
@@ -29,6 +34,27 @@ QByteArray framePlaneMd5(const AVFrame *frame)
     }
     return md5.result().toHex();
 }
+
+// True if the encoder takes AV_PIX_FMT_D3D11 frames through hw_frames_ctx (its own hw_configs).
+bool acceptsD3D11Frames(const AVCodec *codec)
+{
+    for (int i = 0;; ++i) {
+        const AVCodecHWConfig *config = avcodec_get_hw_config(codec, i);
+        if (!config) {
+            return false;
+        }
+        if (config->pix_fmt == AV_PIX_FMT_D3D11
+            && (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_FRAMES_CTX)) {
+            return true;
+        }
+    }
+}
+
+struct FrameGuard
+{
+    AVFrame *frame = nullptr;
+    ~FrameGuard() { av_frame_free(&frame); }
+};
 }
 FFVEncoder::FFVEncoder() {}
 
@@ -59,6 +85,9 @@ void FFVEncoder::close()
 
     lastPts = -1;
     m_selection = {};
+    m_downloadHwFrames = false;
+    sws_freeContext(m_downloadSws);
+    m_downloadSws = nullptr;
 }
 
 void FFVEncoder::wakeAllThread()
@@ -130,6 +159,18 @@ int FFVEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
 
     // // 鎬ц兘鐩戞帶寮€濮?
     // auto encodeStart = std::chrono::steady_clock::now();
+
+    // ddagrab GPU frames with a system-memory encoder: download + convert here.
+    FrameGuard converted;
+    if (m_downloadHwFrames && frame->format == AV_PIX_FMT_D3D11)
+    {
+        converted.frame = downloadToYuv420p(frame);
+        if (!converted.frame)
+        {
+            return -1;
+        }
+        frame = converted.frame;
+    }
 
     static qint64 s_lastInputMd5LogMs = 0;
     frame->pts = pts; // 灏嗚绠楀ソ鐨?PTS 鍐欏埌 AVFrame 涓婏紝浜ょ粰缂栫爜鍣?
@@ -217,6 +258,9 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
     std::lock_guard<std::mutex> lock(mutex);
     resetPtsClock();
     m_selection = {};
+    m_downloadHwFrames = false;
+    sws_freeContext(m_downloadSws);
+    m_downloadSws = nullptr;
 
     if (!frame || frame->width <= 0 || frame->height <= 0 || fps.num <= 0 || fps.den <= 0)
     {
@@ -261,16 +305,38 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
         {"libx264", "Software H264", false},
     };
 
+    const bool hwFrames = frame->format == AV_PIX_FMT_D3D11 && frame->hw_frames_ctx;
+    const AVPixelFormat hwSwFormat = hwFrames
+        ? reinterpret_cast<const AVHWFramesContext *>(frame->hw_frames_ctx->data)->sw_format
+        : AV_PIX_FMT_NONE;
+
     QStringList failures;
+    // Pass 0 (D3D11 input only): GPU passthrough to encoders that take D3D11 frames.
+    // Pass 1: the original yuv420p configuration (D3D11 frames are converted in encode()).
+    for (int pass = hwFrames ? 0 : 1; pass < 2; ++pass)
+    {
+    const bool passthrough = pass == 0;
     for (const auto &candidate : candidates)
     {
+        if (passthrough && !candidate.isHardware)
+            continue;
+        const QString label = passthrough ? QStringLiteral("%1[d3d11]").arg(QLatin1String(candidate.name))
+                                          : QString::fromLatin1(candidate.name);
         const AVCodec *codec = avcodec_find_encoder_by_name(candidate.name);
+        if (codec && passthrough && !acceptsD3D11Frames(codec))
+        {
+            const QString reason = QStringLiteral("no D3D11 frame input");
+            failures.append(QStringLiteral("%1: %2").arg(label, reason));
+            qInfo().noquote() << QStringLiteral("[VEncSelection] candidate=%1 stage=lookup result=skipped reason=%2")
+                                     .arg(label, reason);
+            continue;
+        }
         if (!codec)
         {
             const QString reason = QStringLiteral("not found");
-            failures.append(QStringLiteral("%1: %2").arg(candidate.name, reason));
+            failures.append(QStringLiteral("%1: %2").arg(label, reason));
             qWarning().noquote() << QStringLiteral("[VEncSelection] candidate=%1 stage=lookup result=failed reason=%2")
-                                             .arg(candidate.name, reason);
+                                             .arg(label, reason);
             continue;
         }
 
@@ -278,9 +344,9 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
         if (!candidateCtx)
         {
             const QString reason = QStringLiteral("context allocation failed");
-            failures.append(QStringLiteral("%1: %2").arg(candidate.name, reason));
+            failures.append(QStringLiteral("%1: %2").arg(label, reason));
             qWarning().noquote() << QStringLiteral("[VEncSelection] candidate=%1 stage=allocate result=failed reason=%2")
-                                             .arg(candidate.name, reason);
+                                             .arg(label, reason);
             continue;
         }
 
@@ -291,7 +357,17 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
         candidateCtx->rc_buffer_size = requestedPars.biteRate;
         candidateCtx->framerate = requestedPars.frameRate;
         candidateCtx->time_base = av_inv_q(requestedPars.frameRate);
-        candidateCtx->pix_fmt = requestedPars.videoFmt;
+        if (passthrough)
+        {
+            // The encoder reads the ddagrab textures (sw_format bgra) and converts on the GPU.
+            candidateCtx->pix_fmt = AV_PIX_FMT_D3D11;
+            candidateCtx->sw_pix_fmt = hwSwFormat;
+            candidateCtx->hw_frames_ctx = av_buffer_ref(frame->hw_frames_ctx);
+        }
+        else
+        {
+            candidateCtx->pix_fmt = requestedPars.videoFmt;
+        }
         candidateCtx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
         candidateCtx->max_b_frames = 0;
 
@@ -346,9 +422,9 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
             char errorBuffer[AV_ERROR_MAX_STRING_SIZE] = {};
             av_strerror(ret, errorBuffer, sizeof(errorBuffer));
             const QString reason = QString::fromLocal8Bit(errorBuffer);
-            failures.append(QStringLiteral("%1: %2").arg(candidate.name, reason));
+            failures.append(QStringLiteral("%1: %2").arg(label, reason));
             qWarning().noquote() << QStringLiteral("[VEncSelection] candidate=%1 stage=open result=failed fferr=%2 error=%3")
-                                             .arg(candidate.name)
+                                             .arg(label)
                                              .arg(ret)
                                              .arg(reason);
             avcodec_free_context(&candidateCtx);
@@ -357,6 +433,7 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
 
         codecCtx = candidateCtx;
         vPars = new FFVEncoderPars(requestedPars);
+        m_downloadHwFrames = hwFrames && !passthrough;
         m_selection.codecName = QString::fromLatin1(candidate.name);
         m_selection.displayName = QString::fromLatin1(candidate.description);
         m_selection.isHardware = candidate.isHardware;
@@ -364,6 +441,10 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
         m_selection.detail = failures.isEmpty()
             ? QStringLiteral("selected with production configuration")
             : QStringLiteral("fallback after %1").arg(failures.join(QStringLiteral("; ")));
+        if (passthrough)
+            m_selection.detail += QStringLiteral("; input D3D11 frames (GPU passthrough)");
+        else if (m_downloadHwFrames)
+            m_selection.detail += QStringLiteral("; input D3D11 frames downloaded to yuv420p");
 
         qInfo().noquote() << QStringLiteral("[VEncSelection] winner=%1 hardware=%2 width=%3 height=%4 fps=%5/%6 bitrate=%7 detail=%8")
                                   .arg(m_selection.codecName)
@@ -376,6 +457,7 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
                                   .arg(m_selection.detail);
         return true;
     }
+    } // pass
 
     m_selection.detail = failures.join(QStringLiteral("; "));
     qWarning().noquote() << QStringLiteral("[VEncSelection] result=failed detail=%1")
@@ -392,4 +474,43 @@ VideoEncoderSelection FFVEncoder::videoEncoderSelection() const
 void FFVEncoder::resetPtsClock()
 {
     lastPts = -1;
+}
+
+AVFrame *FFVEncoder::downloadToYuv420p(const AVFrame *hwFrame)
+{
+    // Same conversion as the system-memory paths: BT.601 limited range (swscale default).
+    AVFrame *download = av_frame_alloc();
+    AVFrame *yuv = av_frame_alloc();
+    int ret = (download && yuv) ? av_hwframe_transfer_data(download, hwFrame, 0) : AVERROR(ENOMEM);
+    if (ret >= 0)
+    {
+        yuv->format = AV_PIX_FMT_YUV420P;
+        yuv->width = codecCtx->width;
+        yuv->height = codecCtx->height;
+        ret = av_frame_get_buffer(yuv, 0);
+    }
+    if (ret >= 0)
+    {
+        m_downloadSws = sws_getCachedContext(m_downloadSws,
+                                             download->width, download->height,
+                                             static_cast<AVPixelFormat>(download->format),
+                                             yuv->width, yuv->height, AV_PIX_FMT_YUV420P,
+                                             SWS_BILINEAR, nullptr, nullptr, nullptr);
+        ret = m_downloadSws ? sws_scale(m_downloadSws, download->data, download->linesize, 0,
+                                        download->height, yuv->data, yuv->linesize)
+                            : AVERROR(EINVAL);
+    }
+    if (ret >= 0)
+    {
+        ret = av_frame_copy_props(yuv, hwFrame);
+    }
+    av_frame_free(&download);
+    if (ret < 0)
+    {
+        qWarning() << "[FFVEncoder] D3D11 frame download/convert failed";
+        printError(ret);
+        av_frame_free(&yuv);
+        return nullptr;
+    }
+    return yuv;
 }

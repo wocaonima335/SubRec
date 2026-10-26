@@ -42,6 +42,10 @@ class FFRecorder : public QObject {
   Q_PROPERTY(QString captureError READ captureError NOTIFY captureErrorChanged)
   Q_PROPERTY(QString captureRemediation READ captureRemediation NOTIFY captureErrorChanged)
   Q_PROPERTY(bool canStartCapture READ canStartCapture NOTIFY captureStateChanged)
+  // Screen backend "auto" | "ddagrab" | "dshow" (settings page; SUBREC_CAPTURE_BACKEND wins).
+  Q_PROPERTY(QString screenCaptureBackend READ screenCaptureBackend NOTIFY captureDevicesChanged)
+  Q_PROPERTY(bool screenCaptureBackendFromEnvironment READ screenCaptureBackendFromEnvironment
+                 NOTIFY captureDevicesChanged)
 
 public:
   static FFRecorder &getInstance();
@@ -80,6 +84,7 @@ public:
   FFVFilterThread *getVFilterThread();
   FFAFilterThread *getAFilterThread();
   FFMuxerThread *getMuxerThread();
+  FFScreenGrabThread *getScreenGrabThread();
 
   FFAPacketQueue *getADecoderPktQueue(int index);
   FFVPacketQueue *getVDecoderPktQueue(int index);
@@ -122,6 +127,8 @@ public:
   QString captureError() const { return m_captureError; }
   QString captureRemediation() const { return m_captureRemediation; }
   bool canStartCapture() const;
+  QString screenCaptureBackend() const;
+  bool screenCaptureBackendFromEnvironment() const;
 
 public slots:
   void setVideoResolution(const QString &resolution);
@@ -136,6 +143,7 @@ public slots:
   Q_INVOKABLE void refreshCaptureDevices();
   Q_INVOKABLE bool selectVideoCaptureDevice(const QString &deviceId);
   Q_INVOKABLE bool selectAudioCaptureDevice(const QString &deviceId);
+  Q_INVOKABLE bool setScreenCaptureBackend(const QString &name);
   Q_INVOKABLE void retryCapture();
 
 signals:

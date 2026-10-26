@@ -5,8 +5,35 @@ QString captureBackendName(CaptureBackend backend)
     switch (backend) {
     case CaptureBackend::DirectShow:
         return QStringLiteral("DirectShow");
+    case CaptureBackend::DesktopDuplication:
+        return QStringLiteral("DesktopDuplication");
     }
     return QStringLiteral("Unknown");
+}
+
+QString screenBackendPreferenceName(ScreenBackendPreference preference)
+{
+    switch (preference) {
+    case ScreenBackendPreference::Auto:
+        return QStringLiteral("auto");
+    case ScreenBackendPreference::DirectShow:
+        return QStringLiteral("dshow");
+    case ScreenBackendPreference::DesktopDuplication:
+        return QStringLiteral("ddagrab");
+    }
+    return QStringLiteral("auto");
+}
+
+std::optional<ScreenBackendPreference> parseScreenBackendPreference(const QString &name)
+{
+    const QString value = name.trimmed().toLower();
+    if (value == QLatin1String("auto"))
+        return ScreenBackendPreference::Auto;
+    if (value == QLatin1String("dshow") || value == QLatin1String("directshow"))
+        return ScreenBackendPreference::DirectShow;
+    if (value == QLatin1String("ddagrab") || value == QLatin1String("dda"))
+        return ScreenBackendPreference::DesktopDuplication;
+    return std::nullopt;
 }
 
 QString captureDeviceKindName(CaptureDeviceKind kind)

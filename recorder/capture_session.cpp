@@ -86,6 +86,7 @@ bool CaptureSession::start(const CaptureConfig &config,
         qDebug() << "[CaptureSession] open task begin";
         auto openEvent = std::make_unique<FFOpenSourceEvent>(
             &m_recorder, startConfig.videoInput, startConfig.audioInput);
+        openEvent->setVideoFallback(startConfig.videoFallbackInput);
         const CaptureStartResult result = openEvent->openAndStartResult([this]() {
             return !m_stopRequested.load(std::memory_order_acquire);
         });
@@ -144,6 +145,7 @@ void CaptureSession::abortPipeline()
     closeQueue(pipeline->vFilterEncoderFrmQueue);
     closeQueue(pipeline->aEncoderPktQueue);
     closeQueue(pipeline->vEncoderPktQueue);
+    if (pipeline->screenGrabThread) pipeline->screenGrabThread->requestAbort();
 
     const auto abortWorker = [](auto *worker) { if (worker) worker->requestAbort(); };
     for (size_t i = 0; i < A_DECODER_SIZE; ++i) {
@@ -178,6 +180,7 @@ void CaptureSession::abortPipeline()
     waitWorker(pipeline->aEncoderThread);
     waitWorker(pipeline->vEncoderThread);
     waitWorker(pipeline->muxerThread);
+    waitWorker(pipeline->screenGrabThread);
 
     const auto closeWorker = [](auto *worker) { if (worker) worker->close(); };
     for (size_t i = 0; i < A_DECODER_SIZE; ++i) {
@@ -191,6 +194,7 @@ void CaptureSession::abortPipeline()
     closeWorker(pipeline->aEncoderThread);
     closeWorker(pipeline->vEncoderThread);
     closeWorker(pipeline->muxerThread);
+    closeWorker(pipeline->screenGrabThread);
     if (pipeline->aFilterThread) {
         pipeline->aFilterThread->stopEncoder();
         pipeline->aFilterThread->closeAudioSource(AUDIO);

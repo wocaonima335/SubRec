@@ -29,8 +29,10 @@
 
 ### 已知限制（如实说明）
 
-- 目前采集后端是 FFmpeg **DirectShow（dshow）**。屏幕与系统声音依赖用户**自行安装**的第三方 DirectShow 组件（`screen-capture-recorder`、`virtual-audio-capturer`），本仓库不包含它们。没有这些组件就无法录屏/录系统声音。
-- 基于 WASAPI / DXGI / WGC 的**原生采集仍在开发中**（见 `tests/native_capture_probe/`），尚未作为正式功能提供。
+- 屏幕采集有两个后端（设置页“Screen backend”或环境变量 `SUBREC_CAPTURE_BACKEND=auto|ddagrab|dshow`）：
+  - **Desktop Duplication（FFmpeg `ddagrab` 滤镜，默认 auto 时优先）**：无需第三方组件；NVIDIA/AMD 上 D3D11 帧直接交给 `h264_nvenc`/`h264_amf`，其它情况下载到内存转 yuv420p。**尚未在真机上验证**（见 `tools/pc2_verify.ps1`）。只能采集默认显卡上的显示器；GPU 直通模式下预览窗口不更新；遇到 UAC/锁屏/分辨率变化时视频流结束（文件保留）。
+  - **DirectShow（dshow）+ `screen-capture-recorder`**：需用户自行安装该第三方组件；ddagrab 打不开时自动回退到它（若已安装）。
+- 系统声音仍依赖用户**自行安装**的 `virtual-audio-capturer`（DirectShow），本仓库不包含它；麦克风与摄像头走 DirectShow。原生 WASAPI loopback 只有接口设计（`docs/WASAPI_LOOPBACK_INTERFACE.md`），尚未实现；WGC 未实现。
 - “设置”“滤镜”等部分界面尚未完成（见 Issues）。
 - 目前没有视频剪辑功能；“视频”页只是已录制文件的列表。
 - 代码注释以中文为主。
@@ -107,8 +109,10 @@ SubRec (字录) is a Windows screen recorder built with **Qt 6 Quick (QML) and F
 
 ### Known limitations (stated honestly)
 
-- The only capture backend today is FFmpeg **DirectShow (dshow)**. Screen and system-audio capture rely on third-party DirectShow components that **you must install yourself** (`screen-capture-recorder`, `virtual-audio-capturer`); they are not part of this repository. Without them, screen and system-audio recording will not work.
-- **Native WASAPI / DXGI / WGC capture is work in progress** (see `tests/native_capture_probe/`) and is not a shipped feature yet.
+- Screen capture has two backends (settings page "Screen backend", or `SUBREC_CAPTURE_BACKEND=auto|ddagrab|dshow`):
+  - **Desktop Duplication (FFmpeg's `ddagrab` filter, preferred by `auto`)**: no third-party component; on NVIDIA/AMD the D3D11 frames go straight to `h264_nvenc`/`h264_amf`, otherwise they are downloaded and converted to yuv420p. **Not yet verified on real hardware** (see `tools/pc2_verify.ps1`). Only displays on the default GPU; the preview does not update in GPU passthrough mode; a UAC prompt, lock screen or resolution change ends the video stream (the file is kept).
+  - **DirectShow (dshow) + `screen-capture-recorder`**: the third-party filter must be installed by you; used automatically if ddagrab cannot open (when installed).
+- System audio still needs the third-party `virtual-audio-capturer` (DirectShow) that **you install yourself**; microphone and camera use DirectShow. Native WASAPI loopback is only designed (`docs/WASAPI_LOOPBACK_INTERFACE.md`), not implemented; WGC is not implemented.
 - Some UI pages (settings, filters) are incomplete (see the issue tracker).
 - There is no video editing; the "video" page is only a list of recorded files.
 - Code comments are mostly in Chinese.

@@ -9,7 +9,17 @@
 
 enum class CaptureBackend
 {
-    DirectShow
+    DirectShow,
+    // DXGI Desktop Duplication through FFmpeg's ddagrab filter (screen only, no demuxer).
+    DesktopDuplication
+};
+
+// User/environment choice for the screen source. Audio and camera always use DirectShow.
+enum class ScreenBackendPreference
+{
+    Auto, // ddagrab when this FFmpeg build has it, otherwise DirectShow screen-capture-recorder
+    DirectShow,
+    DesktopDuplication
 };
 
 enum class CaptureDeviceKind
@@ -77,6 +87,8 @@ struct CaptureConfig
     VideoCaptureConfig video;
     AudioCaptureConfig audio;
     InputRequest videoInput;
+    // DirectShow screen-capture-recorder request, used if the ddagrab screen fails to open.
+    std::optional<InputRequest> videoFallbackInput;
     InputRequest audioInput;
     QString outputPath;
     QString outputFileName;
@@ -109,6 +121,9 @@ struct CaptureStartResult
 };
 
 QString captureBackendName(CaptureBackend backend);
+// "auto" | "dshow" | "ddagrab" (the values of SUBREC_CAPTURE_BACKEND and the settings key).
+QString screenBackendPreferenceName(ScreenBackendPreference preference);
+std::optional<ScreenBackendPreference> parseScreenBackendPreference(const QString &name);
 QString captureDeviceKindName(CaptureDeviceKind kind);
 QString captureErrorStageName(CaptureErrorStage stage);
 
