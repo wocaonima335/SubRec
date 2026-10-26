@@ -241,6 +241,9 @@ CRT mismatch with Qt's MinGW is acceptable. The toolchain is recorded in `BUILD_
   Debian 13 host of the first build; the used versions are recorded in `BUILD_CONFIG.txt`).
 - Confirm that the libvpl and OpenH264 pins are commit ids (see `versions.env`), and run the
   `lgpl` / `lgpl-openh264` variants before relying on them.
+- Run `tools/pc2_verify.ps1` on PC2 after the rebuild (main + standalone ctests, ffmpeg.exe
+  ddagrab CPU/NVENC clips, SubRec autotest recordings with `SUBREC_CAPTURE_BACKEND=ddagrab` in
+  `SUBREC_DDAGRAB_MODE=auto` and `cpu` plus the chosen microphone, read back with `-c copy`).
 - Test on machines with NVIDIA (old and new drivers), AMD, Intel, and no GPU encoder. Test
   webcams with YUY2, NV12 and MJPG output. Run `ctest` of the main project (includes
   `audio_filter_dual`, which checks the corrected `abuffersink` setup; a recording does not).

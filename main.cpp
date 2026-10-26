@@ -4,8 +4,10 @@
 
 
 #include <QDebug>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QObject>
 #include <QQmlApplicationEngine>
@@ -81,6 +83,70 @@ void openAudioByControl(bool useSystemAudio)
   FFRecorder::getInstance().captureScheduler().changeAudioSource(useSystemAudio);
 }
 
+// Exit codes of autotest runs (tools/pc2_verify.ps1 checks them).
+enum AutoTestExit
+{
+  AutoTestOk = 0,
+  AutoTestBadEnvironment = 2, // SUBREC_AUTOTEST_MIC_DEVICE / _OUTPUT unusable
+  AutoTestNotRunning = 3,     // capture never reached Running (or went Failed)
+  AutoTestNoOutput = 4,       // stopped, but the output file is missing or empty
+  AutoTestStopTimeout = 5     // capture did not return to Idle after stop
+};
+
+// SUBREC_AUTOTEST_OUTPUT=<dir>/<name>.mp4: output folder and file name for this run.
+// SUBREC_AUTOTEST_MIC_DEVICE=<name or id>: switch the audio source to the microphone and select
+// the DirectShow microphone whose id or display name equals it (case-insensitive), or else the
+// only one that contains it. Returns false (and logs the candidates) when nothing matches.
+bool applyAutoTestEnvironment()
+{
+  auto &recorder = FFRecorder::getInstance();
+  auto &scheduler = recorder.captureScheduler();
+
+  const QString output = qEnvironmentVariable("SUBREC_AUTOTEST_OUTPUT").trimmed();
+  if (!output.isEmpty()) {
+    const QFileInfo info(QDir::fromNativeSeparators(output));
+    if (info.fileName().isEmpty() || !QDir().mkpath(info.absolutePath())) {
+      qWarning() << "[AutoTest] SUBREC_AUTOTEST_OUTPUT unusable:" << output;
+      return false;
+    }
+    recorder.setOutputPath(info.absolutePath());
+    recorder.setOutputFileName(info.fileName());
+    qInfo() << "[AutoTest] output =" << info.absoluteFilePath();
+  }
+
+  const QString wanted = qEnvironmentVariable("SUBREC_AUTOTEST_MIC_DEVICE").trimmed();
+  if (!wanted.isEmpty()) {
+    scheduler.changeAudioSource(false);
+    QStringList candidates;
+    QString exact;
+    QStringList partial;
+    for (const QVariant &value : scheduler.devices()) {
+      const QVariantMap device = value.toMap();
+      if (device.value(QStringLiteral("kind")).toString() != QLatin1String("microphone"))
+        continue;
+      const QString id = device.value(QStringLiteral("id")).toString();
+      const QString name = device.value(QStringLiteral("displayName")).toString();
+      candidates << QStringLiteral("'%1' (id '%2', available=%3)")
+                        .arg(name, id, device.value(QStringLiteral("available")).toBool()
+                                           ? QStringLiteral("yes") : QStringLiteral("no"));
+      if (id.compare(wanted, Qt::CaseInsensitive) == 0
+          || name.compare(wanted, Qt::CaseInsensitive) == 0)
+        exact = id;
+      else if (name.contains(wanted, Qt::CaseInsensitive) || id.contains(wanted, Qt::CaseInsensitive))
+        partial << id;
+    }
+    const QString chosen = !exact.isEmpty() ? exact : (partial.size() == 1 ? partial.first() : QString());
+    if (chosen.isEmpty() || !scheduler.selectAudioDevice(chosen)) {
+      qWarning().noquote() << "[AutoTest] SUBREC_AUTOTEST_MIC_DEVICE=" + wanted
+                                  + " matches no single available microphone; candidates: "
+                                  + (candidates.isEmpty() ? QStringLiteral("none") : candidates.join(QStringLiteral(", ")));
+      return false;
+    }
+    qInfo().noquote() << "[AutoTest] microphone =" << chosen;
+  }
+  return true;
+}
+
 void runAutoScenario(QObject *root)
 {
   const QString scenario =
@@ -90,9 +156,16 @@ void runAutoScenario(QObject *root)
 
   const int quitDelay = qEnvironmentVariableIntValue(
       "SUBREC_AUTOTEST_QUIT_MS");
-  const int finalQuitDelay = quitDelay > 0 ? quitDelay : 5000;
+  int finalQuitDelay = quitDelay > 0 ? quitDelay : 5000;
 
   qDebug() << "[AutoTest] scenario =" << scenario;
+  qInfo() << "[AutoTest] SUBREC_CAPTURE_BACKEND ="
+          << qEnvironmentVariable("SUBREC_CAPTURE_BACKEND")
+          << "screen backend =" << FFRecorder::getInstance().screenCaptureBackend();
+  if (!applyAutoTestEnvironment()) {
+    QTimer::singleShot(0, [] { QCoreApplication::exit(AutoTestBadEnvironment); });
+    return;
+  }
 
   auto schedule = [](int delayMs, auto callback) {
     QTimer::singleShot(delayMs, callback);
@@ -347,6 +420,91 @@ void runAutoScenario(QObject *root)
                    });
         },
         QStringLiteral("running-before-phase4-long-dynamic"));
+  } else if (scenario == "record_seconds") {
+    // Start, record SUBREC_AUTOTEST_RECORD_MS (default 5000) once Running, stop, wait for Idle
+    // and check the output file. The process exit code is the result (enum AutoTestExit).
+    // Combine with SUBREC_CAPTURE_BACKEND, SUBREC_AUTOTEST_MIC_DEVICE, SUBREC_AUTOTEST_OUTPUT.
+    const int recordMsEnv = qEnvironmentVariableIntValue("SUBREC_AUTOTEST_RECORD_MS");
+    const int recordMs = recordMsEnv > 0 ? recordMsEnv : 5000;
+    if (quitDelay <= 0)
+      finalQuitDelay = recordMs + 60000;
+    auto exitWith = [quitIssued](int code) {
+      if (quitIssued->exchange(true, std::memory_order_acq_rel))
+        return;
+      qInfo() << "[AutoTest] exit code" << code;
+      QCoreApplication::exit(code);
+      QTimer::singleShot(1500, [code] {
+        qWarning() << "[AutoTest] quit timeout, force exit";
+        ::_Exit(code);
+      });
+    };
+    // Polls every 100 ms until done() or timeoutMs, then calls onDone or onTimeout.
+    auto pollUntil = [](std::function<bool()> done, int timeoutMs,
+                        std::function<void()> onDone, std::function<void()> onTimeout) {
+      auto timer = std::make_shared<QElapsedTimer>();
+      timer->start();
+      auto poller = std::make_shared<std::function<void()>>();
+      *poller = [done, timeoutMs, onDone, onTimeout, timer, poller]() {
+        if (done()) { onDone(); return; }
+        if (timer->elapsed() >= timeoutMs) { onTimeout(); return; }
+        QTimer::singleShot(100, [poller] { (*poller)(); });
+      };
+      QTimer::singleShot(100, [poller] { (*poller)(); });
+    };
+    auto state = [] { return FFRecorder::getInstance().captureScheduler().state(); };
+
+    schedule(200, [] { startRecording(); });
+    pollUntil(
+        [state] {
+          return state() == CaptureSchedulerState::Running
+              || state() == CaptureSchedulerState::Failed;
+        },
+        20000,
+        [state, schedule, pollUntil, exitWith, recordMs] {
+          if (state() != CaptureSchedulerState::Running) {
+            qWarning().noquote() << "[AutoTest] result=FAIL stage=start error="
+                                        + FFRecorder::getInstance().captureScheduler().lastError();
+            exitWith(AutoTestNotRunning);
+            return;
+          }
+          qInfo() << "[AutoTest] running, recording" << recordMs << "ms";
+          schedule(recordMs, [state, pollUntil, exitWith] {
+            stopRecording();
+            pollUntil(
+                [state] { return state() == CaptureSchedulerState::Idle; },
+                20000,
+                [exitWith] {
+                  auto &recorder = FFRecorder::getInstance();
+                  const QFileInfo file(recorder.outputPath() + "/" + recorder.outputFileName());
+                  const bool ok = file.exists() && file.size() > 0;
+                  qInfo().noquote()
+                      << QStringLiteral("[AutoTest] result=%1 file=%2 bytes=%3 encoder=%4 "
+                                        "hardware=%5 resolution=%6 encoderDetail=%7 captureError=%8")
+                             .arg(ok ? QStringLiteral("PASS") : QStringLiteral("FAIL"),
+                                  file.absoluteFilePath(),
+                                  QString::number(file.exists() ? file.size() : -1),
+                                  recorder.selectedVideoEncoder(),
+                                  recorder.selectedVideoEncoderIsHardware() ? QStringLiteral("yes")
+                                                                            : QStringLiteral("no"),
+                                  recorder.videoResolution(),
+                                  recorder.selectedVideoEncoderDetail(),
+                                  recorder.captureError());
+                  exitWith(ok ? AutoTestOk : AutoTestNoOutput);
+                },
+                [exitWith] {
+                  qWarning() << "[AutoTest] result=FAIL stage=stop (no Idle within 20 s)";
+                  exitWith(AutoTestStopTimeout);
+                });
+          });
+        },
+        [exitWith] {
+          qWarning() << "[AutoTest] result=FAIL stage=start (no Running within 20 s)";
+          exitWith(AutoTestNotRunning);
+        });
+    schedule(finalQuitDelay - 100, [exitWith] {
+      qWarning() << "[AutoTest] result=FAIL stage=safety-timeout";
+      exitWith(AutoTestStopTimeout);
+    });
   } else {
     qDebug() << "[AutoTest] unknown scenario";
   }
