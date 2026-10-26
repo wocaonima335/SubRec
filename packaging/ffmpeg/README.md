@@ -62,7 +62,7 @@ Code notes found while scanning (no change made in this step):
 ```
 configure --prefix=<OUT> --enable-cross-compile --cross-prefix=x86_64-w64-mingw32- --target-os=mingw32 --arch=x86_64
   --pkg-config=pkg-config --pkg-config-flags=--static --enable-shared --disable-static
-  --disable-everything --disable-autodetect --disable-programs --disable-doc --disable-network --disable-debug
+  --disable-everything --disable-autodetect --disable-ffplay --disable-ffprobe --disable-doc --disable-network --disable-debug
   --enable-w32threads --enable-avdevice --enable-avfilter --enable-swscale --enable-swresample
   --enable-d3d11va --enable-dxva2 --enable-ffnvcodec --enable-nvenc --enable-cuda --enable-amf --enable-libvpl
   --enable-encoder=aac,h264_nvenc,h264_amf,h264_qsv,pcm_s16le,rawvideo,libx264
@@ -78,7 +78,20 @@ configure --prefix=<OUT> --enable-cross-compile --cross-prefix=x86_64-w64-mingw3
 GPL-2.0-or-later (compatible with SubRec's GPL-3.0). `buffer`/`abuffer`/`buffersink`/
 `abuffersink` are always compiled into libavfilter. The script fails if configure silently
 drops any requested component, if the license flags differ from the variant, if the DLL set
-differs from `EXPECTED_DLLS`, or if any DLL imports a non-system DLL (MinGW runtime, x264, ...).
+differs from `EXPECTED_DLLS`, or if any DLL or `ffmpeg.exe` imports a non-system DLL (MinGW
+runtime, x264, ...).
+
+**ffmpeg.exe (acceptance tool, not used by SubRec itself).** Only the `ffmpeg` program is built
+(`--disable-ffplay --disable-ffprobe`). Its configure dependencies (`ffmpeg_deps` /
+`ffmpeg_select` in n8.0.3's `configure`, read from the checkout) are avcodec, avfilter,
+avformat and threads, which are already enabled; configure additionally force-enables the
+filters `aformat anull atrim crop format hflip null rotate transpose trim vflip` even with
+`--disable-everything`. The script verifies they are on. fftools uses libavdevice when present
+(`-devices`, `-sources`) and links `ole32`/`psapi`/`shell32`, which are Windows system DLLs.
+`ffmpeg.exe` is stripped, import-checked and hashed together with the DLLs
+(`share/subrec-ffmpeg/binaries.sha256`). `cmake/SubRecFFmpeg.cmake` only copies `bin/*.dll`, so
+the exe is not shipped unless packaging is changed. It adds no new source: `ffmpeg.exe` is GPL
+like the GPL-variant DLLs and its source is already in `ffmpeg-<ref>.tar.xz`.
 
 ### External libraries and licenses
 

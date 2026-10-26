@@ -15,7 +15,8 @@
 #   JOBS                           parallel jobs (default: nproc)
 #
 # Result: $SUBREC_FFMPEG_WORK/out/ffmpeg-subrec-<variant>-win64/{bin,include,lib,share}
-# (the layout cmake/SubRecFFmpeg.cmake expects for FFMPEG_ROOT). Then run
+# (the layout cmake/SubRecFFmpeg.cmake expects for FFMPEG_ROOT; bin/ also holds ffmpeg.exe,
+# the only program built). Then run
 # collect-sources.sh to produce the GPL/LGPL corresponding source for the release package.
 set -euo pipefail
 
@@ -181,7 +182,7 @@ args=(
     --pkg-config=pkg-config --pkg-config-flags=--static
     --enable-shared --disable-static
     --disable-everything --disable-autodetect
-    --disable-programs --disable-doc --disable-network --disable-debug
+    --disable-ffplay --disable-ffprobe --disable-doc --disable-network --disable-debug
     --enable-w32threads
     --enable-avdevice --enable-avfilter --enable-swscale --enable-swresample
     --enable-d3d11va --enable-dxva2
@@ -221,6 +222,16 @@ for c in "${indevs[@]}";    do need_cfg "CONFIG_$(upper "$c")_INDEV"    "$cc"; d
 for c in "${protocols[@]}"; do need_cfg "CONFIG_$(upper "$c")_PROTOCOL" "$cc"; done
 for c in "${filters[@]}";   do need_cfg "CONFIG_$(upper "$c")_FILTER"   "$cc"; done
 
+# Only the ffmpeg program is built. configure pulls in the filters fftools needs by itself
+# (ffmpeg_select in configure of n8.0.3), even with --disable-everything.
+mak=$BLD/ffmpeg/ffbuild/config.mak
+grep -q '^CONFIG_FFMPEG=yes$' "$mak" || die "ffmpeg program is not enabled"
+grep -q '^!CONFIG_FFPLAY=yes$' "$mak" || die "ffplay is enabled"
+grep -q '^!CONFIG_FFPROBE=yes$' "$mak" || die "ffprobe is enabled"
+for c in aformat anull atrim crop format hflip null rotate transpose trim vflip; do
+    need_cfg "CONFIG_$(upper "$c")_FILTER" "$cc"
+done
+
 # License guard: the variant must produce exactly the intended license.
 cfgh=$BLD/ffmpeg/config.h
 grep -q '^#define CONFIG_NONFREE 0$' "$cfgh" || die "nonfree is enabled"
@@ -240,12 +251,15 @@ cd "$OUT/bin"
 actual=$(ls -1 ./*.dll | sed 's|^\./||' | sort | tr '\n' ' ')
 expected=$(tr ' ' '\n' <<<"$EXPECTED_DLLS" | sed '/^$/d' | sort | tr '\n' ' ')
 [ "$actual" = "$expected" ] || die "DLL set changed (soname bump?): got [$actual] expected [$expected]"
+[ "$(ls -1 ./*.exe 2>/dev/null | sed 's|^\./||' | tr '\n' ' ')" = "ffmpeg.exe " ] \
+    || die "bin/ must contain exactly ffmpeg.exe as program, got [$(ls -1 ./*.exe 2>/dev/null | tr '\n' ' ')]"
 
-"$HOST-strip" --strip-unneeded ./*.dll
+"$HOST-strip" --strip-unneeded ./*.dll ./ffmpeg.exe
 
 # No MinGW runtime or third-party DLL may be needed at run time (all linked statically).
+# ffmpeg.exe imports the SubRec FFmpeg DLLs (EXPECTED_DLLS) plus Windows system DLLs only.
 system_dlls='^(kernel32|user32|gdi32|advapi32|ole32|oleaut32|shell32|shlwapi|psapi|bcrypt|msvcrt|ucrtbase|api-ms-win-[a-z0-9-]+|ws2_32|secur32|d3d9|d3d11|dxgi|dxva2|mfplat|mf|evr|cfgmgr32|setupapi|version|winmm)\.dll$'
-for dll in ./*.dll; do
+for dll in ./*.dll ./ffmpeg.exe; do
     while read -r imp; do
         lower=$(tr '[:upper:]' '[:lower:]' <<<"$imp")
         case " $EXPECTED_DLLS " in *" $imp "*) continue ;; esac
@@ -269,7 +283,7 @@ sanitize() { sed -e "s|$WORK|<WORK>|g" -e "s|${HOME:-/nonexistent-home}|<HOME>|g
     fi
 } | sanitize > "$INFO/toolchain.txt"
 printf '%s\n' "${args[@]}" | sanitize > "$INFO/configure-args.txt"
-sha256sum ./*.dll > "$INFO/dlls.sha256"
+sha256sum ./*.dll ./ffmpeg.exe > "$INFO/binaries.sha256"
 
 mkdir -p "$INFO/licenses"
 for name in $(cut -f1 "$INFO/sources.tsv"); do
@@ -279,4 +293,4 @@ for name in $(cut -f1 "$INFO/sources.tsv"); do
 done
 
 log "done: $OUT"
-cat "$INFO/dlls.sha256" >&2
+cat "$INFO/binaries.sha256" >&2

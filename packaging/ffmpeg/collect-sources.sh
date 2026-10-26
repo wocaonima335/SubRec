@@ -31,7 +31,7 @@ INFO=$OUT/share/subrec-ffmpeg
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
-for f in sources.tsv configure-args.txt toolchain.txt dlls.sha256; do
+for f in sources.tsv configure-args.txt toolchain.txt binaries.sha256; do
     [ -f "$INFO/$f" ] || die "missing $INFO/$f: run build-ffmpeg.sh (same SUBREC_FFMPEG_VARIANT) first"
 done
 grep -qx "variant=$VARIANT" "$INFO/toolchain.txt" || die "build in $OUT is not variant $VARIANT"
@@ -111,10 +111,10 @@ EOF
     cat "$INFO/toolchain.txt"
     cat <<EOF
 
-DLLs (SHA-256, after strip --strip-unneeded)
---------------------------------------------
+DLLs and ffmpeg.exe (SHA-256, after strip --strip-unneeded)
+-----------------------------------------------------------
 EOF
-    cat "$INFO/dlls.sha256"
+    cat "$INFO/binaries.sha256"
 } > "$S/BUILD_CONFIG.txt"
 
 ( cd "$S" && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | LC_ALL=C sort \
