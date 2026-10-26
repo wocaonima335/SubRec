@@ -59,7 +59,7 @@ build/windows-mingw-release/appSubRec.exe
 
 可选：`-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` 关闭 Windows 下默认开启的生命周期测试目标。
 
-> 关于 FFmpeg 的许可：开发所用的预编译 FFmpeg 是 **GPL v3** 构建（`--enable-gpl --enable-version3`，含 x264/x265）。本仓库不分发它，但若你**分发**包含它的二进制，会有相应义务，详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
+> 关于 FFmpeg 的许可：开发所用的预编译 FFmpeg 是 **GPL v3** 构建（`--enable-gpl --enable-version3`，含 x264/x265）。本仓库不分发它；但发布包（zip 及将来的安装包）会包含它，因此发布包的 **`sources/` 目录附带对应源码**：`ffmpeg-37064b2d16.tar.gz`、`x264-<VERSION>.tar.*`、`x265-<VERSION>.tar.*`、`BUILD_CONFIG.txt`（configure 命令行）和 `SHA256SUMS`。详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
 
 ### 下载与安装：Windows SmartScreen 警告
 
@@ -137,7 +137,7 @@ build/windows-mingw-release/appSubRec.exe
 
 Optional: `-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` disables the lifecycle test target that is ON by default on Windows.
 
-> FFmpeg licensing note: the prebuilt FFmpeg used in development is a **GPL v3** build (`--enable-gpl --enable-version3`, including x264/x265). This repository does not distribute it, but if you **distribute** binaries that include it you take on obligations; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
+> FFmpeg licensing note: the prebuilt FFmpeg used in development is a **GPL v3** build (`--enable-gpl --enable-version3`, including x264/x265). This repository does not distribute it, but the release packages (zip, and any future installer) do include it, so every package carries the corresponding source in its **`sources/` directory**: `ffmpeg-37064b2d16.tar.gz`, `x264-<VERSION>.tar.*`, `x265-<VERSION>.tar.*`, `BUILD_CONFIG.txt` (configure command line) and `SHA256SUMS`. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
 ### Downloading and installing: Windows SmartScreen warning
 

@@ -94,6 +94,65 @@ jobs:
           Copy-Item THIRD_PARTY_LICENSES.md $out/
           Copy-Item "$env:SUBREC_FFMPEG_ROOT/LICENSE.txt" $out/FFmpeg-LICENSE.txt -ErrorAction SilentlyContinue
 
+      # GPL: the package ships FFmpeg DLLs built with --enable-gpl, so it must carry the
+      # corresponding source. Layout of <package>/sources/ (see THIRD_PARTY_LICENSES.md):
+      #   ffmpeg-<commit>.tar.gz, x264-<VERSION>.tar.*, x265-<VERSION>.tar.*, BUILD_CONFIG.txt, SHA256SUMS
+      # TODO: set repository variables X264_VERSION, X264_SOURCE_URL, X265_VERSION, X265_SOURCE_URL
+      # (exact versions the FFmpeg DLLs were built with; URL must end in .tar.gz/.tar.bz2/.tar.xz) and
+      # fill packaging/BUILD_CONFIG.txt. Until then: tag builds FAIL; other builds continue but the
+      # package gets sources/INCOMPLETE-DO-NOT-DISTRIBUTE.txt and must not be published.
+      - name: Collect corresponding source (GPL)
+        shell: pwsh
+        env:
+          FFMPEG_COMMIT: '37064b2d16'
+          X264_VERSION: ${{ vars.X264_VERSION }}
+          X264_SOURCE_URL: ${{ vars.X264_SOURCE_URL }}
+          X265_VERSION: ${{ vars.X265_VERSION }}
+          X265_SOURCE_URL: ${{ vars.X265_SOURCE_URL }}
+          IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src = "dist/SubRec/sources"
+          New-Item -ItemType Directory -Force $src | Out-Null
+          $srcFull = (Resolve-Path $src).Path
+          $problems = @()
+
+          Invoke-WebRequest "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/$env:FFMPEG_COMMIT" -OutFile "$srcFull/ffmpeg-$env:FFMPEG_COMMIT.tar.gz"
+
+          foreach ($lib in 'x264', 'x265') {
+            $ver = [Environment]::GetEnvironmentVariable($lib.ToUpper() + '_VERSION')
+            $url = [Environment]::GetEnvironmentVariable($lib.ToUpper() + '_SOURCE_URL')
+            if ([string]::IsNullOrWhiteSpace($ver) -or [string]::IsNullOrWhiteSpace($url)) {
+              $problems += "$lib source is not configured (repository variables $($lib.ToUpper())_VERSION and $($lib.ToUpper())_SOURCE_URL)"
+            } elseif ($ver -notmatch '^[A-Za-z0-9._-]+$') {
+              $problems += "$($lib.ToUpper())_VERSION contains unsupported characters"
+            } elseif ($url -match '\.tar\.(gz|bz2|xz)$') {
+              Invoke-WebRequest $url -OutFile "$srcFull/$lib-$ver.tar.$($Matches[1])"
+            } else {
+              $problems += "$($lib.ToUpper())_SOURCE_URL must end in .tar.gz, .tar.bz2 or .tar.xz"
+            }
+          }
+
+          $cfg = Get-Content packaging/BUILD_CONFIG.txt -Raw
+          if ($cfg -match 'TODO') { $problems += 'packaging/BUILD_CONFIG.txt still contains TODO (configure command line / build scripts not recorded)' }
+          $ffexe = Join-Path $env:SUBREC_FFMPEG_ROOT 'bin/ffmpeg.exe'
+          $banner = 'ffmpeg.exe not found in the FFmpeg package; no -version output captured.'
+          if (Test-Path $ffexe) { $banner = (& $ffexe -hide_banner -version) -join "`n" }
+          [IO.File]::WriteAllText("$srcFull/BUILD_CONFIG.txt", $cfg + "`n`n--- ffmpeg -version (captured by CI from the packaged build) ---`n" + $banner + "`n", (New-Object Text.UTF8Encoding($false)))
+
+          if ($problems.Count -gt 0) {
+            $msg = "Corresponding source is incomplete:`n - " + ($problems -join "`n - ")
+            if ($env:IS_RELEASE -eq 'true') { throw $msg }
+            Write-Warning $msg
+            [IO.File]::WriteAllText("$srcFull/INCOMPLETE-DO-NOT-DISTRIBUTE.txt", $msg + "`n")
+          }
+
+          $lines = Get-ChildItem $srcFull -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | Sort-Object Name | ForEach-Object {
+            (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() + '  ' + $_.Name
+          }
+          [IO.File]::WriteAllText("$srcFull/SHA256SUMS", ($lines -join "`n") + "`n", (New-Object Text.UTF8Encoding($false)))
+          Get-ChildItem $srcFull | Select-Object Name, Length
+
       - name: Zip and SHA256
         shell: pwsh
         run: |
@@ -120,4 +179,7 @@ jobs:
           body: |
             Unsigned build. Windows SmartScreen may warn on first run: click "More info" -> "Run anyway", and verify the SHA256 of the zip against the attached .sha256 file.
             未签名构建。首次运行 Windows SmartScreen 可能提示，点“更多信息”→“仍要运行”，并用附带的 .sha256 校验 zip。
+
+            The zip contains the GPL corresponding source of the bundled FFmpeg/x264/x265 in `sources/` (checksums in `sources/SHA256SUMS`).
+            压缩包的 `sources/` 目录内含所附 FFmpeg/x264/x265 的 GPL 对应源码（校验值见 `sources/SHA256SUMS`）。
           draft: true

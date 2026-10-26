@@ -51,6 +51,16 @@ contain, is:
 - x264 and x265 (and every other external library enabled in that build): TODO, record the
   exact versions or commits and the full `./configure` command line used for the build. The
   exact x264/x265 versions are **currently unknown**.
+- **Inside every SubRec release package** (zip, and any future installer) the same source is
+  shipped under `sources/`, so no separate download is needed:
+
+  | Path in the package | Content |
+  | --- | --- |
+  | `sources/ffmpeg-37064b2d16.tar.gz` | FFmpeg source at commit `37064b2d16` (GitHub archive of that commit) |
+  | `sources/x264-<VERSION>.tar.*` | x264 source, the exact version built into the FFmpeg DLLs (TODO: version unknown) |
+  | `sources/x265-<VERSION>.tar.*` | x265 source, the exact version built into the FFmpeg DLLs (TODO: version unknown) |
+  | `sources/BUILD_CONFIG.txt` | FFmpeg configure command line, toolchain and build notes (template: `packaging/BUILD_CONFIG.txt`) |
+  | `sources/SHA256SUMS` | SHA-256 of every other file in `sources/` (check with `sha256sum -c SHA256SUMS`) |
 
 ### GPL obligations when you distribute these binaries
 

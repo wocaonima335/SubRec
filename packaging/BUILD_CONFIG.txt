@@ -1,0 +1,32 @@
+SubRec release package - build configuration of the bundled FFmpeg
+=====================================================================
+
+This file is copied into <package>/sources/BUILD_CONFIG.txt by the release workflow
+(.github/workflows/windows-build.yml). The release workflow refuses to build a tagged
+release while any item below is still marked as unfilled.
+
+Bundled FFmpeg
+--------------
+Version string : N-119453-g37064b2d16-20250509 (git master snapshot of 2025-05-09, not an official release)
+Commit         : 37064b2d16
+Source archive : ffmpeg-37064b2d16.tar.gz (in this directory)
+Libraries      : libavutil 60.2.100, libavcodec 62.3
+DLLs           : avutil-60 avcodec-62 avformat-62 avfilter-11 avdevice-62 swscale-9 swresample-6
+License        : GPL version 3 or later (--enable-gpl --enable-version3, no --enable-nonfree)
+
+Enabled GPL components
+----------------------
+x264 version/commit : TODO (must equal the source archive x264-<VERSION>.tar.* in this directory)
+x265 version/commit : TODO (must equal the source archive x265-<VERSION>.tar.* in this directory)
+
+Other external libraries enabled in the FFmpeg build (versions): TODO
+
+Full ./configure command line used to build FFmpeg
+--------------------------------------------------
+TODO (the "configuration:" line captured by CI below is derived from the DLLs and may be
+used as a starting point, but the original command line, toolchain, environment and any
+patches must be recorded here)
+
+Build scripts / how x264, x265 and FFmpeg were built (toolchain, cross-compiler, flags, patches)
+-------------------------------------------------------------------------------------------------
+TODO
