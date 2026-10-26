@@ -1,0 +1,18 @@
+cmake_minimum_required(VERSION 3.21)
+project(wasapi_loopback_tests LANGUAGES CXX)
+enable_testing()
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecFFmpeg.cmake")
+subrec_require_ffmpeg_root()
+add_subdirectory("${CMAKE_CURRENT_LIST_DIR}/../../capture/media" capture-media)
+add_executable(wasapi_audio_pipeline_test audio_pipeline_test.cpp)
+target_link_libraries(wasapi_audio_pipeline_test PRIVATE capture_media_conversion)
+target_compile_features(wasapi_audio_pipeline_test PRIVATE cxx_std_17)
+if(WIN32)
+    foreach(dll IN ITEMS avutil-60 swscale-9 swresample-6)
+        add_custom_command(TARGET wasapi_audio_pipeline_test POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+            "${FFMPEG_ROOT}/bin/${dll}.dll" "$<TARGET_FILE_DIR:wasapi_audio_pipeline_test>")
+    endforeach()
+endif()
+add_test(NAME wasapi_audio_pipeline COMMAND wasapi_audio_pipeline_test)
+set_tests_properties(wasapi_audio_pipeline PROPERTIES TIMEOUT 30)

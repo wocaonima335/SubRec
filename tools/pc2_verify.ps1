@@ -97,7 +97,7 @@ $rc = Invoke-Logged 'main-ctest' 'ctest' @('--test-dir', $mainBuild, '--output-o
 Add-Result 'main ctest (capture_lifecycle, audio_filter_dual)' ($rc -eq 0) "rc=$rc"
 
 # --- 2. standalone test projects -------------------------------------------------------------
-foreach ($t in 'input_startup', 'media_conversion', 'muxer_lifecycle') {
+foreach ($t in 'input_startup', 'media_conversion', 'muxer_lifecycle', 'wasapi_loopback') {
     $dir = Join-Path $BuildRoot $t
     if (-not $SkipBuild) {
         $rc = Invoke-Logged "$t-configure" 'cmake' (@('-S', (Join-Path $SourceDir "tests\$t"), '-B', $dir) + $commonCMake)
@@ -183,6 +183,10 @@ function Invoke-Recording([string]$Name, [hashtable]$Environment) {
                     ForEach-Object { $_.Line.Trim() }) -join ' | '
     }
     Add-Result "record $Name (app exit code)" ($code -eq 0) "exit=$code $summary"
+    if ($Name -like 'rec-wasapi-*') {
+        $nativeStarted = (Test-Path $runLog) -and [bool](Select-String -Path $runLog -SimpleMatch '[WASAPI] started')
+        Add-Result "WASAPI source $Name" $nativeStarted 'Requires native source startup; a DirectShow fallback does not pass.'
+    }
 
     # Read the file back without decoding (needs the mov demuxer of the test components).
     if (Test-Path $out) {
@@ -193,13 +197,37 @@ function Invoke-Recording([string]$Name, [hashtable]$Environment) {
         $hasVideo = $text -match 'Video: h264'
         $hasAudio = $text -match 'Audio: aac'
         $duration = if ($text -match 'Duration: (\d\d:\d\d:\d\d\.\d\d)') { $Matches[1] } else { '?' }
-        Add-Result "readback $Name" (($rc -eq 0) -and $hasVideo -and $hasAudio) "rc=$rc h264=$hasVideo aac=$hasAudio duration=$duration bytes=$((Get-Item $out).Length)"
+        $durationOk = $duration -ne '?' -and [Math]::Abs(([TimeSpan]::Parse($duration)).TotalSeconds - $RecordMs / 1000.0) -lt 1.5
+        Add-Result "readback $Name" (($rc -eq 0) -and $hasVideo -and $hasAudio -and $durationOk) "rc=$rc h264=$hasVideo aac=$hasAudio duration=$duration bytes=$((Get-Item $out).Length)"
     } else {
         Add-Result "readback $Name" $false "no file $out"
     }
 }
 
 if (Test-Path $app) {
+    # Generated tone uses SoundPlayer on the default render endpoint; no FFmpeg build changes.
+    $tone = Join-Path $runDir 'wasapi-tone.wav'
+    $writer = New-Object System.IO.BinaryWriter([System.IO.File]::Create($tone))
+    try {
+        $rate = 48000; $count = $rate * 2; $bytes = $count * 2
+        $writer.Write([System.Text.Encoding]::ASCII.GetBytes('RIFF')); $writer.Write([int](36 + $bytes))
+        $writer.Write([System.Text.Encoding]::ASCII.GetBytes('WAVEfmt ')); $writer.Write([int]16)
+        $writer.Write([int16]1); $writer.Write([int16]1); $writer.Write([int]$rate)
+        $writer.Write([int]($rate * 2)); $writer.Write([int16]2); $writer.Write([int16]16)
+        $writer.Write([System.Text.Encoding]::ASCII.GetBytes('data')); $writer.Write([int]$bytes)
+        for ($i = 0; $i -lt $count; $i++) { $writer.Write([int16](8000 * [Math]::Sin(2 * [Math]::PI * 440 * $i / $rate))) }
+    } finally { $writer.Dispose() }
+    $player = New-Object System.Media.SoundPlayer $tone
+    $systemVars = @{ SUBREC_SYSTEM_AUDIO_BACKEND = 'wasapi'; SUBREC_AUTOTEST_MIC_DEVICE = ''; SUBREC_AUTOTEST_SYSTEM_AUDIO = '1'; SUBREC_AUTOTEST_RECORD_MS = '5000' }
+    $savedRecordMs = $RecordMs
+    $RecordMs = 5000
+    try {
+        $player.PlayLooping()
+        Invoke-Recording 'rec-wasapi-tone' $systemVars
+        $player.Stop()
+        Write-Host 'Idle test: stop other applications playing audio to exercise no-packet silence filling.'
+        Invoke-Recording 'rec-wasapi-idle' $systemVars
+    } finally { $player.Stop(); $player.Dispose(); $RecordMs = $savedRecordMs }
     foreach ($mode in $DdagrabModes) {
         Invoke-Recording "rec-ddagrab-$mode" @{ SUBREC_CAPTURE_BACKEND = 'ddagrab'; SUBREC_DDAGRAB_MODE = $mode }
     }

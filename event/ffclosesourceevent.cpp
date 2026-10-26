@@ -105,6 +105,14 @@ void FFCloseSourceEvent::drainVideoEncoderPath()
 
 void FFCloseSourceEvent::stopAudioInputPath()
 {
+#ifdef _WIN32
+    auto &capture = recoderContext->getContext()->systemAudioCapture;
+    if (sourceType == AUDIO && capture && capture->state() != capture::wasapi::LoopbackState::Idle) {
+        capture->requestDrainStop();
+        capture->join();
+        return; // This source owns EOF; idle decoders must not send it again.
+    }
+#endif
     if (aDemuxerThread[index]) {
         qDebug() << "[FFCloseSourceEvent] audio demuxer drain";
         aDemuxerThread[index]->requestDrainStop();

@@ -12,6 +12,7 @@ target_link_libraries(event_module PRIVATE
     PRIVATE 
         Qt6::Core
         ${FFMPEG_LIBRARIES}
+        capture_module
         queue_module
         decoder_module
         demuxer_module

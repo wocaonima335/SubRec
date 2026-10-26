@@ -86,6 +86,7 @@ bool CaptureSession::start(const CaptureConfig &config,
         qDebug() << "[CaptureSession] open task begin";
         auto openEvent = std::make_unique<FFOpenSourceEvent>(
             &m_recorder, startConfig.videoInput, startConfig.audioInput);
+        openEvent->setAudioFallback(startConfig.audioFallbackInput);
         openEvent->setVideoFallback(startConfig.videoFallbackInput);
         const CaptureStartResult result = openEvent->openAndStartResult([this]() {
             return !m_stopRequested.load(std::memory_order_acquire);
@@ -145,6 +146,12 @@ void CaptureSession::abortPipeline()
     closeQueue(pipeline->vFilterEncoderFrmQueue);
     closeQueue(pipeline->aEncoderPktQueue);
     closeQueue(pipeline->vEncoderPktQueue);
+#ifdef _WIN32
+    if (pipeline->systemAudioCapture) {
+        pipeline->systemAudioCapture->requestAbort();
+        pipeline->systemAudioCapture->join();
+    }
+#endif
     if (pipeline->screenGrabThread) pipeline->screenGrabThread->requestAbort();
 
     const auto abortWorker = [](auto *worker) { if (worker) worker->requestAbort(); };

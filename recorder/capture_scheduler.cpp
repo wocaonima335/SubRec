@@ -3,6 +3,9 @@
 #include "capture/ddagrab_capture_backend.h"
 #include "capture/ddagrab_screen_source.h"
 #include "capture/dshow_capture_backend.h"
+#ifdef _WIN32
+#include "capture/wasapi_capture_backend.h"
+#endif
 #include "recorder/ffrecorder.h"
 
 extern "C" {
@@ -40,6 +43,11 @@ const char *const kSettingsApplication = "SubRec";
 CaptureScheduler::CaptureScheduler(FFRecorder &recorder)
     : QObject(nullptr), m_recorder(recorder)
 {
+    const QString audioBackend = qEnvironmentVariable("SUBREC_SYSTEM_AUDIO_BACKEND").trimmed().toLower();
+    if (audioBackend == "dshow") m_systemAudioBackendPreference = SystemAudioBackendPreference::DirectShow;
+    else if (audioBackend == "wasapi") m_systemAudioBackendPreference = SystemAudioBackendPreference::Wasapi;
+    else if (!audioBackend.isEmpty() && audioBackend != "auto")
+        qWarning() << "[CaptureScheduler] invalid SUBREC_SYSTEM_AUDIO_BACKEND; using auto:" << audioBackend;
     const QString fromEnv = qEnvironmentVariable("SUBREC_CAPTURE_BACKEND");
     if (!fromEnv.trimmed().isEmpty()) {
         if (const auto parsed = parseScreenBackendPreference(fromEnv)) {
@@ -239,6 +247,9 @@ void CaptureScheduler::refreshDevices()
     QList<CaptureDevice> devices = DirectShowCaptureBackend().enumerate();
     // Desktop Duplication screens are listed too (marked unavailable without ddagrab).
     devices.append(DdagrabCaptureBackend().enumerate());
+#ifdef _WIN32
+    devices.append(WasapiCaptureBackend().enumerate());
+#endif
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_devices = devices;
@@ -325,11 +336,11 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
         return CaptureStartResult::failure(std::move(error));
     }
 
-    std::optional<QString> dshowScreenId;
+    std::optional<QString> dshowScreenId, dshowAudioId;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         // The selected device decides the video backend ("ddagrab:N" screens use Desktop
-        // Duplication; DirectShow screens, cameras and all audio use DirectShow).
+        // Duplication; audio likewise follows the selected device backend).
         const auto selectedVideo = std::find_if(m_devices.cbegin(), m_devices.cend(),
                                                 [this](const CaptureDevice &device) {
                                                     return device.id == m_selectedVideoDeviceId;
@@ -339,7 +350,9 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
         config->video = {videoBackend,
                          m_useScreen ? CaptureDeviceKind::Screen : CaptureDeviceKind::Camera,
                          m_selectedVideoDeviceId};
-        config->audio = {CaptureBackend::DirectShow,
+        const auto selectedAudio = std::find_if(m_devices.cbegin(), m_devices.cend(),
+            [this](const CaptureDevice &device) { return device.id == m_selectedAudioDeviceId; });
+        config->audio = {selectedAudio != m_devices.cend() ? selectedAudio->backend : CaptureBackend::DirectShow,
                          m_useSystemAudio ? CaptureDeviceKind::SystemAudio : CaptureDeviceKind::Microphone,
                          m_selectedAudioDeviceId};
         const auto dshowScreen = std::find_if(m_devices.cbegin(), m_devices.cend(),
@@ -349,6 +362,9 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
                                                       && device.available;
                                               });
         if (dshowScreen != m_devices.cend()) dshowScreenId = dshowScreen->id;
+        for (const auto &device : m_devices)
+            if (device.kind == CaptureDeviceKind::SystemAudio && device.backend == CaptureBackend::DirectShow && device.available)
+                dshowAudioId = device.id;
     }
     const auto videoKind = config->video.kind;
     const auto audioKind = config->audio.kind;
@@ -387,6 +403,15 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
         result = dshow.makeInputRequest(videoKind, config->video.deviceId, &config->videoInput);
         if (!result.ok) return result;
     }
+#ifdef _WIN32
+    if (config->audio.backend == CaptureBackend::Wasapi) {
+        result = WasapiCaptureBackend().makeInputRequest(audioKind, config->audio.deviceId, &config->audioInput);
+        if (dshowAudioId) {
+            InputRequest fallback;
+            if (dshow.makeInputRequest(audioKind, *dshowAudioId, &fallback).ok) config->audioFallbackInput = fallback;
+        }
+    } else
+#endif
     result = dshow.makeInputRequest(audioKind, config->audio.deviceId, &config->audioInput);
     if (!result.ok) return result;
     qInfo() << "[CaptureScheduler] video backend" << captureBackendName(config->videoInput.backend)
@@ -399,7 +424,7 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
 void CaptureScheduler::selectDefaultDevicesLocked()
 {
     const auto selectFirst = [this](CaptureDeviceKind kind, QString &selectedId,
-                                    std::optional<CaptureBackend> preferredBackend) {
+                                    std::optional<CaptureBackend> preferredBackend, bool allowOtherBackend = true) {
         const auto existing = std::find_if(m_devices.cbegin(), m_devices.cend(),
                                            [&selectedId, kind](const CaptureDevice &device) {
                                                return device.id == selectedId && device.kind == kind && device.available;
@@ -413,7 +438,7 @@ void CaptureScheduler::selectDefaultDevicesLocked()
                                             && device.backend == *preferredBackend;
                                     });
         }
-        if (fallback == m_devices.cend()) {
+        if (fallback == m_devices.cend() && allowOtherBackend) {
             fallback = std::find_if(m_devices.cbegin(), m_devices.cend(),
                                     [kind](const CaptureDevice &device) {
                                         return device.kind == kind && device.available;
@@ -427,7 +452,16 @@ void CaptureScheduler::selectDefaultDevicesLocked()
         selectFirst(CaptureDeviceKind::Camera, m_selectedVideoDeviceId, std::nullopt);
     }
     selectFirst(m_useSystemAudio ? CaptureDeviceKind::SystemAudio : CaptureDeviceKind::Microphone,
-                m_selectedAudioDeviceId, std::nullopt);
+                m_selectedAudioDeviceId,
+#ifdef _WIN32
+                m_useSystemAudio ? std::optional<CaptureBackend>(
+                    m_systemAudioBackendPreference == SystemAudioBackendPreference::DirectShow
+                    ? CaptureBackend::DirectShow : CaptureBackend::Wasapi) : std::nullopt,
+                !m_useSystemAudio || m_systemAudioBackendPreference != SystemAudioBackendPreference::DirectShow
+#else
+                std::nullopt
+#endif
+    );
 }
 
 CaptureBackend CaptureScheduler::effectiveScreenBackendLocked() const

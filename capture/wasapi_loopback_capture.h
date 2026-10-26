@@ -1,7 +1,7 @@
 #ifndef WASAPI_LOOPBACK_CAPTURE_H
 #define WASAPI_LOOPBACK_CAPTURE_H
 
-// DESIGN ONLY - not in any CMakeLists.txt and not included anywhere yet.
+// Implemented for WIN32; see the interface document for lifecycle and timing contracts.
 // Native system-audio source (WASAPI shared-mode loopback) that will replace the third-party
 // DirectShow "virtual-audio-capturer". Full contract: docs/WASAPI_LOOPBACK_INTERFACE.md.
 // Reference implementation of the raw API calls: tests/native_capture_probe/main.cpp (wasapi).
@@ -12,6 +12,7 @@
 // FFAFilterThread / FFAFilter / FFAEncoderThread / RecorderSyncQueue stay unchanged.
 
 #include "capture_types.h"
+#include "wasapi_audio_sink.h"
 
 #include <chrono>
 #include <cstdint>
@@ -23,13 +24,6 @@
 struct AVFrame;
 
 namespace capture::wasapi {
-
-// Fixed output of the source: what FFADecoder delivers today and what FFAFilter /
-// FFAEncoder::initAudio expect (filter/ffafilter.h AUDIO_SAMPLE_RATE / AUDIO_SAMPLE_FORMAT).
-constexpr int kOutputSampleRate = 48000;
-constexpr int kOutputChannels = 2;          // AV_CHANNEL_LAYOUT_STEREO
-// Output sample format is AV_SAMPLE_FMT_FLTP; pts in 1/48000 (see LoopbackCapture::start()).
-constexpr int kOutputFrameSamples = 480;    // 10 ms per AVFrame (any size is accepted downstream)
 
 enum class EndpointRole
 {
@@ -85,6 +79,7 @@ struct LoopbackStats
     std::uint64_t silentPacketFrames = 0; // AUDCLNT_BUFFERFLAGS_SILENT
     std::uint64_t generatedSilenceFrames = 0; // idle gaps filled (output rate)
     std::uint64_t discontinuities = 0;    // AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY
+    std::uint64_t driftWarnings = 0;
     std::uint64_t timestampErrors = 0;    // AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR
     std::uint64_t outputFrames = 0;       // samples per channel delivered at 48 kHz
     std::uint64_t sinkBlockedMs = 0;      // time spent waiting for the frame queue
@@ -99,19 +94,6 @@ enum class LoopbackState
     Stopping,  // requestDrainStop()/requestAbort() seen
     Finished,  // sink got finish() (drain) or was abandoned (abort)
     Failed     // open failed, or a runtime error that could not be recovered
-};
-
-// Where frames go. The production adapter wraps FFAFrameQueue (aFrmQueue[A_AUDIO]):
-//   push   -> FFAFrameQueue::enqueue (moves the reference; blocks while full; returns false
-//             when the queue was closed by an abort)
-//   finish -> FFAFrameQueue::sendFinish (EOF for FFAFilterThread)
-class AudioFrameSink
-{
-public:
-    virtual ~AudioFrameSink() = default;
-    // Takes the frame's reference (av_frame_move_ref semantics); frame is blank afterwards.
-    virtual bool push(AVFrame *frame) = 0;
-    virtual void finish() = 0;
 };
 
 struct LoopbackRuntimeError

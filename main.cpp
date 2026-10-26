@@ -114,6 +114,8 @@ bool applyAutoTestEnvironment()
     qInfo() << "[AutoTest] output =" << info.absoluteFilePath();
   }
 
+  if (qEnvironmentVariableIntValue("SUBREC_AUTOTEST_SYSTEM_AUDIO") == 1)
+    scheduler.changeAudioSource(true);
   const QString wanted = qEnvironmentVariable("SUBREC_AUTOTEST_MIC_DEVICE").trimmed();
   if (!wanted.isEmpty()) {
     scheduler.changeAudioSource(false);

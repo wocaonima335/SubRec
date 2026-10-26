@@ -16,6 +16,9 @@ target_link_libraries(capture_module
         ${FFMPEG_LIBRARIES}
 )
 if(WIN32)
+    target_sources(capture_module PRIVATE wasapi_loopback_capture.cpp wasapi_loopback_capture.h
+        wasapi_capture_backend.cpp wasapi_capture_backend.h media/media_conversion.cpp)
+    target_link_libraries(capture_module PRIVATE ole32 uuid propsys)
     # DXGI output enumeration for the ddagrab screen devices.
     target_link_libraries(capture_module PRIVATE dxgi)
 endif()

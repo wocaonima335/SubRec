@@ -90,6 +90,7 @@ private:
     bool m_useSystemAudio = true;
     ScreenBackendPreference m_screenBackendPreference = ScreenBackendPreference::Auto;
     bool m_screenBackendFromEnv = false;
+    SystemAudioBackendPreference m_systemAudioBackendPreference = SystemAudioBackendPreference::Auto;
 };
 
 #endif // CAPTURE_SCHEDULER_H

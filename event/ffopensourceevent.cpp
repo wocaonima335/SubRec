@@ -7,6 +7,20 @@ extern "C" {
 }
 
 using namespace FFRecordContextType;
+#ifdef _WIN32
+namespace {
+class QueueAudioSink final : public capture::wasapi::AudioFrameSink {
+    FFAFrameQueue *queue;
+public:
+    explicit QueueAudioSink(FFAFrameQueue *q) : queue(q) {}
+    bool push(AVFrame *frame) override {
+        queue->enqueue(frame);
+        return !queue->isClosed();
+    }
+    void finish() override { queue->sendFinish(); }
+};
+}
+#endif
 
 FFOpenSourceEvent::FFOpenSourceEvent(FFRecorder *recorderCtx,
                                      demuxerType videoSourceType_,
@@ -153,6 +167,39 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
   aEncoderThread->close();
 
   if (!checkContinue(audioInput, shouldStart)) return false;
+  usingWasapi = false;
+#ifdef _WIN32
+  auto *context = recoderContext->getContext();
+  if (context->systemAudioCapture) {
+    context->systemAudioCapture->requestAbort();
+    aFrmQueue[A_AUDIO]->close();
+    context->systemAudioCapture->join();
+    context->systemAudioCapture.reset();
+    context->systemAudioSink.reset();
+  }
+  if (audioSourceType == AUDIO && audioInput.backend == CaptureBackend::Wasapi) {
+    context->systemAudioSink = std::make_unique<QueueAudioSink>(aFrmQueue[A_AUDIO]);
+    context->systemAudioCapture = std::make_unique<capture::wasapi::LoopbackCapture>(capture::wasapi::LoopbackConfig{});
+    auto *recorder = recoderContext;
+    context->systemAudioCapture->onRuntimeError = [recorder](const capture::wasapi::LoopbackRuntimeError &error) {
+      if (!error.recovered) QMetaObject::invokeMethod(recorder, "setCaptureError", Qt::QueuedConnection,
+          Q_ARG(QString, error.operation + ": " + error.message),
+          Q_ARG(QString, QStringLiteral("Check the playback device and restart recording.")));
+    };
+    startupResult = context->systemAudioCapture->open(context->systemAudioSink.get());
+    usingWasapi = startupResult.ok;
+    if (!usingWasapi) {
+      context->systemAudioCapture->requestAbort();
+      context->systemAudioCapture->join();
+      if (!audioFallback || !checkContinue(audioInput, shouldStart)) return false;
+      qWarning() << "[WASAPI] open failed; falling back to DirectShow";
+      audioInput = *audioFallback;
+      audioUrl = audioInput.url.toStdString();
+      audioFormat = audioInput.format.toStdString();
+    }
+  }
+#endif
+  if (!usingWasapi) {
   aDemuxer[audioIndex]->init(audioUrl, audioFormat, aPktQueue[audioIndex], nullptr,
                              audioSourceType, true, shouldStart);
   aDemuxerThread[audioIndex]->init(aDemuxer[audioIndex]);
@@ -166,6 +213,7 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
   aDecoder[audioIndex]->init(aDemuxer[audioIndex]->getAStream(),
                              aFrmQueue[audioIndex]);
   aDecoderThread[audioIndex]->init(aDecoder[audioIndex], aPktQueue[audioIndex]);
+  }
 
   if (!checkContinue(audioInput, shouldStart)) return false;
   aEncoder->init(aEncoderPktQueue);
@@ -367,9 +415,14 @@ void FFOpenSourceEvent::startAudio()
   aFrmQueue[audioIndex]->start();
   aFilterEncoderFrmQueue->start();
 
-  aDemuxerThread[audioIndex]->start();
-
-  aDecoderThread[audioIndex]->start();
+#ifdef _WIN32
+  if (usingWasapi) recoderContext->getContext()->systemAudioCapture->start();
+  else
+#endif
+  {
+    aDemuxerThread[audioIndex]->start();
+    aDecoderThread[audioIndex]->start();
+  }
 
   aFilterThread->start();
   aFilterThread->startEncoder();

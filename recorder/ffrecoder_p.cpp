@@ -59,6 +59,15 @@ FFRecorderPrivate::~FFRecorderPrivate()
         }
     };
 
+#ifdef _WIN32
+    if (systemAudioCapture) {
+        systemAudioCapture->requestAbort();
+        if (aDecoderFrmQueue[A_AUDIO]) aDecoderFrmQueue[A_AUDIO]->close();
+        systemAudioCapture->join();
+        systemAudioCapture.reset();
+        systemAudioSink.reset();
+    }
+#endif
     stopAndDeleteThread(screenGrabThread);
     stopAndDeleteThread(muxerThread);
     stopAndDeleteThread(aEncoderThread);

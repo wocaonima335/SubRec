@@ -2,6 +2,9 @@
 #define FFRECORDER_P_H
 
 #include "ffaudiosampler.h"
+#ifdef _WIN32
+#include "capture/wasapi_loopback_capture.h"
+#endif
 
 #include "decoder/ffadecoder.h"
 #include "decoder/ffvdecoder.h"
@@ -147,6 +150,10 @@ namespace FFRecordURLS
 
         // ddagrab 屏幕帧源（替代屏幕的 demuxer + decoder，帧写入 vDecoderFrmQueue[SCREEN]）
         FFScreenGrabThread *screenGrabThread;
+#ifdef _WIN32
+        std::unique_ptr<capture::wasapi::AudioFrameSink> systemAudioSink;
+        std::unique_ptr<capture::wasapi::LoopbackCapture> systemAudioCapture;
+#endif
 
         // 音频过滤器
         FFAFilter *aFilter;

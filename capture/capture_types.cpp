@@ -3,6 +3,7 @@
 QString captureBackendName(CaptureBackend backend)
 {
     switch (backend) {
+    case CaptureBackend::Wasapi: return QStringLiteral("WASAPI");
     case CaptureBackend::DirectShow:
         return QStringLiteral("DirectShow");
     case CaptureBackend::DesktopDuplication:

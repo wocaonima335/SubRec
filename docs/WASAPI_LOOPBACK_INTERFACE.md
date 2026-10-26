@@ -1,9 +1,14 @@
 # WASAPI loopback 系统声音源：接口设计
 
-状态：**只有设计，没有实现**。接口头文件 [`capture/wasapi_loopback_capture.h`](../capture/wasapi_loopback_capture.h)
-不在任何 `CMakeLists.txt` 里，也没有被 include。实现交给后续任务（Codex 终端）。原始 API
-调用的参考实现是 [`tests/native_capture_probe/main.cpp`](../tests/native_capture_probe/main.cpp)
-的 `wasapi` 模式（`runWasapi`）。
+状态：**已实现，Windows 实机验证待执行**。Windows 构建默认使用 WASAPI 系统声音；
+`SUBREC_SYSTEM_AUDIO_BACKEND=auto|wasapi|dshow` 选择默认后端。麦克风仍走 DirectShow。
+原始 API 参考为 `tests/native_capture_probe/main.cpp` 的 `runWasapi`。
+
+验证入口：`tests/wasapi_loopback` 注入 PCM 帧测试转换、PTS、静音、drain 与 abort；
+`tools/pc2_verify.ps1` 自动生成音调并分别执行 5 秒有声/空闲录制、AAC 与时长检查。
+空闲测试前需停止其他应用播放声音。事件模式也使用 5 ms watchdog，以兼容旧系统
+loopback 事件不触发并及时补静音。设备 24-bit packed PCM 会展开为 S32 再转换。
+本机仅可交叉编译检查，尚未证明 Windows 运行、设备恢复或 A/V 同步效果。
 
 目标：用 Windows 自带的 WASAPI 共享模式 loopback 取代第三方 DirectShow 组件
 `virtual-audio-capturer`，录系统声音不再需要用户另装组件。麦克风和摄像头继续走 DirectShow。

@@ -25,6 +25,7 @@ public:
     bool openAndStart(const std::function<bool()> &shouldStart = {});
     virtual bool requiresSerialization() const override { return true; }
     // DirectShow screen request used when the ddagrab screen cannot be opened.
+    void setAudioFallback(const std::optional<InputRequest> &fallback) { audioFallback = fallback; }
     void setVideoFallback(const std::optional<InputRequest> &fallback) { videoFallback = fallback; }
 
 private:
@@ -39,6 +40,8 @@ private:
     // Screen comes from FFScreenGrabThread (ddagrab) instead of demuxer + decoder.
     bool usingScreenGrab = false;
     std::optional<InputRequest> videoFallback;
+    std::optional<InputRequest> audioFallback;
+    bool usingWasapi = false;
     bool openScreenGrab(const std::function<bool()> &shouldStart);
     void switchToVideoFallback();
     void startVideo();
