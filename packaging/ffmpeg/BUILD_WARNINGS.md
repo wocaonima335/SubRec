@@ -60,7 +60,7 @@ introduced. No patch: patching x264 would break the "unmodified sources" claim f
 (`common/base.h`), i.e. always inside the array; the range GCC prints (`[0, 2]`) is itself fully
 inside `[0, 3)`, so this is a false positive from inlining `get_diff_limited_q()` into
 `init_pass2()`. In addition, `init_pass2()` is only used for 2-pass rate control with a stats
-file, which SubRec never enables (`encoder/ffvencoder.cpp:339` passes only single-pass real-time
+file, which SubRec never enables (`encoder/ffvencoder.cpp:415` passes only single-pass real-time
 `x264-params`).
 
 ### 6. FFmpeg `h2645_sei.c` unused label (harmless)

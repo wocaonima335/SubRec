@@ -126,7 +126,7 @@ if ! grep -q -- '-lstdc++' "$vplpc"; then
 fi
 
 if [ "$VARIANT" = gpl ]; then
-    log "x264 (static, 8-bit 4:2:0 only: SubRec encodes yuv420p, encoder/ffvencoder.cpp:239)"
+    log "x264 (static, 8-bit 4:2:0 only: SubRec encodes yuv420p, encoder/ffvencoder.cpp:283)"
     mkdir -p "$BLD/x264"
     ( cd "$BLD/x264" && "$SRC/x264/configure" \
         --host="$HOST" --cross-prefix="$HOST-" --prefix="$DEPS" \
@@ -183,7 +183,7 @@ case $VARIANT in
         encoders+=(libx264); extra+=(--enable-gpl --enable-libx264) ;;
     lgpl)
         # Software fallback via the Windows Media Foundation H.264 encoder. Needs a code change:
-        # add "h264_mf" to the candidates in encoder/ffvencoder.cpp:257-262.
+        # add "h264_mf" to the candidates in encoder/ffvencoder.cpp:301-306.
         encoders+=(h264_mf); extra+=(--enable-mediafoundation) ;;
     lgpl-openh264)
         encoders+=(h264_mf libopenh264); extra+=(--enable-mediafoundation --enable-libopenh264) ;;

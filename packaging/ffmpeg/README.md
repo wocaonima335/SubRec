@@ -27,7 +27,7 @@ Scanned from the SubRec sources (tests listed separately). Paths are repo-relati
 
 | Kind | Component | Evidence |
 | --- | --- | --- |
-| Video encoder | `h264_nvenc`, `h264_amf`, `h264_qsv`, `libx264` (tried in this order, selected by **name string**) | `encoder/ffvencoder.cpp:257-262`, lookup `:267`, per-encoder options `:321-339` |
+| Video encoder | `h264_nvenc`, `h264_amf`, `h264_qsv`, `libx264` (tried in this order, selected by **name string**) | `encoder/ffvencoder.cpp:301-306`, lookup `:325`, per-encoder options `:396-416` |
 | Video encoder input | `yuv420p` system-memory frames (dshow, ddagrab CPU mode); `AV_PIX_FMT_D3D11` frames with `hw_frames_ctx` (ddagrab GPU mode) for encoders whose `hw_configs` accept them (`h264_nvenc`, `h264_amf`), else download + swscale to `yuv420p` | `encoder/ffvencoder.cpp:283`, D3D11 check `:39`, passthrough `:363`, download `:484-494` |
 | Audio encoder | native `aac` | `encoder/ffaencoder.cpp:240` |
 | Video decoder | `h264` (by name) or by `codec_id` of the DirectShow stream: `rawvideo` (screen-capture-recorder, YUY2/NV12 webcams), `mjpeg` (MJPG webcams) | `decoder/ffvdecoder.cpp:283-290`, `:315` |
@@ -37,7 +37,7 @@ Scanned from the SubRec sources (tests listed separately). Paths are repo-relati
 | Filters kept for later (unused) | `hwupload`, `hwmap`, `scale_d3d11` (GPU-side conversion, e.g. NV12 for QSV) | `packaging/ffmpeg/build-ffmpeg.sh` comment at the filter list |
 | Input device (not needed) | `gdigrab` only in `Demuxer::PrintDshowDevices()`, which has no callers | `demuxer/demuxer.cpp:474-506` |
 | Device API | `avdevice_register_all`, `avdevice_list_input_sources` | `demuxer/demuxer.cpp:375`, `recorder/ffrecoder.cpp:226`, `capture/dshow_capture_backend.cpp:64` |
-| Muxer | `mp4` (default format, always used) with `movflags=+faststart` | `muxer/ffmuxer.h:24`, `muxer/ffmuxer.cpp:183-185,271`, call site `event/ffopensourceevent.cpp:316` |
+| Muxer | `mp4` (default format, always used) with `movflags=+faststart` | `muxer/ffmuxer.h:24`, `muxer/ffmuxer.cpp:183-185,271`, call site `event/ffopensourceevent.cpp:344` |
 | Muxer (dead code) | `rtsp` branch, never reached (no caller passes a format) | `muxer/ffmuxer.cpp:187-189` |
 | Protocol | `file` (`avio_open2`) | `muxer/ffmuxer.cpp:276` |
 | Network | only `avformat_network_init()`; no network protocol used | `demuxer/demuxer.cpp:374`, `recorder/ffrecoder.cpp:227` |
@@ -53,12 +53,12 @@ Scanned from the SubRec sources (tests listed separately). Paths are repo-relati
 
 Tests (optional, `SUBREC_FFMPEG_TEST_COMPONENTS=1`, default on): `lavfi` indev with `sine` and
 `color` (`tests/input_startup/input_startup_tests.cpp:48-67`), `wav`/`matroska` demuxers
-(`:41,43`), `null`/`nut` muxers and `pcm_s16le`/`rawvideo` encoders, the `mov` demuxer (used
-by `tools/pc2_verify.ps1` to read a SubRec `.mp4` back with `ffmpeg.exe -c copy -f null`)
-(`tests/muxer_lifecycle/muxer_lifecycle_tests.cpp:17,27,52,116`). Found on PC2 (first test run):
-`muxer_lifecycle` reads `copied.nut` back with `avformat_open_input` (line 133), so it needs the
-`nut` **demuxer**; it reads nothing else back (the `.mp4` cases only write), so no `mov` demuxer
-is needed. The `lavfi` indev labels its video stream with the `wrapped_avframe` codec id, so
+(`:41,43`), `null`/`nut` muxers and `pcm_s16le`/`rawvideo` encoders
+(`tests/muxer_lifecycle/muxer_lifecycle_tests.cpp:17,27,52,116`), and the `mov` demuxer, which
+only `tools/pc2_verify.ps1` uses (reads a SubRec `.mp4` back with `ffmpeg.exe -c copy -f null`).
+Found on PC2 (first test run): `muxer_lifecycle` reads `copied.nut` back with
+`avformat_open_input` (line 133), so it needs the `nut` **demuxer**; it reads nothing else back
+(the `.mp4` cases only write). The `lavfi` indev labels its video stream with the `wrapped_avframe` codec id, so
 every consumer that opens a decoder for it (reported on PC2 for the lavfi input) needs the
 **decoder** `wrapped_avframe`; lavfi audio from `sine` is s16, already
 covered by `pcm_s16le`. Both are now in the test components.
@@ -186,8 +186,8 @@ is already in `ffmpeg-<ref>.tar.xz`.
 | Open-source SubRec (GPL-3.0) | OK, same behaviour as today | OK | OK | OK |
 | Closed commercial SubRec | **No**, unless x264 is commercially licensed and legal review signs off | OK (dynamic linking, ship FFmpeg source, allow relinking/replacing DLLs; EULA must allow reverse engineering for debugging per LGPL-2.1 §6) | OK, but see patents | OK |
 | Software fallback (no NVENC/AMF/QSV: VMs, RDP, old/disabled iGPU, broken drivers) | x264 works on any CPU | Windows MF H.264 encoder (built into Windows, except N/KN editions without the Media Feature Pack) | OpenH264 | **none**: recording fails |
-| Code change needed | none | add `h264_mf` to `encoder/ffvencoder.cpp:257-262` + test | add `libopenh264` candidate + test | clear error message |
-| Quality at the same bitrate | best, though SubRec runs x264 at `ultrafast`/`zerolatency` with most tools off (`encoder/ffvencoder.cpp:337-339`), so the lead is small | lower; fewer rate-control knobs | lower (mostly constrained baseline) | n/a |
+| Code change needed | none | add `h264_mf` to `encoder/ffvencoder.cpp:301-306` + test | add `libopenh264` candidate + test | clear error message |
+| Quality at the same bitrate | best, though SubRec runs x264 at `ultrafast`/`zerolatency` with most tools off (`encoder/ffvencoder.cpp:413-415`), so the lead is small | lower; fewer rate-control knobs | lower (mostly constrained baseline) | n/a |
 | H.264/AAC patents | not covered by any license | encoder licensed through Windows | building OpenH264 yourself does **not** get Cisco's patent coverage (that covers only Cisco's own binary, downloaded separately) | not covered by any license |
 
 Recommendation:

@@ -80,7 +80,7 @@ The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.s
 
 - ❌ **该 FFmpeg 构建（含 x264）不能随闭源商业版本分发。** 项目方对 FFmpeg/x264 等不拥有版权，CLA 无法让其可重新授权。
 - 商业版本的可行路径 / Paths for a commercial edition：
-  1. 改用 **LGPL 构建**的 FFmpeg（`packaging/ffmpeg` 的 `lgpl` 变体：不启用 `--enable-gpl`，仅动态链接，保留用户替换 DLL 的能力，附 LGPL 文本与源码获取方式）；**软件 H.264 编码需另寻来源**（`libx264` 路径在 LGPL 构建里不可用）：依赖 NVENC/AMF/QSV，加上 Windows Media Foundation `h264_mf` 回退（需改 `encoder/ffvencoder.cpp:257-262` 并测试），或 OpenH264 变体（`lgpl-openh264`，另有专利问题）。这两个变体尚未运行过。
+  1. 改用 **LGPL 构建**的 FFmpeg（`packaging/ffmpeg` 的 `lgpl` 变体：不启用 `--enable-gpl`，仅动态链接，保留用户替换 DLL 的能力，附 LGPL 文本与源码获取方式）；**软件 H.264 编码需另寻来源**（`libx264` 路径在 LGPL 构建里不可用）：依赖 NVENC/AMF/QSV，加上 Windows Media Foundation `h264_mf` 回退（需改 `encoder/ffvencoder.cpp:301-306` 并测试），或 OpenH264 变体（`lgpl-openh264`，另有专利问题）。这两个变体尚未运行过。
   2. 向 x264 LLC 取得 **x264 商业授权**。
   3. 开源版与商业版分别维护不同的 FFmpeg 构建。
 - 专利（非版权问题，需专业意见）：H.264 / AAC 等编码格式涉及专利池（如 Via LA 等）。LGPL/GPL 授权**不**授予专利许可。
