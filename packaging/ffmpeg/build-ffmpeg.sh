@@ -158,8 +158,13 @@ filters=(volume amix aresample aformat scale format anull null)
 extra=()
 
 if [ "$WITH_TEST_COMPONENTS" = 1 ]; then
-    # tests/input_startup and tests/muxer_lifecycle
-    indevs+=(lavfi); filters+=(sine color); demuxers+=(wav matroska)
+    # tests/input_startup and tests/muxer_lifecycle, and the "-f lavfi" smoke tests of ffmpeg.exe.
+    # nut: muxer_lifecycle writes copied.nut and reads it back with avformat_open_input.
+    # wrapped_avframe: the lavfi indev labels its video stream with this codec id, so any
+    # consumer that opens a decoder for it (ffmpeg.exe, SubRec's ffvdecoder) needs the decoder.
+    # (lavfi audio from "sine" is s16 -> pcm_s16le, already in the decoder list.)
+    indevs+=(lavfi); filters+=(sine color); demuxers+=(wav matroska nut)
+    decoders+=(wrapped_avframe)
     muxers+=(null nut); encoders+=(pcm_s16le rawvideo)
 fi
 
@@ -245,6 +250,21 @@ fi
 log "FFmpeg build"
 make -C "$BLD/ffmpeg" -j"$JOBS"
 make -C "$BLD/ffmpeg" install
+
+# `make install` puts the MSVC-style import libraries (<comp>.lib) into bin/, but
+# cmake/SubRecFFmpeg.cmake, capture/media and the tests expect ${FFMPEG_ROOT}/lib/<comp>.lib.
+# (The MinGW import libraries lib<comp>.dll.a are already in lib/.)
+log "moving import libraries bin/*.lib -> lib/"
+shopt -s nullglob
+for f in "$OUT"/bin/*.lib; do mv -f "$f" "$OUT/lib/"; done
+shopt -u nullglob
+for comp in avutil avcodec avformat avfilter avdevice swscale swresample; do
+    lib=$OUT/lib/$comp.lib
+    [ -s "$lib" ] || die "missing import library $lib"
+    [ "$(head -c 8 "$lib")" = '!<arch>' ] || die "$lib is not an archive/import library"
+    [ -s "$OUT/lib/lib$comp.dll.a" ] || die "missing import library $OUT/lib/lib$comp.dll.a"
+done
+if compgen -G "$OUT/bin/*.lib" >/dev/null; then die "bin/ still contains .lib files"; fi
 
 # --- checks on the result ----------------------------------------------------------------
 cd "$OUT/bin"

@@ -96,9 +96,11 @@ and `ffmpeg.exe` is not shipped in the SubRec package (see `README.md`, "ffmpeg.
   than tag objects. The libvpl pin did work in the real build (the strict `HEAD == pin` check
   passed), so it is a commit; OpenH264 is only needed for the optional `lgpl-openh264` variant,
   which has not been built yet.
-- Runtime check still open (not a build warning): `filter/ffafilter.cpp:377` sets the
-  `sample_fmts` option on `abuffersink`; this was written against the older FFmpeg and has not
-  been confirmed against n8.0.3, so check on a first real recording that the audio filter graph
+- Runtime issue found afterwards (not a build warning): `filter/ffafilter.cpp` set the
+  `sample_fmts` option of `abuffersink` with a string. In n8.0.3 that option is a binary (hex)
+  option, so the call failed with `EINVAL` (ignored) and the restriction never applied. Now fixed
+  with `sample_formats` set before `avfilter_init_str` (see `README.md`, "Code notes"); the fix has
+  not been run yet, so check on a first real recording with audio that the audio filter graph
   initializes.
 
 ## Policy for future builds

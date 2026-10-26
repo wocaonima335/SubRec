@@ -49,13 +49,32 @@ Scanned from the SubRec sources (tests listed separately). Paths are repo-relati
 Tests (optional, `SUBREC_FFMPEG_TEST_COMPONENTS=1`, default on): `lavfi` indev with `sine` and
 `color` (`tests/input_startup/input_startup_tests.cpp:48-67`), `wav`/`matroska` demuxers
 (`:41,43`), `null`/`nut` muxers and `pcm_s16le`/`rawvideo` encoders
-(`tests/muxer_lifecycle/muxer_lifecycle_tests.cpp:17,27,52,116`).
+(`tests/muxer_lifecycle/muxer_lifecycle_tests.cpp:17,27,52,116`). Found on PC2 (first test run):
+`muxer_lifecycle` reads `copied.nut` back with `avformat_open_input` (line 133), so it needs the
+`nut` **demuxer**; it reads nothing else back (the `.mp4` cases only write), so no `mov` demuxer
+is needed. The `lavfi` indev labels its video stream with the `wrapped_avframe` codec id, so
+every consumer that opens a decoder for it (reported on PC2 for the lavfi input) needs the
+**decoder** `wrapped_avframe`; lavfi audio from `sine` is s16, already
+covered by `pcm_s16le`. Both are now in the test components.
 
-Code notes found while scanning (no change made in this step):
+Install layout: FFmpeg's `make install` puts the MSVC-style import libraries `<comp>.lib` into
+`bin/`. `build-ffmpeg.sh` moves them to `lib/` (where `cmake/SubRecFFmpeg.cmake`,
+`capture/media/CMakeLists.txt` and `tests/muxer_lifecycle` look for `${FFMPEG_ROOT}/lib/<comp>.lib`)
+and fails if a `.lib` or `lib<comp>.dll.a` is missing, is not an archive, or if any `.lib` is left in `bin/`.
 
-- `filter/ffafilter.cpp:377` sets the `abuffersink` option `sample_fmts`, which FFmpeg 7.1
-  deprecated in favour of `sample_formats`. Whether FFmpeg 8 still accepts it is **not
-  verified**, and the return value is ignored. Check the log on the first run.
+Code notes found while scanning:
+
+- `filter/ffafilter.cpp` (`createBufferSinkFilter`) used to call
+  `av_opt_set(ctx, "sample_fmts", "8|8")` after the filter was initialized. In n8.0.3
+  (`libavfilter/buffersink.c`, `FF_API_BUFFERSINK_OPTS` is still on for libavfilter 11) that option
+  exists but is `AV_OPT_TYPE_BINARY`, which `av_opt_set` parses as a **hex string**
+  (`libavutil/opt.c`, `set_string_binary`): `"8|8"` has an odd length and non-hex characters, so
+  the call returned `AVERROR(EINVAL)`, which was ignored. The sink therefore accepted every sample
+  format (no harm today, because `abuffer` already delivers `fltp`, but the restriction never
+  applied). Fixed: the filter is now created with `avfilter_graph_alloc_filter`, the new array
+  option `sample_formats` is set to `fltp` **before** `avfilter_init_str` (init appends the list
+  terminator, so setting it afterwards would leave an unterminated list), and every return value is
+  checked. Not run here; PC2 should exercise it with a recording that has audio.
 - A user-chosen output name with another extension is still written as MP4 (`muxer/ffmuxer.h:24`).
 
 ## 2. Configure line (variant `gpl`, test components on)
@@ -69,8 +88,8 @@ configure --prefix=<OUT> --enable-cross-compile --cross-prefix=x86_64-w64-mingw3
   --enable-w32threads --enable-avdevice --enable-avfilter --enable-swscale --enable-swresample
   --enable-d3d11va --enable-dxva2 --enable-ffnvcodec --enable-nvenc --enable-cuda --enable-amf --enable-libvpl
   --enable-encoder=aac,h264_nvenc,h264_amf,h264_qsv,pcm_s16le,rawvideo,libx264
-  --enable-decoder=rawvideo,mjpeg,h264,pcm_u8,pcm_s16le,pcm_s32le,pcm_f32le
-  --enable-parser=h264,mjpeg --enable-muxer=mp4,null,nut --enable-demuxer=wav,matroska
+  --enable-decoder=rawvideo,mjpeg,h264,pcm_u8,pcm_s16le,pcm_s32le,pcm_f32le,wrapped_avframe
+  --enable-parser=h264,mjpeg --enable-muxer=mp4,null,nut --enable-demuxer=wav,matroska,nut
   --enable-indev=dshow,lavfi --enable-protocol=file
   --enable-filter=volume,amix,aresample,aformat,scale,format,anull,null,sine,color
   --enable-gpl --enable-libx264
@@ -175,6 +194,18 @@ CRT mismatch with Qt's MinGW is acceptable. The toolchain is recorded in `BUILD_
   (libvpl is large because the whole repository is archived, not only the dispatcher.)
 - Build time was not recorded; the CI job has a 90 minute limit.
 
+## 6a. Test run on PC2 (first real machine test, `gpl` variant)
+
+- GPU NVIDIA GeForce RTX 5060 Ti, driver 32.0.16.1088.
+- `ffmpeg.exe -encoders` lists `libx264`, `h264_amf`, `h264_nvenc`, `h264_qsv`, `aac`;
+  `-devices` lists `dshow` and `lavfi` (the dshow list showed no device: no camera/microphone on PC2).
+- 1080p30, 5 s, `color` + `sine` generators, exit code 0 for both: `libx264` 62,066 bytes
+  (13.4x real time), `h264_nvenc` 98,792 bytes (5.49x real time).
+- SubRec main project and the `capture_lifecycle`, `input_startup` and `media_conversion` ctests
+  pass (`media_conversion` after the `.lib` files were copied to `lib/` by hand, see "Install layout").
+- `muxer_lifecycle` failed (missing `nut` demuxer); fixed by this change, to be re-run.
+- Not covered: the AMD (AMF) and Intel (QSV) encoders were not exercised, and no camera was tested.
+
 ## 7. Follow-ups
 
 - First CI run of `windows-build.yml` (Ubuntu 24.04 has an older mingw-w64 GCC/NASM/CMake than the
@@ -182,4 +213,4 @@ CRT mismatch with Qt's MinGW is acceptable. The toolchain is recorded in `BUILD_
 - Confirm that the libvpl and OpenH264 pins are commit ids (see `versions.env`), and run the
   `lgpl` / `lgpl-openh264` variants before relying on them.
 - Test on machines with NVIDIA (old and new drivers), AMD, Intel, and no GPU encoder. Test
-  webcams with YUY2, NV12 and MJPG output. Check the `abuffersink` `sample_fmts` option in the log.
+  webcams with YUY2, NV12 and MJPG output. Record a clip with audio to exercise the corrected `abuffersink` setup.

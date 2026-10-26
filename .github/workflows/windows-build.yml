@@ -127,6 +127,16 @@ jobs:
           foreach ($e in 'libx264', 'h264_nvenc', 'h264_amf', 'h264_qsv', 'aac') {
             if ($enc -notmatch "(?m)\s$e\s") { throw "encoder $e is missing from the FFmpeg build" }
           }
+          # Import libraries: SubRec's CMake files link ${FFMPEG_ROOT}/lib/<component>.lib.
+          foreach ($c in 'avutil', 'avcodec', 'avformat', 'avfilter', 'avdevice', 'swscale', 'swresample') {
+            if (-not (Test-Path (Join-Path $root "lib/$c.lib"))) { throw "lib/$c.lib is missing" }
+            if (Test-Path (Join-Path $root "bin/$c.lib")) { throw "bin/$c.lib must have been moved to lib/" }
+          }
+          # Encode smoke test with lavfi generators (needs the wrapped_avframe decoder, libx264, aac).
+          $smoke = Join-Path $env:RUNNER_TEMP 'smoke.mp4'
+          & $ff -hide_banner -loglevel error -y -f lavfi -i 'color=c=black:s=320x240:r=30:d=1' -f lavfi -i 'sine=d=1' -c:v libx264 -pix_fmt yuv420p -c:a aac $smoke
+          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg.exe lavfi -> libx264/aac smoke encode failed' }
+          if (-not (Test-Path $smoke) -or (Get-Item $smoke).Length -lt 1000) { throw 'smoke.mp4 is missing or too small' }
 
       - name: Configure
         shell: pwsh

@@ -368,13 +368,26 @@ void FFAFilter::createBufferSinkFilter(AVFilterGraph *filterGraph,
                                        const char *name)
 {
     const AVFilter *sinkFilter = avfilter_get_by_name("abuffersink");
-    *context = createFilter(filterGraph, sinkFilter, name, nullptr);
+    if (!sinkFilter) {
+        throw std::runtime_error("abuffersink filter not found");
+    }
 
-    // 设置输出格式 - 使用新版 API
-    char formatList[128];
-    snprintf(formatList, sizeof(formatList), "%d|%d", AUDIO_SAMPLE_FORMAT, AV_SAMPLE_FMT_FLTP);
+    // sample_formats must be set before avfilter_init_str(): init appends the list terminator.
+    AVFilterContext *sink = avfilter_graph_alloc_filter(filterGraph, sinkFilter, name);
+    if (!sink) {
+        throw std::runtime_error(std::string("Failed to allocate filter: ") + name);
+    }
 
-    av_opt_set(*context, "sample_fmts", formatList, AV_OPT_SEARCH_CHILDREN);
+    int result = av_opt_set(sink, "sample_formats", av_get_sample_fmt_name(AUDIO_SAMPLE_FORMAT), 0);
+    if (result >= 0) {
+        result = avfilter_init_str(sink, nullptr);
+    }
+    if (result < 0) {
+        logError(result);
+        avfilter_free(sink);
+        throw std::runtime_error(std::string("Failed to create filter: ") + name);
+    }
+    *context = sink;
 }
 
 AVFilterContext *FFAFilter::createFilter(AVFilterGraph *filterGraph,
