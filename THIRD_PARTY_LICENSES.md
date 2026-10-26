@@ -66,7 +66,7 @@ The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.s
 
 - `--enable-gpl --enable-libx264` ✅（整体 GPL-2.0-or-later）
 - `--enable-version3` ❌ **未使用**；`--enable-nonfree` ❌ **未使用**
-- `--disable-everything --disable-autodetect --disable-network`，仅启用 SubRec 用到的编码器（`aac`、`h264_nvenc`、`h264_amf`、`h264_qsv`、`libx264`、测试用的 `pcm_s16le`/`rawvideo`）、解码器、`mp4` 封装器、`dshow`/`lavfi` 输入设备、`file` 协议及少数滤镜（每项在 `packaging/ffmpeg/README.md` 中附代码出处）
+- `--disable-everything --disable-autodetect --disable-network`，仅启用 SubRec 用到的编码器（`aac`、`h264_nvenc`、`h264_amf`、`h264_qsv`、`libx264`、测试用的 `pcm_s16le`/`rawvideo`）、解码器、`mp4` 封装器、`dshow`/`lavfi` 输入设备、`file` 协议及少数滤镜（含屏幕采集用的 `ddagrab`/`hwdownload`，均为 LGPL 代码；每项在 `packaging/ffmpeg/README.md` 中附代码出处）
 - `--enable-shared --disable-static`（共享库，动态链接；其它依赖静态链接）
 - 交叉编译 `x86_64-w64-mingw32`，`--extra-version=subrec-gpl`
 

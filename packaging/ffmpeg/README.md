@@ -6,6 +6,9 @@ verified with `sha256sum -c`). The build is wired into `.github/workflows/window
 (job `ffmpeg`, Ubuntu 24.04), which has not run yet. The `lgpl` and `lgpl-openh264` variants
 have not been run. Third-party build options that come from memory are marked *verify* in the
 scripts. Warnings of the first build: [`BUILD_WARNINGS.md`](BUILD_WARNINGS.md).
+**Changed since that build, not built yet:** the `ddagrab`, `hwdownload`, `hwupload`, `hwmap`
+and `scale_d3d11` filters (screen backend) and the test-only `mov` demuxer; new warnings of the
+next run must be classified in `BUILD_WARNINGS.md`.
 
 Goal: a **SubRec-specific minimal FFmpeg built from pinned, known sources** (instead of a
 prebuilt FFmpeg with about 70 external libraries that could only be partly identified), so that
@@ -25,11 +28,13 @@ Scanned from the SubRec sources (tests listed separately). Paths are repo-relati
 | Kind | Component | Evidence |
 | --- | --- | --- |
 | Video encoder | `h264_nvenc`, `h264_amf`, `h264_qsv`, `libx264` (tried in this order, selected by **name string**) | `encoder/ffvencoder.cpp:257-262`, lookup `:267`, per-encoder options `:321-339` |
-| Video encoder input | `yuv420p` system-memory frames (no hw frames) | `encoder/ffvencoder.cpp:239` |
+| Video encoder input | `yuv420p` system-memory frames (dshow, ddagrab CPU mode); `AV_PIX_FMT_D3D11` frames with `hw_frames_ctx` (ddagrab GPU mode) for encoders whose `hw_configs` accept them (`h264_nvenc`, `h264_amf`), else download + swscale to `yuv420p` | `encoder/ffvencoder.cpp:283`, D3D11 check `:39`, passthrough `:363`, download `:484-494` |
 | Audio encoder | native `aac` | `encoder/ffaencoder.cpp:240` |
 | Video decoder | `h264` (by name) or by `codec_id` of the DirectShow stream: `rawvideo` (screen-capture-recorder, YUY2/NV12 webcams), `mjpeg` (MJPG webcams) | `decoder/ffvdecoder.cpp:283-290`, `:315` |
 | Audio decoder | by `codec_id` of the DirectShow stream: PCM (`pcm_s16le`; `pcm_u8`/`pcm_s32le`/`pcm_f32le` enabled defensively) | `decoder/ffadecoder.cpp:147` |
 | Input device | `dshow` (all inputs: screen via the screen-capture-recorder filter, camera, microphone, virtual-audio-capturer) | `capture/dshow_capture_backend.cpp:57,64,145,158,194-195`; `demuxer/demuxer.cpp:375-377`; options `:388-407`; default URLs `recorder/ffrecorder_p.h:35-38` |
+| Screen source (filter, no input device) | `ddagrab` (DXGI Desktop Duplication) + `hwdownload`, `format`, `scale` for the CPU path; selected by device id `ddagrab:N` / `SUBREC_CAPTURE_BACKEND` | `capture/ddagrab_screen_source.cpp:94,188-196`, hw frames `:140`, encoder probe `:251` |
+| Filters kept for later (unused) | `hwupload`, `hwmap`, `scale_d3d11` (GPU-side conversion, e.g. NV12 for QSV) | `packaging/ffmpeg/build-ffmpeg.sh` comment at the filter list |
 | Input device (not needed) | `gdigrab` only in `Demuxer::PrintDshowDevices()`, which has no callers | `demuxer/demuxer.cpp:474-506` |
 | Device API | `avdevice_register_all`, `avdevice_list_input_sources` | `demuxer/demuxer.cpp:375`, `recorder/ffrecoder.cpp:226`, `capture/dshow_capture_backend.cpp:64` |
 | Muxer | `mp4` (default format, always used) with `movflags=+faststart` | `muxer/ffmuxer.h:24`, `muxer/ffmuxer.cpp:183-185,271`, call site `event/ffopensourceevent.cpp:316` |
@@ -41,14 +46,15 @@ Scanned from the SubRec sources (tests listed separately). Paths are repo-relati
 | Video filters | `buffer`, `buffersink` (+ `scale` auto-insert), but `FFVFilter::initFilter` returns before building the graph | `filter/ffvfilter.cpp:121,160,202` |
 | swscale | `sws_getContext` (`SWS_FAST_BILINEAR`, `SWS_BILINEAR`, ITU-601 coefficients), `sws_scale` | `resampler/ffvresampler.cpp:76-78`, `capture/media/media_conversion.cpp:112-141` |
 | swresample | `swr_alloc_set_opts2`, `swr_convert`, `swr_get_out_samples` (48 kHz FLTP stereo target) | `resampler/ffaresampler.cpp:82`, `capture/media/media_conversion.cpp:156-238`, `recorder/ffrecoder.cpp:191` |
-| hwaccel / hwcontext | **none used directly** (no `av_hwdevice_ctx_create`, software decode only). NVENC/AMF/QSV create their device internally; `d3d11va`, `dxva2`, `cuda` hwcontexts are enabled only to support them | `decoder/ffvdecoder.cpp:286` |
+| hwaccel / hwcontext | `d3d11va` hwcontext: `ddagrab` creates its D3D11 device and frames context; SubRec passes that `hw_frames_ctx` to NVENC/AMF and uses `av_hwframe_transfer_data` for the download fallback. Decoding stays software. `dxva2`, `cuda` hwcontexts are enabled for the encoders | `capture/ddagrab_screen_source.cpp:140`, `encoder/ffvencoder.cpp:363,484`, `decoder/ffvdecoder.cpp:286` |
 | bsf / parser | none used directly. `h264`/`mjpeg` parsers enabled defensively for webcams; `mp4` muxer pulls its own deps | - |
 | Libraries linked | avcodec, avformat, avutil, swscale, swresample, avfilter, avdevice; CMake copies every `bin/*.dll` | `CMakeLists.txt:55-61,131` |
 | UI only | Cutting page file filter `*.mp4 *.avi *.mkv *.flv *.mov`: no FFmpeg code behind it yet | `qml/cuttingpage.qml:71` |
 
 Tests (optional, `SUBREC_FFMPEG_TEST_COMPONENTS=1`, default on): `lavfi` indev with `sine` and
 `color` (`tests/input_startup/input_startup_tests.cpp:48-67`), `wav`/`matroska` demuxers
-(`:41,43`), `null`/`nut` muxers and `pcm_s16le`/`rawvideo` encoders
+(`:41,43`), `null`/`nut` muxers and `pcm_s16le`/`rawvideo` encoders, the `mov` demuxer (used
+by `tools/pc2_verify.ps1` to read a SubRec `.mp4` back with `ffmpeg.exe -c copy -f null`)
 (`tests/muxer_lifecycle/muxer_lifecycle_tests.cpp:17,27,52,116`). Found on PC2 (first test run):
 `muxer_lifecycle` reads `copied.nut` back with `avformat_open_input` (line 133), so it needs the
 `nut` **demuxer**; it reads nothing else back (the `.mp4` cases only write), so no `mov` demuxer
@@ -97,12 +103,27 @@ configure --prefix=<OUT> --enable-cross-compile --cross-prefix=x86_64-w64-mingw3
   --enable-d3d11va --enable-dxva2 --enable-ffnvcodec --enable-nvenc --enable-cuda --enable-amf --enable-libvpl
   --enable-encoder=aac,h264_nvenc,h264_amf,h264_qsv,pcm_s16le,rawvideo,libx264
   --enable-decoder=rawvideo,mjpeg,h264,pcm_u8,pcm_s16le,pcm_s32le,pcm_f32le,wrapped_avframe
-  --enable-parser=h264,mjpeg --enable-muxer=mp4,null,nut --enable-demuxer=wav,matroska,nut
+  --enable-parser=h264,mjpeg --enable-muxer=mp4,null,nut --enable-demuxer=wav,matroska,nut,mov
   --enable-indev=dshow,lavfi --enable-protocol=file
-  --enable-filter=volume,amix,aresample,aformat,scale,format,anull,null,sine,color
+  --enable-filter=volume,amix,aresample,aformat,scale,format,anull,null,ddagrab,hwdownload,hwupload,hwmap,scale_d3d11,sine,color
   --enable-gpl --enable-libx264
   --extra-cflags=-I<DEPS>/include --extra-ldflags="-L<DEPS>/lib -static" --extra-version=subrec-gpl
 ```
+
+The line above is written by hand from the script and is **not yet the output of a real run**
+since `ddagrab`/`hwdownload`/`hwupload`/`hwmap`/`scale_d3d11` and the `mov` demuxer were added;
+the authoritative line of a build is `share/subrec-ffmpeg/configure-args.txt` /
+`sources/BUILD_CONFIG.txt`.
+
+**ddagrab self-check.** `ddagrab_filter_deps="d3d11va IDXGIOutput1 DXGI_OUTDUPL_FRAME_INFO"`
+and `scale_d3d11_filter_deps="d3d11va"` (n8.0.3 `configure`); `hwupload`/`hwdownload`/`hwmap`
+have no deps. The two DXGI names are `check_type` results of `windows.h dxgi1_2.h` that
+configure does not write to `config.h`, so the script checks `CONFIG_DDAGRAB_FILTER` in
+`config_components.h` and `CONFIG_D3D11VA` in `config.h`, and on failure prints the matching
+`check_type` lines of `config.log` (too old mingw-w64 headers are the usual cause).
+`HAVE_IDXGIOUTPUT5` is only logged (ddagrab uses it for 10-bit/HDR output, SubRec asks for the
+default 8-bit BGRA). All five filters are LGPL-2.1-or-later code; the license of the build does
+not change. Run-time imports stay inside the existing system-DLL list (`d3d11`, `dxgi`).
 
 `--enable-version3` is **not** used: no selected dependency needs it, so the `gpl` build is
 GPL-2.0-or-later (compatible with SubRec's GPL-3.0). `buffer`/`abuffer`/`buffersink`/

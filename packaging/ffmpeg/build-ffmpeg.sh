@@ -155,6 +155,15 @@ protocols=(file)
 # buffer/buffersink/abuffer/abuffersink are always built into libavfilter (not configurable).
 # scale/aresample/format/aformat are inserted automatically by AVFILTER_AUTO_CONVERT_ALL.
 filters=(volume amix aresample aformat scale format anull null)
+# Screen capture backend "ddagrab" (capture/ddagrab_screen_source.cpp): DXGI Desktop Duplication
+# as a libavfilter source. It outputs AV_PIX_FMT_D3D11 frames (sw_format bgra), which go to
+# h264_nvenc/h264_amf directly via hw_frames_ctx, or through "hwdownload,format=bgra,scale,
+# format=yuv420p" to system memory for every other encoder. hwupload/hwmap/scale_d3d11 are not
+# used by SubRec today; they keep GPU-side conversion (e.g. scale_d3d11=format=nv12 for QSV)
+# possible without another FFmpeg rebuild and cost a few KB.
+# configure (n8.0.3): ddagrab_filter_deps="d3d11va IDXGIOutput1 DXGI_OUTDUPL_FRAME_INFO",
+# scale_d3d11_filter_deps="d3d11va"; hwupload/hwdownload/hwmap have no deps.
+filters+=(ddagrab hwdownload hwupload hwmap scale_d3d11)
 extra=()
 
 if [ "$WITH_TEST_COMPONENTS" = 1 ]; then
@@ -163,7 +172,8 @@ if [ "$WITH_TEST_COMPONENTS" = 1 ]; then
     # wrapped_avframe: the lavfi indev labels its video stream with this codec id, so any
     # consumer that opens a decoder for it (ffmpeg.exe, SubRec's ffvdecoder) needs the decoder.
     # (lavfi audio from "sine" is s16 -> pcm_s16le, already in the decoder list.)
-    indevs+=(lavfi); filters+=(sine color); demuxers+=(wav matroska nut)
+    # mov: tools/pc2_verify.ps1 reads SubRec's .mp4 back with "ffmpeg.exe -i rec.mp4 -c copy -f null".
+    indevs+=(lavfi); filters+=(sine color); demuxers+=(wav matroska nut mov)
     decoders+=(wrapped_avframe)
     muxers+=(null nut); encoders+=(pcm_s16le rawvideo)
 fi
@@ -218,6 +228,23 @@ mkdir -p "$BLD/ffmpeg"
 upper() { tr '[:lower:]' '[:upper:]' <<<"$1"; }
 need_cfg() { grep -q "^#define $1 1\$" "$2" || die "FFmpeg configure did not enable $1"; }
 cc=$BLD/ffmpeg/config_components.h
+
+# ddagrab self-check with a precise reason. Its type checks (configure: check_type
+# "windows.h dxgi1_2.h" IDXGIOutput1 / DXGI_OUTDUPL_FRAME_INFO) are not written to config.h, so
+# report them from config.log; they fail with too old mingw-w64 headers.
+if ! grep -q '^#define CONFIG_DDAGRAB_FILTER 1$' "$cc"; then
+    grep -q '^#define CONFIG_D3D11VA 1$' "$BLD/ffmpeg/config.h" \
+        || log "ddagrab: d3d11va is disabled (needs dxva.h, ID3D11VideoDecoder, ID3D11VideoContext)"
+    grep -n -A3 -E 'check_type .*(IDXGIOutput1|DXGI_OUTDUPL_FRAME_INFO)' "$BLD/ffmpeg/ffbuild/config.log" >&2 || true
+    die "FFmpeg configure did not enable the ddagrab filter (deps: d3d11va IDXGIOutput1 DXGI_OUTDUPL_FRAME_INFO)"
+fi
+grep -q '^#define CONFIG_D3D11VA 1$' "$BLD/ffmpeg/config.h" || die "d3d11va hwcontext is disabled"
+# IDXGIOutput5 is optional (ddagrab then uses DuplicateOutput1 for 10-bit/HDR desktops); log it.
+if grep -q '^#define HAVE_IDXGIOUTPUT5 1$' "$BLD/ffmpeg/config.h"; then
+    log "ddagrab: IDXGIOutput5 available (10-bit/HDR output formats)"
+else
+    log "ddagrab: IDXGIOutput5 missing, only 8-bit BGRA capture"
+fi
 for c in "${encoders[@]}";  do need_cfg "CONFIG_$(upper "$c")_ENCODER"  "$cc"; done
 for c in "${decoders[@]}";  do need_cfg "CONFIG_$(upper "$c")_DECODER"  "$cc"; done
 for c in "${parsers[@]}";   do need_cfg "CONFIG_$(upper "$c")_PARSER"   "$cc"; done
