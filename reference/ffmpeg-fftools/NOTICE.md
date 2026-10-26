@@ -47,9 +47,9 @@ contain, is:
 
 | Component | Identification | Source |
 | --- | --- | --- |
-| FFmpeg | commit `37064b2d16` | <https://git.ffmpeg.org/ffmpeg.git>, <https://github.com/FFmpeg/FFmpeg/commit/37064b2d16> |
-| x265 | `4.1+151-f8be4634` (API build 215, from the version string embedded in the DLL), commit `f8be4634` | <https://bitbucket.org/multicoreware/x265_git> (archive URL used by CI is **not verified**) |
-| x264 | statically linked; the only version information is `core 165` (SEI text `x264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025`), with no `r` revision number and no commit | <https://code.videolan.org/videolan/x264>, `stable` branch, the commit whose `x264.h` defines `X264_BUILD 165`. **The exact revision is unknown (TODO).** |
+| FFmpeg | commit `37064b2d16` | <https://git.ffmpeg.org/ffmpeg.git>, <https://github.com/FFmpeg/FFmpeg/commit/37064b2d16>; CI archive URL `https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/37064b2d16` (verified externally on 2026-10-26, 16,174,649 bytes) |
+| x265 | `4.1+151-f8be4634` (API build 215, from the version string embedded in the DLL), commit `f8be4634` | <https://bitbucket.org/multicoreware/x265_git>; CI archive URL `https://bitbucket.org/multicoreware/x265_git/get/f8be4634.tar.gz` (verified externally on 2026-10-26, 1,749,268 bytes) |
+| x264 | statically linked; the only version information is `core 165` (SEI text `x264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025`), with no `r` revision number and no commit | <https://code.videolan.org/videolan/x264>, `stable` branch, commit `b35605ace3ddf7c1a5d67a2eb553f034aef41d55` (its `x264.h` defines `X264_BUILD 165`). **Matches core 165, but is NOT proven to be the revision that was actually built.** CI archive URL `https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.gz` (verified externally on 2026-10-26, 1,040,327 bytes). |
 | Other enabled external libraries | listed in the configure line (`packaging/BUILD_CONFIG.txt`) | **TODO: versions and sources not yet collected** |
 
 The full `./configure` command line is recorded in [`packaging/BUILD_CONFIG.txt`](../../packaging/BUILD_CONFIG.txt).
@@ -64,15 +64,15 @@ shipped under `sources/`:
 | --- | --- |
 | `sources/ffmpeg-37064b2d16.tar.gz` | FFmpeg source at commit `37064b2d16` (GitHub archive of that commit) |
 | `sources/x265-f8be4634.tar.gz` | x265 source at commit `f8be4634` |
-| `sources/x264-<COMMIT>.tar.gz` | x264 source, `stable` branch commit with `X264_BUILD 165` (commit TODO) |
+| `sources/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.gz` | x264 source, `stable` branch commit `b35605ace3ddf7c1a5d67a2eb553f034aef41d55` (`X264_BUILD 165`; not proven to be the built revision) |
 | `sources/BUILD_CONFIG.txt` | FFmpeg configure command line, provenance and build notes (template: `packaging/BUILD_CONFIG.txt`) |
 | `sources/SHA256SUMS` | SHA-256 of every other file in `sources/` (check with `sha256sum -c SHA256SUMS`) |
 
 ### Warnings (known gaps in source completeness)
 
 1. **x264 may not be the exact source that was compiled in.** The DLLs only say `core 165`.
-   The x264 archive in `sources/` is a best-effort match (a commit of the `stable` branch with
-   `X264_BUILD 165`). If it is not byte-for-byte the code that was built, shipping it does
+   The x264 archive in `sources/` is a best-effort match: stable-branch commit
+   `b35605ace3ddf7c1a5d67a2eb553f034aef41d55`, which matches core 165 but is not proven to be the revision actually built. If it is not byte-for-byte the code that was built, shipping it does
    not fully satisfy the GPL "corresponding source" requirement. Ideally FFmpeg should be
    **rebuilt from known sources** (known FFmpeg, x264 and x265 commits and a recorded build
    script) and the DLLs replaced.
@@ -80,7 +80,7 @@ shipped under `sources/`:
    libraries, which are probably linked statically into the DLLs. Their sources are not in
    `sources/` yet (TODO). A rebuild with a minimal configuration would remove most of this problem.
 3. The "similar to BtbN FFmpeg-Builds" remark is an inference, not a fact.
-4. Until these items are resolved, the release workflow fails for version tags (`v*`) and
+4. Until the remaining items (other libraries, build scripts, `TODO`s in `BUILD_CONFIG.txt`) are resolved, the release workflow fails for version tags (`v*`) and
    marks other builds `INCOMPLETE-DO-NOT-DISTRIBUTE.txt`.
 
 ### GPL obligations when you distribute these binaries

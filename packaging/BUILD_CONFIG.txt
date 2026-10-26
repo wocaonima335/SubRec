@@ -9,7 +9,9 @@ Bundled FFmpeg
 --------------
 Version string : N-119453-g37064b2d16-20250509 (git master snapshot of 2025-05-09, not an official release)
 Commit         : 37064b2d16
-Source archive : ffmpeg-37064b2d16.tar.gz (in this directory)
+Source archive : ffmpeg-37064b2d16.tar.gz (in this directory), from
+                 https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/37064b2d16
+                 (short SHA works; URL verified externally on 2026-10-26, 16,174,649 bytes)
 Libraries      : libavutil 60.2.100, libavcodec 62.3
 DLLs           : avutil-60 avcodec-62 avformat-62 avfilter-11 avdevice-62 swscale-9 swresample-6
 License        : GPL version 3 or later (--enable-gpl --enable-version3, no --enable-nonfree)
@@ -30,13 +32,18 @@ Full ./configure command line (as embedded in the DLL)
 Enabled GPL components
 ----------------------
 x265 : version string "4.1+151-f8be4634" (API build 215), i.e. commit f8be4634.
-       Source archive: x265-f8be4634.tar.gz (in this directory).
+       Source archive: x265-f8be4634.tar.gz (in this directory), from
+       https://bitbucket.org/multicoreware/x265_git/get/f8be4634.tar.gz
+       (URL verified externally on 2026-10-26, 1,749,268 bytes).
 x264 : statically linked. The only version information in the binary is the SEI string
        "x264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025": core (X264_BUILD) 165,
        with no "r" revision number and no commit id.
-       Source archive: x264-<COMMIT>.tar.gz (in this directory), the commit of
-       https://code.videolan.org/videolan/x264 (stable branch) whose x264.h defines X264_BUILD 165.
-       The exact revision is unknown: TODO (maintainer must pin the commit, see below).
+       Source archive: x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.gz (in this directory),
+       commit b35605ace3ddf7c1a5d67a2eb553f034aef41d55 of https://code.videolan.org/videolan/x264
+       (stable branch; its x264.h defines X264_BUILD 165). This is a stable-branch commit that
+       matches core 165; it is NOT proven to be the revision that was actually built.
+       (Archive URL verified externally on 2026-10-26, 1,040,327 bytes. CI default, overridable
+       with the repository variable X264_COMMIT.)
        WARNING: the bundled x264 source may therefore NOT be byte-for-byte the source that was
        compiled into the DLLs. Under the GPL this is a compliance risk. The clean fix is to
        rebuild FFmpeg from known sources and replace the DLLs and this file.
