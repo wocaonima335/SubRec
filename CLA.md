@@ -67,7 +67,7 @@ We will publicly release versions of the Project containing Your Contribution un
 5.1 本协议只覆盖**你本人**在签署后(及你明确指明的签署前)提交的贡献。它**不**授予项目方对**其他人**所写代码的任何权利。
 This Agreement covers only Contributions made by **You**. It grants Us **no** rights in code written by **other people**.
 
-5.2 本协议**不**覆盖第三方材料(FFmpeg、Qt、OpenCV、x264/x265 等及任何被复制的代码);这些材料适用其各自的许可证。 / It does **not** cover third-party materials; those remain under their own licenses.
+5.2 本协议**不**覆盖第三方材料(FFmpeg、Qt、OpenCV、x264 等及任何被复制的代码);这些材料适用其各自的许可证。 / It does **not** cover third-party materials; those remain under their own licenses.
 
 5.3 本协议不改变项目方获得、使用他人作品时所需另行取得的授权。 / It does not replace separate permissions We need for others' works.
 

@@ -1,12 +1,22 @@
 # SubRec (字录) Windows build.
 #
-# Status: written for the new repository <OWNER>/SubRec; NOT yet run. Verify on a first
-# push / workflow_dispatch and adjust (Qt arch, MinGW tool name, FFmpeg archive layout).
+# Status: written for the new repository <OWNER>/SubRec; the `ffmpeg` job's script
+# (packaging/ffmpeg/build-ffmpeg.sh) has been run successfully once on Debian 13 (GCC 14);
+# this workflow itself has NOT been run yet. Verify on a first push / workflow_dispatch and
+# adjust (Qt arch, MinGW tool name, Ubuntu toolchain versions).
 #
-# - Toolchain: Qt 6.8.0 + MinGW 13.1 (the toolchain the project is developed with) + Ninja.
-# - FFmpeg is not stored in this repository. Set the repository variable FFMPEG_URL to a
-#   shared FFmpeg build zip (with include/, lib/, bin/); optionally FFMPEG_SHA256 to verify it.
-#   The FFmpeg build must be a GPL-compatible build for a GPL-3.0 release; see THIRD_PARTY_LICENSES.md.
+# Two jobs:
+#   ffmpeg (ubuntu-24.04)  builds SubRec's minimal FFmpeg n8.0.3 (+ x264, libvpl, nv-codec-headers,
+#                          AMF headers; GPL-2.0-or-later, no version3, no nonfree) from pinned
+#                          commits (packaging/ffmpeg/versions.env) by cross-compiling with
+#                          MinGW-w64, then produces sources/ (corresponding source) with
+#                          packaging/ffmpeg/collect-sources.sh. Output: FFMPEG_ROOT layout
+#                          (bin/ include/ lib/ share/subrec-ffmpeg/ sources/).
+#   build (windows-latest) builds SubRec against that FFMPEG_ROOT (Qt 6.8.0 + MinGW 13.1 + Ninja),
+#                          deploys it and packages the DLLs, licenses and sources/ into the zip.
+#
+# - ffmpeg.exe is NOT packaged: SubRec never starts it (it links the FFmpeg libraries). The Windows
+#   job only runs it as a smoke test of the freshly built DLLs. See packaging/ffmpeg/README.md.
 # - Artifacts are unsigned: Windows SmartScreen will warn ("More info" -> "Run anyway").
 #   Verify the published SHA256 instead (see README).
 name: windows-build
@@ -24,9 +34,50 @@ permissions:
 env:
   QT_VERSION: '6.8.0'
   BUILD_TYPE: Release
+  FFMPEG_ARTIFACT: ffmpeg-subrec-gpl-win64
 
 jobs:
+  ffmpeg:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      SUBREC_FFMPEG_VARIANT: gpl
+      SUBREC_FFMPEG_WORK: ${{ github.workspace }}/_ffbuild
+    steps:
+      - uses: actions/checkout@v4
+
+      # The first real build used Debian 13 (GCC 14 mingw-w64 posix, NASM 2.16.03, CMake 3.31).
+      # Ubuntu 24.04 ships older versions; the exact versions used are recorded in
+      # sources/BUILD_CONFIG.txt of every build.
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git ca-certificates pkg-config nasm cmake ninja-build xz-utils \
+            mingw-w64 gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix \
+            binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+          dpkg-query -W gcc-mingw-w64-x86-64-posix mingw-w64-x86-64-dev nasm cmake
+
+      - name: Build FFmpeg
+        run: bash packaging/ffmpeg/build-ffmpeg.sh
+
+      - name: Collect corresponding source
+        run: |
+          out="$SUBREC_FFMPEG_WORK/out/ffmpeg-subrec-$SUBREC_FFMPEG_VARIANT-win64"
+          bash packaging/ffmpeg/collect-sources.sh "$out"
+          (cd "$out/sources" && sha256sum -c SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.FFMPEG_ARTIFACT }}
+          path: ${{ github.workspace }}/_ffbuild/out/ffmpeg-subrec-gpl-win64/
+          if-no-files-found: error
+          retention-days: 30
+
   build:
+    needs: ffmpeg
     runs-on: windows-latest
     permissions:
       contents: write   # only used to create a draft release on tags
@@ -52,23 +103,30 @@ jobs:
           choco install ninja -y --no-progress
           "$env:IQTA_TOOLS\mingw1310_64\bin" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
 
-      - name: Fetch FFmpeg
+      - name: Download FFmpeg build
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.FFMPEG_ARTIFACT }}
+          path: ffmpeg-root
+
+      - name: Check FFmpeg build
         shell: pwsh
-        env:
-          FFMPEG_URL: ${{ vars.FFMPEG_URL }}
-          FFMPEG_SHA256: ${{ vars.FFMPEG_SHA256 }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:FFMPEG_URL)) {
-            throw "Repository variable FFMPEG_URL is not set. Set it to the URL of a shared FFmpeg build zip (with include/, lib/, bin/). See README.md (Building)."
+          $ErrorActionPreference = 'Stop'
+          $root = (Resolve-Path ffmpeg-root).Path
+          foreach ($d in 'bin', 'include', 'lib', 'sources', 'share/subrec-ffmpeg/licenses') {
+            if (-not (Test-Path (Join-Path $root $d))) { throw "FFmpeg artifact has no $d" }
           }
-          Invoke-WebRequest $env:FFMPEG_URL -OutFile ffmpeg.zip
-          if (-not [string]::IsNullOrWhiteSpace($env:FFMPEG_SHA256)) {
-            $actual = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash
-            if ($actual -ne $env:FFMPEG_SHA256.ToUpper()) { throw "FFmpeg archive SHA256 mismatch" }
-          }
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_dl
-          $root = (Get-ChildItem ffmpeg_dl -Directory | Select-Object -First 1).FullName
           "SUBREC_FFMPEG_ROOT=$root" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+          # Smoke test of the freshly built DLLs (ffmpeg.exe is not packaged).
+          $ff = Join-Path $root 'bin/ffmpeg.exe'
+          & $ff -hide_banner -version
+          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg.exe -version failed' }
+          $enc = (& $ff -hide_banner -encoders) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg.exe -encoders failed' }
+          foreach ($e in 'libx264', 'h264_nvenc', 'h264_amf', 'h264_qsv', 'aac') {
+            if ($enc -notmatch "(?m)\s$e\s") { throw "encoder $e is missing from the FFmpeg build" }
+          }
 
       - name: Configure
         shell: pwsh
@@ -92,74 +150,78 @@ jobs:
           windeployqt --release --qmldir qml --no-translations "$out/appSubRec.exe"
           Copy-Item LICENSE $out/LICENSE.txt
           Copy-Item THIRD_PARTY_LICENSES.md $out/
-          Copy-Item "$env:SUBREC_FFMPEG_ROOT/LICENSE.txt" $out/FFmpeg-LICENSE.txt -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force "$out/licenses" | Out-Null
+          Copy-Item "$env:SUBREC_FFMPEG_ROOT/share/subrec-ffmpeg/licenses" "$out/licenses/ffmpeg" -Recurse
 
-      # GPL: the package ships FFmpeg DLLs built with --enable-gpl, so it must carry the
-      # corresponding source. Layout of <package>/sources/ (see THIRD_PARTY_LICENSES.md):
-      #   ffmpeg-37064b2d16.tar.gz, x265-f8be4634.tar.gz, x264-<X264_COMMIT>.tar.gz, BUILD_CONFIG.txt, SHA256SUMS
-      # Pinned here: FFmpeg commit and x265 commit (both read from the DLL version strings).
-      # The three archive URLs were verified externally on 2026-10-26 (FFmpeg 16,174,649 B,
-      # x265 1,749,268 B, x264 1,040,327 B). Override x265 with the repository variable X265_SOURCE_URL.
-      # x264: the DLLs only say "core 165". Default is stable-branch commit b35605ace3ddf7c1a5d67a2eb553f034aef41d55
-      # (x264.h has X264_BUILD 165; checked by this step). It is NOT proven to be the revision that
-      # was actually built, so the bundled source may not be byte-identical. Override with the
-      # repository variable X264_COMMIT.
-      # Still unknown, so it blocks tagged releases (other builds get INCOMPLETE-DO-NOT-DISTRIBUTE.txt):
-      #   - the TODO items left in packaging/BUILD_CONFIG.txt (other statically linked libraries, build scripts).
-      - name: Collect corresponding source (GPL)
+      # GPL: the package ships FFmpeg DLLs with x264 linked in (GPL-2.0-or-later), so it must carry
+      # the corresponding source: <package>/sources/ is the output of collect-sources.sh from the
+      # ffmpeg job (git archive of each pinned commit, build scripts, BUILD_CONFIG.txt, SHA256SUMS).
+      # This step re-checks the artifact. Tag builds fail on any problem; other builds get
+      # sources/INCOMPLETE-DO-NOT-DISTRIBUTE.txt.
+      - name: Package corresponding source (GPL)
         shell: pwsh
         env:
-          FFMPEG_COMMIT: '37064b2d16'
-          X265_COMMIT: 'f8be4634'
-          X265_SOURCE_URL: ${{ vars.X265_SOURCE_URL }}
-          X264_COMMIT_OVERRIDE: ${{ vars.X264_COMMIT }}
-          X264_COMMIT_DEFAULT: 'b35605ace3ddf7c1a5d67a2eb553f034aef41d55'
-          X264_BUILD_EXPECTED: '165'
           IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           $ErrorActionPreference = 'Stop'
           $src = "dist/SubRec/sources"
-          New-Item -ItemType Directory -Force $src | Out-Null
+          Copy-Item "$env:SUBREC_FFMPEG_ROOT/sources" $src -Recurse
           $srcFull = (Resolve-Path $src).Path
           $problems = @()
 
-          Invoke-WebRequest "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/$env:FFMPEG_COMMIT" -OutFile "$srcFull/ffmpeg-$env:FFMPEG_COMMIT.tar.gz"
-
-          $x265Url = $env:X265_SOURCE_URL
-          if ([string]::IsNullOrWhiteSpace($x265Url)) { $x265Url = "https://bitbucket.org/multicoreware/x265_git/get/$env:X265_COMMIT.tar.gz" }
-          Invoke-WebRequest $x265Url -OutFile "$srcFull/x265-$env:X265_COMMIT.tar.gz"
-
-          $x264Commit = $env:X264_COMMIT_OVERRIDE
-          if ([string]::IsNullOrWhiteSpace($x264Commit)) { $x264Commit = $env:X264_COMMIT_DEFAULT }
-          if ($x264Commit -notmatch '^[0-9a-f]{7,40}$') {
-            $problems += 'X264_COMMIT must be a hexadecimal commit id'
+          $sums = Join-Path $srcFull 'SHA256SUMS'
+          if (-not (Test-Path $sums)) {
+            $problems += 'sources/SHA256SUMS is missing'
           } else {
-            $x264File = "$srcFull/x264-$x264Commit.tar.gz"
-            Invoke-WebRequest "https://code.videolan.org/videolan/x264/-/archive/$x264Commit/x264-$x264Commit.tar.gz" -OutFile $x264File
-            $hdr = (& "$env:SystemRoot\System32\tar.exe" -xOf $x264File '*/x264.h') -join "`n"
-            if ($LASTEXITCODE -ne 0 -or $hdr -notmatch "#define\s+X264_BUILD\s+$env:X264_BUILD_EXPECTED\b") {
-              $problems += "x264 archive for $x264Commit does not define X264_BUILD $env:X264_BUILD_EXPECTED (the DLLs report core $env:X264_BUILD_EXPECTED)"
+            $listed = @()
+            foreach ($line in Get-Content $sums) {
+              if ($line -notmatch '^([0-9a-f]{64})  (\S+)$') { $problems += "bad SHA256SUMS line: $line"; continue }
+              $hash = $Matches[1]; $name = $Matches[2]
+              $listed += $name
+              $f = Join-Path $srcFull $name
+              if (-not (Test-Path $f)) {
+                $problems += "listed file is missing: $name"
+              } elseif ((Get-FileHash $f -Algorithm SHA256).Hash.ToLower() -ne $hash) {
+                $problems += "SHA256 mismatch: $name"
+              }
+            }
+            foreach ($f in Get-ChildItem $srcFull -File | Where-Object { $_.Name -ne 'SHA256SUMS' }) {
+              if ($listed -notcontains $f.Name) { $problems += "not listed in SHA256SUMS: $($f.Name)" }
+            }
+            foreach ($pattern in 'ffmpeg-*.tar.xz', 'x264-*.tar.xz', 'libvpl-*.tar.xz', 'nv-codec-headers-*.tar.xz', 'amf-headers-*.tar.xz', 'subrec-ffmpeg-build-scripts.tar.xz', 'BUILD_CONFIG.txt') {
+              if (-not ($listed | Where-Object { $_ -like $pattern })) { $problems += "no $pattern in sources/" }
             }
           }
 
-          $cfg = Get-Content packaging/BUILD_CONFIG.txt -Raw
-          if ($cfg -match 'TODO') { $problems += 'packaging/BUILD_CONFIG.txt still has TODO items (other statically linked libraries, build scripts)' }
-          $ffexe = Join-Path $env:SUBREC_FFMPEG_ROOT 'bin/ffmpeg.exe'
-          $banner = 'ffmpeg.exe not found in the FFmpeg package; no -version output captured.'
-          if (Test-Path $ffexe) { $banner = (& $ffexe -hide_banner -version) -join "`n" }
-          [IO.File]::WriteAllText("$srcFull/BUILD_CONFIG.txt", $cfg + "`n`n--- ffmpeg -version (captured by CI from the packaged build) ---`n" + $banner + "`n", (New-Object Text.UTF8Encoding($false)))
+          $cfgFile = Join-Path $srcFull 'BUILD_CONFIG.txt'
+          if (Test-Path $cfgFile) {
+            $cfg = Get-Content $cfgFile -Raw
+            if ($cfg -match 'TODO') { $problems += 'BUILD_CONFIG.txt contains TODO' }
+            if ($cfg -notmatch '(?m)^Variant\s*:\s*gpl\s*$') { $problems += 'BUILD_CONFIG.txt is not the gpl variant' }
+          }
+
+          # The DLLs in the package must be the ones recorded in BUILD_CONFIG.txt (ffmpeg.exe is not shipped).
+          $recorded = Join-Path $env:SUBREC_FFMPEG_ROOT 'share/subrec-ffmpeg/binaries.sha256'
+          $nDll = 0
+          foreach ($line in Get-Content $recorded) {
+            if ($line -notmatch '^([0-9a-f]{64})  \./(\S+\.dll)$') { continue }
+            $nDll++
+            $f = Join-Path 'dist/SubRec' $Matches[2]
+            if (-not (Test-Path $f)) {
+              $problems += "$($Matches[2]) is not in the package"
+            } elseif ((Get-FileHash $f -Algorithm SHA256).Hash.ToLower() -ne $Matches[1]) {
+              $problems += "$($Matches[2]) differs from the build recorded in BUILD_CONFIG.txt"
+            }
+          }
+          if ($nDll -ne 7) { $problems += "expected 7 FFmpeg DLLs in binaries.sha256, found $nDll" }
+          if (Test-Path 'dist/SubRec/ffmpeg.exe') { $problems += 'ffmpeg.exe must not be packaged' }
 
           if ($problems.Count -gt 0) {
-            $msg = "Corresponding source is incomplete:`n - " + ($problems -join "`n - ")
+            $msg = "Corresponding source is incomplete or inconsistent:`n - " + ($problems -join "`n - ")
             if ($env:IS_RELEASE -eq 'true') { throw $msg }
             Write-Warning $msg
             [IO.File]::WriteAllText("$srcFull/INCOMPLETE-DO-NOT-DISTRIBUTE.txt", $msg + "`n")
           }
-
-          $lines = Get-ChildItem $srcFull -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | Sort-Object Name | ForEach-Object {
-            (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() + '  ' + $_.Name
-          }
-          [IO.File]::WriteAllText("$srcFull/SHA256SUMS", ($lines -join "`n") + "`n", (New-Object Text.UTF8Encoding($false)))
           Get-ChildItem $srcFull | Select-Object Name, Length
 
       - name: Zip and SHA256
@@ -189,6 +251,6 @@ jobs:
             Unsigned build. Windows SmartScreen may warn on first run: click "More info" -> "Run anyway", and verify the SHA256 of the zip against the attached .sha256 file.
             未签名构建。首次运行 Windows SmartScreen 可能提示，点“更多信息”→“仍要运行”，并用附带的 .sha256 校验 zip。
 
-            The zip contains the GPL corresponding source of the bundled FFmpeg/x264/x265 in `sources/` (checksums in `sources/SHA256SUMS`).
-            压缩包的 `sources/` 目录内含所附 FFmpeg/x264/x265 的 GPL 对应源码（校验值见 `sources/SHA256SUMS`）。
+            The zip contains the GPL corresponding source of the bundled FFmpeg and x264 (plus the libvpl, nv-codec-headers and AMF header sources and the FFmpeg build scripts) in `sources/` (checksums in `sources/SHA256SUMS`, build configuration in `sources/BUILD_CONFIG.txt`).
+            压缩包的 `sources/` 目录内含所附 FFmpeg 与 x264 的 GPL 对应源码（另有 libvpl、nv-codec-headers、AMF 头文件的源码和 FFmpeg 构建脚本；校验值见 `sources/SHA256SUMS`，构建配置见 `sources/BUILD_CONFIG.txt`）。
           draft: true

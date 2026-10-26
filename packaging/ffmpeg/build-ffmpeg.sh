@@ -2,8 +2,9 @@
 # Build the minimal FFmpeg that SubRec needs (Windows x64, shared DLLs) from pinned sources,
 # by cross-compiling with MinGW-w64 on Linux (Ubuntu 24.04 is the reference host).
 #
-# DRAFT: written without network access and NEVER RUN. Option names of third-party build
-# systems that were taken from memory are marked "verify". Expect fixes on the first run.
+# Status: the "gpl" variant has been built successfully (Debian 13, GCC 14 mingw-w64 posix);
+# warnings of that build are classified in BUILD_WARNINGS.md. The "lgpl" and "lgpl-openh264"
+# variants have NOT been run; their option names taken from memory are marked "verify".
 #
 # Usage:
 #   SUBREC_FFMPEG_VARIANT=gpl packaging/ffmpeg/build-ffmpeg.sh
@@ -106,12 +107,11 @@ mkdir -p "$DEPS/include/AMF"
 cp -a "$SRC/amf/amf/public/include/." "$DEPS/include/AMF/"
 
 log "libvpl (static dispatcher)"
-# verify: libvpl CMake option names (BUILD_TOOLS/BUILD_EXAMPLES/INSTALL_EXAMPLES/BUILD_TESTS).
 cmake -S "$SRC/libvpl" -B "$BLD/libvpl" -G Ninja \
     -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
     -DCMAKE_C_COMPILER="$HOST-gcc" -DCMAKE_CXX_COMPILER="$HOST-g++" -DCMAKE_RC_COMPILER="$HOST-windres" \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$DEPS" \
-    -DBUILD_SHARED_LIBS=OFF -DBUILD_TOOLS=OFF -DBUILD_EXAMPLES=OFF -DINSTALL_EXAMPLES=OFF -DBUILD_TESTS=OFF
+    -DBUILD_SHARED_LIBS=OFF -DBUILD_EXAMPLES=OFF -DINSTALL_EXAMPLES=OFF -DBUILD_TESTS=OFF
 cmake --build "$BLD/libvpl" --parallel "$JOBS"
 cmake --install "$BLD/libvpl"
 # The static dispatcher is C++; make sure FFmpeg's configure check links libstdc++.
@@ -130,7 +130,7 @@ if [ "$VARIANT" = gpl ]; then
     mkdir -p "$BLD/x264"
     ( cd "$BLD/x264" && "$SRC/x264/configure" \
         --host="$HOST" --cross-prefix="$HOST-" --prefix="$DEPS" \
-        --enable-static --enable-pic --disable-cli --disable-opencl --enable-win32thread \
+        --enable-static --enable-pic --disable-cli --disable-opencl \
         --bit-depth=8 --chroma-format=420 \
         --disable-avs --disable-swscale --disable-lavf --disable-ffms --disable-gpac --disable-lsmash \
       && make -j"$JOBS" && make install-lib-static )

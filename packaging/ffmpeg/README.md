@@ -1,19 +1,22 @@
-# SubRec minimal FFmpeg build (DRAFT)
+# SubRec minimal FFmpeg build
 
-Status: **plan + draft scripts, never run.** They were written without network access and
-without a MinGW toolchain. Nothing here is wired into `.github/workflows/`. Third-party build
-options that come from memory are marked *verify* in the scripts.
+Status: the `gpl` variant was built successfully once (Debian 13, GCC 14 mingw-w64 posix; all
+self-checks of `build-ffmpeg.sh` passed, 7 DLLs plus `ffmpeg.exe`, `collect-sources.sh` output
+verified with `sha256sum -c`). The build is wired into `.github/workflows/windows-build.yml`
+(job `ffmpeg`, Ubuntu 24.04), which has not run yet. The `lgpl` and `lgpl-openh264` variants
+have not been run. Third-party build options that come from memory are marked *verify* in the
+scripts. Warnings of the first build: [`BUILD_WARNINGS.md`](BUILD_WARNINGS.md).
 
-Goal: replace the prebuilt, maximal FFmpeg (BtbN-like, ~70 external libraries, only partly
-identifiable) with a **SubRec-specific minimal FFmpeg built from pinned, known sources**, so
-that the release package can ship the exact corresponding source.
+Goal: a **SubRec-specific minimal FFmpeg built from pinned, known sources** (instead of a
+prebuilt FFmpeg with about 70 external libraries that could only be partly identified), so that
+the release package ships the exact corresponding source.
 
 | File | Purpose |
 | --- | --- |
 | `versions.env` | Pinned upstream repos, refs and commits (externally verified with `git ls-remote` on 2026-10-26) |
 | `build-ffmpeg.sh` | Fetch + verify pins, build static deps, configure/build FFmpeg, check result |
 | `collect-sources.sh` | Create `sources/` (git-archive tarballs, build scripts, `BUILD_CONFIG.txt`, `SHA256SUMS`) |
-| `ci-build-ffmpeg.yml.draft` | GitHub Actions job draft (ubuntu runner). Not a workflow until moved to `.github/workflows/` |
+| `BUILD_WARNINGS.md` | Every warning of the first real build, with verdict and reason |
 
 ## 1. Components SubRec actually uses
 
@@ -81,7 +84,7 @@ drops any requested component, if the license flags differ from the variant, if 
 differs from `EXPECTED_DLLS`, or if any DLL or `ffmpeg.exe` imports a non-system DLL (MinGW
 runtime, x264, ...).
 
-**ffmpeg.exe (acceptance tool, not used by SubRec itself).** Only the `ffmpeg` program is built
+**ffmpeg.exe (acceptance/CI smoke-test tool, not used by SubRec itself, NOT packaged).** Only the `ffmpeg` program is built
 (`--disable-ffplay --disable-ffprobe`). Its configure dependencies (`ffmpeg_deps` /
 `ffmpeg_select` in n8.0.3's `configure`, read from the checkout) are avcodec, avfilter,
 avformat and threads, which are already enabled; configure additionally force-enables the
@@ -89,9 +92,15 @@ filters `aformat anull atrim crop format hflip null rotate transpose trim vflip`
 `--disable-everything`. The script verifies they are on. fftools uses libavdevice when present
 (`-devices`, `-sources`) and links `ole32`/`psapi`/`shell32`, which are Windows system DLLs.
 `ffmpeg.exe` is stripped, import-checked and hashed together with the DLLs
-(`share/subrec-ffmpeg/binaries.sha256`). `cmake/SubRecFFmpeg.cmake` only copies `bin/*.dll`, so
-the exe is not shipped unless packaging is changed. It adds no new source: `ffmpeg.exe` is GPL
-like the GPL-variant DLLs and its source is already in `ffmpeg-<ref>.tar.xz`.
+(`share/subrec-ffmpeg/binaries.sha256`). It is **not shipped**: SubRec links the FFmpeg
+libraries and never starts `ffmpeg.exe` (searched the sources for `QProcess`, `CreateProcess`,
+`ShellExecute`, `system(`, `popen`, `_spawn`, `exec*`: no hit that runs it), and
+`cmake/SubRecFFmpeg.cmake` copies only `bin/*.dll`. Shipping it would add a second GPL
+executable and its attack surface for no function (0.46 MB). The CI workflow runs it from the
+build artifact only to check that the DLLs load and that the four video encoders and `aac` are
+present, and checks that the package does not contain it. If SubRec ever starts it, copy it into
+the package and list it in `THIRD_PARTY_LICENSES.md`; no new source is needed since the source
+is already in `ffmpeg-<ref>.tar.xz`.
 
 ### External libraries and licenses
 
@@ -104,14 +113,12 @@ like the GPL-variant DLLs and its source is already in `ffmpeg-<ref>.tar.xz`.
 | Intel libvpl | v2.16.0 `778a66d6` | `h264_qsv` dispatcher | MIT | static; runtime comes with the Intel driver |
 | OpenH264 | v2.7.0 `1bca6231` | `libopenh264` (optional variant) | BSD-2-Clause (patent note below) | static |
 | MinGW-w64 runtime | from the toolchain | CRT startup, winpthreads, libgcc/libstdc++ | ZPL/public domain, MIT, GCC Runtime Library Exception | static |
-| x265 | not built | SubRec has no HEVC encoder candidate | - | - |
 
 ## 3. FFmpeg version and header compatibility
 
 - **n8.0.3 (chosen).** It has the same library majors as the DLLs SubRec was developed with
   (avutil-60, avcodec-62, avformat-62, avfilter-11, avdevice-62, swscale-9, swresample-6), so the
-  DLL names and APIs stay the same. The dev snapshot `37064b2d16` is already after the 8.0 major
-  bump, so removed APIs are already handled in the code. Point releases are bug-fix only.
+  DLL names and APIs stay the same. Point releases are bug-fix only.
 - **n8.1.x (alternative).** FFmpeg normally keeps the majors in an x.1 release (7.1 kept 7.0's),
   so 8.1 likely has the same DLL names. This is **not verified**: check `libav*/version_major.h`.
   `EXPECTED_DLLS` makes the build fail on any rename.
@@ -150,31 +157,29 @@ Recommendation:
 | Packages | Ubuntu 24.04: `build-essential git ca-certificates pkg-config nasm cmake ninja-build xz-utils mingw-w64 gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev`, then `update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix` (same for `g++`) | MINGW64 env: `pacman -S --needed git make diffutils pkgconf mingw-w64-x86_64-toolchain mingw-w64-x86_64-nasm mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja` |
 | Reproducibility | pinned container/runner image, apt versions recorded in `toolchain.txt` | rolling distro, hard to pin |
 | Speed | fast configure (native fork) | FFmpeg configure is slow under MSYS2 (fork emulation) |
-| CI | `ubuntu-24.04` runner (`ci-build-ffmpeg.yml.draft`); hand the zip to the Windows job | `windows-latest` + `msys2/setup-msys2`, slower |
+| CI | `ubuntu-24.04` runner (job `ffmpeg` in `windows-build.yml`); hands the artifact to the Windows job | `windows-latest` + `msys2/setup-msys2`, slower |
 | Script changes | none | small: tool prefix (`x86_64-w64-mingw32-objdump`/`strip` may not exist; use `objdump`/`strip`) |
 
 CRT: Ubuntu's mingw-w64 and MSYS2 MINGW64 target msvcrt. MSYS2 UCRT64 targets UCRT. The
 FFmpeg API passes no CRT objects (FILE*, malloc/free pairs) across the DLL boundary, so a
 CRT mismatch with Qt's MinGW is acceptable. The toolchain is recorded in `BUILD_CONFIG.txt`.
 
-## 6. Estimates (not measured)
+## 6. Measured sizes (first real build, `gpl` variant)
 
-- Build time: ~8–15 min on a 4-vCPU Linux runner (deps ~3 min, FFmpeg minimal ~3–6 min, xz of
-  sources ~1–2 min). On a Windows PC with MSYS2: ~15–30 min. On a Windows CI runner with MSYS2: ~20–40 min.
-- DLLs (stripped, gpl): ~8–13 MB total (avcodec ~4–7 MB including x264; avutil ~1–1.5;
-  swscale ~0.7–1.5; avformat ~0.6–1.2; avfilter ~0.6–1.2; swresample/avdevice < 0.5). That is
-  ~3.5–6 MB inside the zip. The current maximal build is roughly 100–170 MB of DLLs (from memory).
-- `sources/` (gpl): FFmpeg ~11–12 MB tar.xz, x264 ~0.8, libvpl ~1–2, AMF headers ~0.3–0.6,
-  nv-codec-headers ~0.1, scripts < 0.1. Total ~13–15 MB. For comparison, today's `sources/` is
-  18.1 MiB (measured), and it is incomplete.
+- DLLs (stripped): about 11 MB in total: avcodec 4.99 MB (includes x264), avutil 2.48 MB,
+  swscale 1.81 MB, avformat 0.70 MB, plus avfilter, avdevice and swresample (smaller);
+  `ffmpeg.exe` 0.46 MB (not packaged).
+- `sources/`: 18 MB: `ffmpeg-n8.0.3.tar.xz` 10,873,616 B, `libvpl-v2.16.0.tar.xz` 6,090,924 B,
+  `x264-b35605ace3dd.tar.xz` 747,636 B, `nv-codec-headers-n12.2.72.0.tar.xz` 65,888 B,
+  `amf-headers-v1.5.3.tar.xz` 61,608 B, `subrec-ffmpeg-build-scripts.tar.xz` 14,492 B.
+  (libvpl is large because the whole repository is archived, not only the dispatcher.)
+- Build time was not recorded; the CI job has a 90 minute limit.
 
-## 7. Follow-ups (not done in this step)
+## 7. Follow-ups
 
-- First real run: fix *verify* items, record actual sizes and times.
-- Point `windows-build.yml` at the artifact of this build instead of `FFMPEG_URL`, and replace
-  its "Collect corresponding source" step and `packaging/BUILD_CONFIG.txt` with the output of
-  `collect-sources.sh`. Then update `THIRD_PARTY_LICENSES.md`, `reference/ffmpeg-fftools/NOTICE.md`
-  and `README.md` (x265 and the other libraries disappear; the license becomes GPL-2.0-or-later
-  FFmpeg + x264).
+- First CI run of `windows-build.yml` (Ubuntu 24.04 has an older mingw-w64 GCC/NASM/CMake than the
+  Debian 13 host of the first build; the used versions are recorded in `BUILD_CONFIG.txt`).
+- Confirm that the libvpl and OpenH264 pins are commit ids (see `versions.env`), and run the
+  `lgpl` / `lgpl-openh264` variants before relying on them.
 - Test on machines with NVIDIA (old and new drivers), AMD, Intel, and no GPU encoder. Test
-  webcams with YUY2, NV12 and MJPG output.
+  webcams with YUY2, NV12 and MJPG output. Check the `abuffersink` `sample_fmts` option in the log.

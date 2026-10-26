@@ -13,7 +13,7 @@
 # (build-ffmpeg.sh already refused modified or wrongly pinned checkouts), compressed with
 # `xz -9 -T1` so that the bytes are reproducible for a given git/xz version.
 #
-# DRAFT: written without network access and NEVER RUN.
+# Run once for the "gpl" variant (sha256sum -c of the result passed).
 #
 # Usage: SUBREC_FFMPEG_VARIANT=gpl packaging/ffmpeg/collect-sources.sh <dest-dir>
 set -euo pipefail
@@ -65,7 +65,7 @@ while IFS=$'\t' read -r name _repo ref commit; do
 done < "$INFO/sources.tsv"
 
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
-    -C "$SCRIPT_DIR/.." -cf - ffmpeg/versions.env ffmpeg/build-ffmpeg.sh ffmpeg/collect-sources.sh ffmpeg/README.md ffmpeg/ci-build-ffmpeg.yml.draft \
+    -C "$SCRIPT_DIR/.." -cf - ffmpeg/versions.env ffmpeg/build-ffmpeg.sh ffmpeg/collect-sources.sh ffmpeg/README.md ffmpeg/BUILD_WARNINGS.md \
     | xz -9 -T1 > "$S/subrec-ffmpeg-build-scripts.tar.xz"
 
 case $VARIANT in
