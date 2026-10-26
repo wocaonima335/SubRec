@@ -1,0 +1,69 @@
+# DRAFT GitHub Actions workflow - NOT ENABLED.
+# It only becomes a workflow if copied to .github/workflows/ (do that only after review).
+# Never run; written without network access. See packaging/ffmpeg/README.md.
+#
+# Builds SubRec's minimal FFmpeg on an Ubuntu runner by cross-compiling with MinGW-w64 and
+# uploads one zip per variant:
+#   ffmpeg-subrec-<variant>-win64.zip
+#     bin/ include/ lib/ share/subrec-ffmpeg/   (FFMPEG_ROOT layout for cmake/SubRecFFmpeg.cmake)
+#     sources/                                   (corresponding source, BUILD_CONFIG.txt, SHA256SUMS)
+# A later change to windows-build.yml would download this artifact instead of FFMPEG_URL.
+name: build-ffmpeg
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'gpl | lgpl | lgpl-openh264'
+        default: 'gpl'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  ffmpeg:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SUBREC_FFMPEG_VARIANT: ${{ inputs.variant }}
+      SUBREC_FFMPEG_WORK: ${{ github.workspace }}/_ffbuild
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git ca-certificates pkg-config nasm cmake ninja-build xz-utils zip \
+            mingw-w64 gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix \
+            binutils-mingw-w64-x86-64 mingw-w64-x86-64-dev
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+          dpkg-query -W gcc-mingw-w64-x86-64-posix mingw-w64-x86-64-dev nasm cmake
+
+      - name: Build FFmpeg
+        run: bash packaging/ffmpeg/build-ffmpeg.sh
+
+      - name: Collect corresponding source
+        run: |
+          out="$SUBREC_FFMPEG_WORK/out/ffmpeg-subrec-$SUBREC_FFMPEG_VARIANT-win64"
+          bash packaging/ffmpeg/collect-sources.sh "$out"
+          (cd "$out/sources" && sha256sum -c SHA256SUMS)
+
+      - name: Zip
+        run: |
+          name="ffmpeg-subrec-$SUBREC_FFMPEG_VARIANT-win64"
+          cd "$SUBREC_FFMPEG_WORK/out"
+          zip -qr -X "$GITHUB_WORKSPACE/$name.zip" "$name"
+          cd "$GITHUB_WORKSPACE"
+          sha256sum "$name.zip" | tee "$name.zip.sha256"
+          ls -l "$name.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-subrec-${{ inputs.variant }}-win64
+          path: |
+            ffmpeg-subrec-${{ inputs.variant }}-win64.zip
+            ffmpeg-subrec-${{ inputs.variant }}-win64.zip.sha256
+          retention-days: 30
