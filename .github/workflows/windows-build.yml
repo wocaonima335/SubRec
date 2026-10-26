@@ -96,19 +96,23 @@ jobs:
 
       # GPL: the package ships FFmpeg DLLs built with --enable-gpl, so it must carry the
       # corresponding source. Layout of <package>/sources/ (see THIRD_PARTY_LICENSES.md):
-      #   ffmpeg-<commit>.tar.gz, x264-<VERSION>.tar.*, x265-<VERSION>.tar.*, BUILD_CONFIG.txt, SHA256SUMS
-      # TODO: set repository variables X264_VERSION, X264_SOURCE_URL, X265_VERSION, X265_SOURCE_URL
-      # (exact versions the FFmpeg DLLs were built with; URL must end in .tar.gz/.tar.bz2/.tar.xz) and
-      # fill packaging/BUILD_CONFIG.txt. Until then: tag builds FAIL; other builds continue but the
-      # package gets sources/INCOMPLETE-DO-NOT-DISTRIBUTE.txt and must not be published.
+      #   ffmpeg-37064b2d16.tar.gz, x265-f8be4634.tar.gz, x264-<X264_COMMIT>.tar.gz, BUILD_CONFIG.txt, SHA256SUMS
+      # Pinned here: FFmpeg commit and x265 commit (both read from the DLL version strings).
+      # x265 default URL is the Bitbucket archive of multicoreware/x265_git; it has NOT been
+      # verified (override with the repository variable X265_SOURCE_URL if it is wrong).
+      # Still unknown, so they block tagged releases (other builds get INCOMPLETE-DO-NOT-DISTRIBUTE.txt):
+      #   - the x264 commit: the DLLs only say "core 165". TODO: set the repository variable X264_COMMIT
+      #     to the commit of videolan/x264 (stable branch) whose x264.h has X264_BUILD 165; this step
+      #     checks that value. That commit may still not be byte-identical to what was compiled in.
+      #   - the TODO items left in packaging/BUILD_CONFIG.txt (other statically linked libraries, build scripts).
       - name: Collect corresponding source (GPL)
         shell: pwsh
         env:
           FFMPEG_COMMIT: '37064b2d16'
-          X264_VERSION: ${{ vars.X264_VERSION }}
-          X264_SOURCE_URL: ${{ vars.X264_SOURCE_URL }}
-          X265_VERSION: ${{ vars.X265_VERSION }}
+          X265_COMMIT: 'f8be4634'
           X265_SOURCE_URL: ${{ vars.X265_SOURCE_URL }}
+          X264_COMMIT: ${{ vars.X264_COMMIT }}
+          X264_BUILD_EXPECTED: '165'
           IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           $ErrorActionPreference = 'Stop'
@@ -119,22 +123,25 @@ jobs:
 
           Invoke-WebRequest "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/$env:FFMPEG_COMMIT" -OutFile "$srcFull/ffmpeg-$env:FFMPEG_COMMIT.tar.gz"
 
-          foreach ($lib in 'x264', 'x265') {
-            $ver = [Environment]::GetEnvironmentVariable($lib.ToUpper() + '_VERSION')
-            $url = [Environment]::GetEnvironmentVariable($lib.ToUpper() + '_SOURCE_URL')
-            if ([string]::IsNullOrWhiteSpace($ver) -or [string]::IsNullOrWhiteSpace($url)) {
-              $problems += "$lib source is not configured (repository variables $($lib.ToUpper())_VERSION and $($lib.ToUpper())_SOURCE_URL)"
-            } elseif ($ver -notmatch '^[A-Za-z0-9._-]+$') {
-              $problems += "$($lib.ToUpper())_VERSION contains unsupported characters"
-            } elseif ($url -match '\.tar\.(gz|bz2|xz)$') {
-              Invoke-WebRequest $url -OutFile "$srcFull/$lib-$ver.tar.$($Matches[1])"
-            } else {
-              $problems += "$($lib.ToUpper())_SOURCE_URL must end in .tar.gz, .tar.bz2 or .tar.xz"
+          $x265Url = $env:X265_SOURCE_URL
+          if ([string]::IsNullOrWhiteSpace($x265Url)) { $x265Url = "https://bitbucket.org/multicoreware/x265_git/get/$env:X265_COMMIT.tar.gz" }
+          Invoke-WebRequest $x265Url -OutFile "$srcFull/x265-$env:X265_COMMIT.tar.gz"
+
+          if ([string]::IsNullOrWhiteSpace($env:X264_COMMIT)) {
+            $problems += 'x264 commit is not set (repository variable X264_COMMIT; the DLLs only identify x264 as core 165)'
+          } elseif ($env:X264_COMMIT -notmatch '^[0-9a-f]{7,40}$') {
+            $problems += 'X264_COMMIT must be a hexadecimal commit id'
+          } else {
+            $x264File = "$srcFull/x264-$env:X264_COMMIT.tar.gz"
+            Invoke-WebRequest "https://code.videolan.org/videolan/x264/-/archive/$env:X264_COMMIT/x264-$env:X264_COMMIT.tar.gz" -OutFile $x264File
+            $hdr = (& "$env:SystemRoot\System32\tar.exe" -xOf $x264File '*/x264.h') -join "`n"
+            if ($LASTEXITCODE -ne 0 -or $hdr -notmatch "#define\s+X264_BUILD\s+$env:X264_BUILD_EXPECTED\b") {
+              $problems += "x264 archive for $env:X264_COMMIT does not define X264_BUILD $env:X264_BUILD_EXPECTED (the DLLs report core $env:X264_BUILD_EXPECTED)"
             }
           }
 
           $cfg = Get-Content packaging/BUILD_CONFIG.txt -Raw
-          if ($cfg -match 'TODO') { $problems += 'packaging/BUILD_CONFIG.txt still contains TODO (configure command line / build scripts not recorded)' }
+          if ($cfg -match 'TODO') { $problems += 'packaging/BUILD_CONFIG.txt still has TODO items (x264 exact commit, other statically linked libraries, build scripts)' }
           $ffexe = Join-Path $env:SUBREC_FFMPEG_ROOT 'bin/ffmpeg.exe'
           $banner = 'ffmpeg.exe not found in the FFmpeg package; no -version output captured.'
           if (Test-Path $ffexe) { $banner = (& $ffexe -hide_banner -version) -join "`n" }

@@ -27,23 +27,33 @@ SubRec (字录) is released under **GPL-3.0** ([LICENSE](LICENSE)); the maintain
 
 **对应源码获取位置 / Where to get the corresponding source：**
 
-- FFmpeg commit `37064b2d16`：<https://git.ffmpeg.org/ffmpeg.git>；GitHub 镜像 <https://github.com/FFmpeg/FFmpeg/commit/37064b2d16>。
-- x264、x265 及该构建启用的其它外部库：**TODO**——需记录实际构建所用的确切版本/commit 与完整 `./configure` 命令行。**x264/x265 的确切版本目前未知。**
-- 同样的信息见 [`reference/ffmpeg-fftools/NOTICE.md`](reference/ffmpeg-fftools/NOTICE.md)。
-- **发布包内随附 / Shipped inside every release package：** 发布包（zip 及将来的安装包）在 `sources/` 目录附带上述对应源码：
+| 组件 / Component | 标识 / Identification | 源码 / Source |
+| --- | --- | --- |
+| FFmpeg | commit `37064b2d16` | <https://git.ffmpeg.org/ffmpeg.git>；GitHub 镜像 <https://github.com/FFmpeg/FFmpeg/commit/37064b2d16> |
+| x265 | `4.1+151-f8be4634`（API build 215，取自 DLL 内嵌版本字符串），commit `f8be4634` | <https://bitbucket.org/multicoreware/x265_git>（CI 使用的归档 URL **未验证**） |
+| x264 | 静态链接；版本信息仅有 `core 165`（SEI：`x264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025`），无 `r` 版本号、无 commit | <https://code.videolan.org/videolan/x264> 的 `stable` 分支中 `x264.h` 为 `X264_BUILD 165` 的提交；**确切 revision 未知（TODO）** |
+| 其它被启用的外部库 | 见 configure 命令行（`packaging/BUILD_CONFIG.txt`） | **TODO：版本与源码尚未收集** |
+
+完整 `./configure` 命令行见 [`packaging/BUILD_CONFIG.txt`](packaging/BUILD_CONFIG.txt)，取自 `avcodec-62.dll` 内嵌的配置字符串（未带入任何本机路径）。该构建**看起来类似** BtbN `FFmpeg-Builds` 的 win64 GPL shared 构建——**仅为推断，未确认**。同样的信息见 [`reference/ffmpeg-fftools/NOTICE.md`](reference/ffmpeg-fftools/NOTICE.md)。
+
+> ⚠ **源码完整性警示 / Source-completeness warnings**
+> 1. **x264 可能不是逐字节对应的源码**：DLL 里只有 `core 165`，包内的 x264 是 `stable` 分支中 `X264_BUILD 165` 的“最接近”版本。若与实际编译进去的代码不完全一致，则不能完全满足 GPL 对“对应源码”的要求（合规风险）。理想做法是**用已知源码重新构建 FFmpeg**（记录 FFmpeg/x264/x265 的 commit 与构建脚本），并替换 DLL。
+> 2. **其它静态链接库**：configure 命令行启用了大量其它外部库，很可能静态链接进 DLL；它们的源码尚未随包提供（TODO）。用最小配置重新构建可大幅缓解。
+> 3. 以上未解决前，打 tag（`v*`）的发布构建会失败；其它构建会被标记为 `INCOMPLETE-DO-NOT-DISTRIBUTE.txt`，不得对外发布。
+> *(English)* x264 is identified only as `core 165`, so the bundled x264 may not be byte-identical to what was compiled in (GPL risk; best fix: rebuild FFmpeg from known sources). The many other external libraries in the configure line, probably linked statically, are not yet covered by `sources/` (TODO). Tagged releases fail until resolved.
+
+- **发布包内随附 / Shipped inside every release package：** 发布包（zip 及将来的安装包）在 `sources/` 目录附带对应源码：
 
   | 包内路径 / Path | 内容 / Content |
   | --- | --- |
   | `sources/ffmpeg-37064b2d16.tar.gz` | FFmpeg commit `37064b2d16` 的源码归档 |
-  | `sources/x264-<VERSION>.tar.*` | x264 源码（实际构建所用版本；**TODO：版本未知**） |
-  | `sources/x265-<VERSION>.tar.*` | x265 源码（实际构建所用版本；**TODO：版本未知**） |
-  | `sources/BUILD_CONFIG.txt` | FFmpeg 的 configure 命令行、工具链与构建说明（模板：`packaging/BUILD_CONFIG.txt`，**TODO：待填写**） |
+  | `sources/x265-f8be4634.tar.gz` | x265 commit `f8be4634` 的源码归档 |
+  | `sources/x264-<COMMIT>.tar.gz` | x264 `stable` 分支中 `X264_BUILD 165` 的提交（**TODO：commit 待确定**） |
+  | `sources/BUILD_CONFIG.txt` | configure 命令行、来源说明与构建说明（模板：`packaging/BUILD_CONFIG.txt`） |
   | `sources/SHA256SUMS` | `sources/` 内其它文件的 SHA-256 |
 
-  CI（`.github/workflows/windows-build.yml`）在打包时下载并放入这些文件、生成 `SHA256SUMS`。x264/x265 的版本与下载地址通过仓库变量 `X264_VERSION`、`X264_SOURCE_URL`、`X265_VERSION`、`X265_SOURCE_URL` 提供；这些变量或 `BUILD_CONFIG.txt` 未补全时，**打 tag 的发布构建会直接失败**；非 tag 构建继续，但包内会有 `sources/INCOMPLETE-DO-NOT-DISTRIBUTE.txt`，**不得对外发布**。
-  The release workflow puts these files into `sources/` and generates `SHA256SUMS`. x264/x265 versions and URLs come from the repository variables above; while they or `BUILD_CONFIG.txt` are incomplete, tagged release builds fail, and other builds are marked `INCOMPLETE-DO-NOT-DISTRIBUTE.txt` and must not be published.
-
-*(English)* Development FFmpeg: `N-119453-g37064b2d16-20250509`, a 2025-05-09 git-master snapshot (not an official release), commit `37064b2d16`, libavutil 60.2.100, libavcodec 62.3; GPL-3.0-or-later build (`--enable-gpl --enable-version3`, with x264 and x265). Source: <https://git.ffmpeg.org/ffmpeg.git> and <https://github.com/FFmpeg/FFmpeg/commit/37064b2d16>. TODO: exact x264/x265 versions and the full configure line are not yet recorded.
+  CI（`.github/workflows/windows-build.yml`）固定下载 FFmpeg `37064b2d16` 与 x265 `f8be4634`；x264 通过仓库变量 `X264_COMMIT` 指定，CI 会检查所下载归档的 `x264.h` 中 `X264_BUILD` 为 165。`X264_COMMIT` 未设置、x264 校验失败，或 `BUILD_CONFIG.txt` 里仍有 TODO 时，**打 tag 的发布构建会直接失败**；非 tag 构建继续，但包内会有 `sources/INCOMPLETE-DO-NOT-DISTRIBUTE.txt`，**不得对外发布**。
+  The workflow pins FFmpeg `37064b2d16` and x265 `f8be4634`; x264 comes from the repository variable `X264_COMMIT` and is checked for `X264_BUILD 165`. Tagged builds fail while `X264_COMMIT` is unset, the x264 check fails, or `BUILD_CONFIG.txt` still has TODO items; other builds are marked `INCOMPLETE-DO-NOT-DISTRIBUTE.txt` and must not be published.
 
 **该构建的配置 / Build configuration [文件，取自 DLL 内嵌的 configure 字符串]：**
 
@@ -69,7 +79,7 @@ SubRec (字录) is released under **GPL-3.0** ([LICENSE](LICENSE)); the maintain
 **与 GPLv3 的兼容性 / Compatibility with GPLv3：**
 
 - 本项目（GPL-3.0）+ FFmpeg（GPL-3.0-or-later）动态链接：**兼容**，合并作品按 GPL-3.0 发布。该 FFmpeg 未启用 nonfree，因此**可合法再分发**（一旦 `--enable-nonfree`，二进制将不可再分发）。
-- **分发义务 / Obligations when distributing binaries：** 若发布的压缩包/安装包**包含** FFmpeg DLL，必须随二进制提供（或书面承诺提供）**对应源码**：所用 FFmpeg 的精确版本（commit `37064b2d16`）及全部被启用的 GPL 组件（x264、x265 等，**须为实际构建所用的版本——目前未记录，TODO**）的源码、构建脚本与完整 configure 配置，以及 GPL-3.0 许可证文本。**仅发布源码、让用户自行提供 FFmpeg 时，本项目不分发 FFmpeg。** 本仓库的 CI（`.github/workflows/windows-build.yml`）会把下载的 FFmpeg DLL 打进发布包，维护者在发布前必须履行上述义务。
+- **分发义务 / Obligations when distributing binaries：** 若发布的压缩包/安装包**包含** FFmpeg DLL，必须随二进制提供（或书面承诺提供）**对应源码**：所用 FFmpeg 的精确版本（commit `37064b2d16`）及全部被启用的 GPL 组件（x265 已定位到 commit `f8be4634`；x264 仅知 `core 165`，确切 revision 未知，**TODO**；其余静态链接库的版本与源码也尚未收集，**TODO**）的源码、构建脚本与完整 configure 配置，以及 GPL-3.0 许可证文本。**仅发布源码、让用户自行提供 FFmpeg 时，本项目不分发 FFmpeg。** 本仓库的 CI（`.github/workflows/windows-build.yml`）会把下载的 FFmpeg DLL 打进发布包，维护者在发布前必须履行上述义务。
 - 若项目选择 **GPL-3.0-only**：与 GPL-3.0-or-later 的 FFmpeg 组合没有问题；若想写 “GPL-2.0-or-later” 则**不可行**（被 version3 组件阻断）。
 
 **与“GPLv3 + 商业授权”的兼容性 / Compatibility with dual-licensing：**
@@ -126,7 +136,7 @@ CMake（BSD-3）、Ninja（Apache-2.0）、MinGW-w64 GCC（GPL，有 Runtime Exc
 ## 5. 发布前待办 / Pre-release checklist
 
 1. 决定项目许可证写法：`GPL-3.0-only` 还是 `GPL-3.0-or-later`（“or-later” 需所有版权人同意）。
-2. 为发行包中包含的 FFmpeg 二进制准备**对应源码**（精确 commit、所有 GPL 库的版本与补丁、构建脚本），已决定**随发布包附带**（`sources/`，见 §1），待补：x264/x265 的确切版本与源码、`packaging/BUILD_CONFIG.txt`（configure 命令行与构建说明），以及 `ffmpeg_mux.c` 来源版本的核对（`reference/ffmpeg-fftools/NOTICE.md`）。
+2. 为发行包中包含的 FFmpeg 二进制准备**对应源码**（精确 commit、所有 GPL 库的版本与补丁、构建脚本），已决定**随发布包附带**（`sources/`，见 §1），待补：x264 的确切 commit、其余静态链接库的版本与源码、构建脚本/工具链（`packaging/BUILD_CONFIG.txt` 中的 TODO；更干净的做法是用已知源码重新构建 FFmpeg），以及 `ffmpeg_mux.c` 来源版本的核对（`reference/ffmpeg-fftools/NOTICE.md`）。
 3. 为**商业版本**规划 LGPL 构建的 FFmpeg 与替代的软件编码方案，或购买相应商业授权；核对 H.264/HEVC/AAC 专利风险。
 4. 为 Qt 在商业版本中的 LGPL 合规（动态链接、可替换、声明）或商业授权做决定。
 5. 核查 `screen-capture-recorder` / `virtual-audio-capturer` 的许可证后再决定是否在文档中推荐或打包。

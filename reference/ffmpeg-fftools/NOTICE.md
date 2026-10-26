@@ -40,27 +40,48 @@ contain, is:
 | Commit | `37064b2d16` |
 | Libraries | libavutil 60.2.100, libavcodec 62.3 |
 | DLLs | `avutil-60`, `avcodec-62`, `avformat-62`, `avfilter-11`, `avdevice-62`, `swscale-9`, `swresample-6` |
-| Configuration | `--enable-gpl --enable-version3` (no `--enable-nonfree`); includes **x264** and **x265** |
+| Configuration | `--enable-gpl --enable-version3` (no `--enable-nonfree`); cross-compiled shared build; includes **x264** (core 165) and **x265** (4.1+151-f8be4634) |
 | License of the resulting binaries | **GPL version 3 or later** |
 
 ### Where to get the corresponding source
 
-- FFmpeg commit `37064b2d16`:
-  - <https://git.ffmpeg.org/ffmpeg.git>
-  - <https://github.com/FFmpeg/FFmpeg/commit/37064b2d16> (GitHub mirror)
-- x264 and x265 (and every other external library enabled in that build): TODO, record the
-  exact versions or commits and the full `./configure` command line used for the build. The
-  exact x264/x265 versions are **currently unknown**.
-- **Inside every SubRec release package** (zip, and any future installer) the same source is
-  shipped under `sources/`, so no separate download is needed:
+| Component | Identification | Source |
+| --- | --- | --- |
+| FFmpeg | commit `37064b2d16` | <https://git.ffmpeg.org/ffmpeg.git>, <https://github.com/FFmpeg/FFmpeg/commit/37064b2d16> |
+| x265 | `4.1+151-f8be4634` (API build 215, from the version string embedded in the DLL), commit `f8be4634` | <https://bitbucket.org/multicoreware/x265_git> (archive URL used by CI is **not verified**) |
+| x264 | statically linked; the only version information is `core 165` (SEI text `x264 - core 165 - H.264/MPEG-4 AVC codec - Copyleft 2003-2025`), with no `r` revision number and no commit | <https://code.videolan.org/videolan/x264>, `stable` branch, the commit whose `x264.h` defines `X264_BUILD 165`. **The exact revision is unknown (TODO).** |
+| Other enabled external libraries | listed in the configure line (`packaging/BUILD_CONFIG.txt`) | **TODO: versions and sources not yet collected** |
 
-  | Path in the package | Content |
-  | --- | --- |
-  | `sources/ffmpeg-37064b2d16.tar.gz` | FFmpeg source at commit `37064b2d16` (GitHub archive of that commit) |
-  | `sources/x264-<VERSION>.tar.*` | x264 source, the exact version built into the FFmpeg DLLs (TODO: version unknown) |
-  | `sources/x265-<VERSION>.tar.*` | x265 source, the exact version built into the FFmpeg DLLs (TODO: version unknown) |
-  | `sources/BUILD_CONFIG.txt` | FFmpeg configure command line, toolchain and build notes (template: `packaging/BUILD_CONFIG.txt`) |
-  | `sources/SHA256SUMS` | SHA-256 of every other file in `sources/` (check with `sha256sum -c SHA256SUMS`) |
+The full `./configure` command line is recorded in [`packaging/BUILD_CONFIG.txt`](../../packaging/BUILD_CONFIG.txt).
+It was taken from the configuration string embedded in `avcodec-62.dll`. The build looks
+similar to a BtbN `FFmpeg-Builds` win64 GPL shared build; this is an inference only and is
+**not confirmed**.
+
+**Inside every SubRec release package** (zip, and any future installer) the source is
+shipped under `sources/`:
+
+| Path in the package | Content |
+| --- | --- |
+| `sources/ffmpeg-37064b2d16.tar.gz` | FFmpeg source at commit `37064b2d16` (GitHub archive of that commit) |
+| `sources/x265-f8be4634.tar.gz` | x265 source at commit `f8be4634` |
+| `sources/x264-<COMMIT>.tar.gz` | x264 source, `stable` branch commit with `X264_BUILD 165` (commit TODO) |
+| `sources/BUILD_CONFIG.txt` | FFmpeg configure command line, provenance and build notes (template: `packaging/BUILD_CONFIG.txt`) |
+| `sources/SHA256SUMS` | SHA-256 of every other file in `sources/` (check with `sha256sum -c SHA256SUMS`) |
+
+### Warnings (known gaps in source completeness)
+
+1. **x264 may not be the exact source that was compiled in.** The DLLs only say `core 165`.
+   The x264 archive in `sources/` is a best-effort match (a commit of the `stable` branch with
+   `X264_BUILD 165`). If it is not byte-for-byte the code that was built, shipping it does
+   not fully satisfy the GPL "corresponding source" requirement. Ideally FFmpeg should be
+   **rebuilt from known sources** (known FFmpeg, x264 and x265 commits and a recorded build
+   script) and the DLLs replaced.
+2. **Other statically linked libraries.** The configure line enables many more external
+   libraries, which are probably linked statically into the DLLs. Their sources are not in
+   `sources/` yet (TODO). A rebuild with a minimal configuration would remove most of this problem.
+3. The "similar to BtbN FFmpeg-Builds" remark is an inference, not a fact.
+4. Until these items are resolved, the release workflow fails for version tags (`v*`) and
+   marks other builds `INCOMPLETE-DO-NOT-DISTRIBUTE.txt`.
 
 ### GPL obligations when you distribute these binaries
 
