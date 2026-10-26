@@ -1,0 +1,86 @@
+#ifndef CAPTURE_SCHEDULER_H
+#define CAPTURE_SCHEDULER_H
+
+#include "capture/capture_types.h"
+#include "capture_session.h"
+
+#include <QObject>
+#include <QString>
+#include <QVariantList>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
+
+class FFRecorder;
+
+enum class CaptureSchedulerState
+{
+    Idle,
+    Preparing,
+    Running,
+    Paused,
+    Stopping,
+    Failed
+};
+
+QString captureSchedulerStateName(CaptureSchedulerState state);
+
+// Control operations run on the creating (Recorder/UI) thread. Worker results
+// are queued to this QObject, so destruction also discards pending callbacks.
+class CaptureScheduler : public QObject
+{
+public:
+    explicit CaptureScheduler(FFRecorder &recorder);
+    ~CaptureScheduler();
+
+    void initialize();
+    bool start();
+    void stop();
+    void pause();
+    void resume();
+    bool changeVideoSource(bool useScreen);
+    bool changeAudioSource(bool useSystemAudio);
+    void refreshDevices();
+    bool selectVideoDevice(const QString &deviceId);
+    bool selectAudioDevice(const QString &deviceId);
+
+    CaptureSchedulerState state() const;
+    QString lastError() const;
+    bool useSystemAudio() const;
+    QVariantList devices() const;
+    QString selectedVideoDeviceId() const;
+    QString selectedAudioDeviceId() const;
+
+private:
+    CaptureStartResult buildCurrentConfig(CaptureConfig *config) const;
+    bool configurationMutableLocked() const;
+    void onSessionStarted(std::uint64_t sessionId, const CaptureStartResult &result);
+    bool onControlThread(const char *operation) const;
+    friend class CaptureLifecycleTest;
+
+    // Lifecycle-harness seams. Both stay null in production; the regression
+    // harness swaps the config resolution and the FFmpeg opener so the
+    // scheduler/session control state machine can be tested without media.
+    std::function<CaptureStartResult(CaptureConfig *)> m_testConfigHook;
+    std::function<void(CaptureSession &,
+                       std::function<void(const CaptureStartResult &)>)>
+        m_testOpenerHook;
+    void setStateLocked(CaptureSchedulerState newState, const QString &reason);
+    void failLocked(const QString &message);
+
+private:
+    FFRecorder &m_recorder;
+    mutable std::mutex m_mutex;
+    std::unique_ptr<CaptureSession> m_session;
+    std::uint64_t m_sessionId = 0;
+    CaptureSchedulerState m_state = CaptureSchedulerState::Idle;
+    QString m_lastError;
+    QList<CaptureDevice> m_devices;
+    QString m_selectedVideoDeviceId;
+    QString m_selectedAudioDeviceId;
+    bool m_useScreen = true;
+    bool m_useSystemAudio = true;
+};
+
+#endif // CAPTURE_SCHEDULER_H

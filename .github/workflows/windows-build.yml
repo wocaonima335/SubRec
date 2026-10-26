@@ -1,0 +1,123 @@
+# SubRec (字录) Windows build.
+#
+# Status: written for the new repository <OWNER>/SubRec; NOT yet run. Verify on a first
+# push / workflow_dispatch and adjust (Qt arch, MinGW tool name, FFmpeg archive layout).
+#
+# - Toolchain: Qt 6.8.0 + MinGW 13.1 (the toolchain the project is developed with) + Ninja.
+# - FFmpeg is not stored in this repository. Set the repository variable FFMPEG_URL to a
+#   shared FFmpeg build zip (with include/, lib/, bin/); optionally FFMPEG_SHA256 to verify it.
+#   The FFmpeg build must be a GPL-compatible build for a GPL-3.0 release; see THIRD_PARTY_LICENSES.md.
+# - Artifacts are unsigned: Windows SmartScreen will warn ("More info" -> "Run anyway").
+#   Verify the published SHA256 instead (see README).
+name: windows-build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  QT_VERSION: '6.8.0'
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # only used to create a draft release on tags
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - name: Install Qt and MinGW
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: windows
+          target: desktop
+          arch: win64_mingw
+          modules: 'qtmultimedia'
+          tools: 'tools_mingw1310'
+          cache: true
+
+      - name: Add MinGW and Ninja to PATH
+        shell: pwsh
+        run: |
+          choco install ninja -y --no-progress
+          "$env:IQTA_TOOLS\mingw1310_64\bin" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Fetch FFmpeg
+        shell: pwsh
+        env:
+          FFMPEG_URL: ${{ vars.FFMPEG_URL }}
+          FFMPEG_SHA256: ${{ vars.FFMPEG_SHA256 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:FFMPEG_URL)) {
+            throw "Repository variable FFMPEG_URL is not set. Set it to the URL of a shared FFmpeg build zip (with include/, lib/, bin/). See README.md (Building)."
+          }
+          Invoke-WebRequest $env:FFMPEG_URL -OutFile ffmpeg.zip
+          if (-not [string]::IsNullOrWhiteSpace($env:FFMPEG_SHA256)) {
+            $actual = (Get-FileHash ffmpeg.zip -Algorithm SHA256).Hash
+            if ($actual -ne $env:FFMPEG_SHA256.ToUpper()) { throw "FFmpeg archive SHA256 mismatch" }
+          }
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_dl
+          $root = (Get-ChildItem ffmpeg_dl -Directory | Select-Object -First 1).FullName
+          "SUBREC_FFMPEG_ROOT=$root" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure
+        shell: pwsh
+        run: >
+          cmake -S . -B build/ci -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+          -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
+          -DSUBREC_BUILD_LIFECYCLE_TESTS=OFF
+
+      - name: Build
+        run: cmake --build build/ci --target appSubRec --parallel
+
+      - name: Deploy (windeployqt)
+        shell: pwsh
+        run: |
+          $out = "dist/SubRec"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item build/ci/appSubRec.exe $out/
+          Copy-Item build/ci/*.dll $out/ -ErrorAction SilentlyContinue   # FFmpeg and MinGW runtime DLLs (copied by POST_BUILD)
+          windeployqt --release --qmldir qml --no-translations "$out/appSubRec.exe"
+          Copy-Item LICENSE $out/LICENSE.txt
+          Copy-Item THIRD_PARTY_LICENSES.md $out/
+          Copy-Item "$env:SUBREC_FFMPEG_ROOT/LICENSE.txt" $out/FFmpeg-LICENSE.txt -ErrorAction SilentlyContinue
+
+      - name: Zip and SHA256
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/SubRec/* -DestinationPath SubRec-win64.zip
+          $hash = (Get-FileHash SubRec-win64.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  SubRec-win64.zip" | Out-File SubRec-win64.zip.sha256 -Encoding ascii
+          Write-Host "SHA256: $hash"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SubRec-win64
+          path: |
+            SubRec-win64.zip
+            SubRec-win64.zip.sha256
+          retention-days: 14
+
+      - name: Release (tag only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            SubRec-win64.zip
+            SubRec-win64.zip.sha256
+          body: |
+            Unsigned build. Windows SmartScreen may warn on first run: click "More info" -> "Run anyway", and verify the SHA256 of the zip against the attached .sha256 file.
+            未签名构建。首次运行 Windows SmartScreen 可能提示，点“更多信息”→“仍要运行”，并用附带的 .sha256 校验 zip。
+          draft: true

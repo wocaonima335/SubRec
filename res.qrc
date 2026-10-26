@@ -1,0 +1,23 @@
+<RCC>
+    <qresource prefix="/">
+        <file>icons/Pause.png</file>
+        <file>icons/main.png</file>
+        <file>icons/main-gray.png</file>
+        <file>icons/setting-gray.png</file>
+        <file>icons/video-gray.png</file>
+        <file>icons/record.png</file>
+        <file>icons/Setting.png</file>
+        <file>icons/video.png</file>
+        <file>qml/Main.qml</file>
+        <file>qml/settinglist.qml</file>
+        <file>qml/settingpage.qml</file>
+        <file>qml/videopage.qml</file>
+        <file>qml/cuttingpage.qml</file>
+        <file>icons/audio.png</file>
+        <file>icons/microphone.png</file>
+        <file>icons/camera.png</file>
+        <file>icons/screen.png</file>
+        <file>shaderSource/source.frag</file>
+        <file>shaderSource/source.vert</file>
+    </qresource>
+</RCC>

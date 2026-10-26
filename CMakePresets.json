@@ -1,0 +1,32 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-mingw-release",
+      "displayName": "Windows MinGW Release",
+      "description": "Qt 6 MinGW x64 Release build. Requires QT_ROOT (Qt kit dir, e.g. .../6.8.0/mingw_64) and SUBREC_FFMPEG_ROOT (shared FFmpeg dir with include/, lib/, bin/) in the environment; MinGW g++ and Ninja must be on PATH. Override locally with CMakeUserPresets.json.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-mingw-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_PREFIX_PATH": "$env{QT_ROOT}",
+        "FFMPEG_ROOT": "$env{SUBREC_FFMPEG_ROOT}"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-mingw-release",
+      "configurePreset": "windows-mingw-release",
+      "configuration": "Release",
+      "targets": [
+        "appSubRec"
+      ]
+    }
+  ]
+}
