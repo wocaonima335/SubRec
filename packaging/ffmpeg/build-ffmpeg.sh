@@ -58,11 +58,11 @@ export PKG_CONFIG_PATH=
 
 # --- fetch ----------------------------------------------------------------------------
 # fetch NAME REPO REF COMMIT [SPARSE_PATH...]
-# Shallow-clones REF and requires that it resolves to COMMIT (commit id, or the tag object
-# id for annotated tags). A moved branch (x264 "stable") falls back to fetching COMMIT.
+# Shallow-clones REF and requires that HEAD is exactly COMMIT (a commit id, never an annotated
+# tag object). A moved branch (x264 "stable") falls back to fetching COMMIT.
 fetch() {
     local name=$1 repo=$2 ref=$3 commit=$4; shift 4
-    local dir=$SRC/$name head tagobj
+    local dir=$SRC/$name head
     if [ ! -d "$dir/.git" ]; then
         log "clone $name $ref"
         if [ $# -gt 0 ]; then
@@ -73,16 +73,14 @@ fetch() {
         fi
     fi
     head=$(git -C "$dir" rev-parse HEAD)
-    tagobj=$(git -C "$dir" rev-parse -q --verify "refs/tags/$ref" 2>/dev/null || true)
-    if [ "$head" != "$commit" ] && [ "$tagobj" != "$commit" ]; then
+    if [ "$head" != "$commit" ]; then
         log "$name: $ref is at $head, fetching pinned $commit"
         git -C "$dir" fetch --quiet --depth 1 origin "$commit" \
             || die "$name: cannot fetch pinned commit $commit (server may not allow fetching by id)"
         git -C "$dir" checkout --quiet --detach "$commit"
         head=$(git -C "$dir" rev-parse HEAD)
     fi
-    [ "$head" = "$commit" ] || [ "$tagobj" = "$commit" ] \
-        || die "$name: $ref resolves to $head (tag object ${tagobj:-none}), pinned $commit"
+    [ "$head" = "$commit" ] || die "$name: $ref resolves to $head, pinned $commit"
     [ -z "$(git -C "$dir" status --porcelain --untracked-files=no)" ] \
         || die "$name: tracked files are modified; the source must be pristine"
     printf '%s\t%s\t%s\t%s\n' "$name" "$repo" "$ref" "$head" >> "$INFO/sources.tsv"
