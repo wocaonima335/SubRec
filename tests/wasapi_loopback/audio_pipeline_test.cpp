@@ -9,6 +9,7 @@ struct Sink : wasapi::AudioFrameSink {
     int finished = 0;
     bool reject = false;
     bool allSilent = true;
+    int64_t lastCaptureUs = AV_NOPTS_VALUE;
     bool push(AVFrame *frame) override {
         if (reject) return false;
         require(frame->format == AV_SAMPLE_FMT_FLTP && frame->sample_rate == 48000);
@@ -20,6 +21,8 @@ struct Sink : wasapi::AudioFrameSink {
                 if (std::abs(values[i]) > 0.00001f) allSilent = false;
             }
         }
+        if (const auto *entry = av_dict_get(frame->metadata, "capture_time_us", nullptr, 0))
+            lastCaptureUs = std::stoll(entry->value);
         samples += frame->nb_samples;
         av_frame_unref(frame);
         return true;
@@ -51,6 +54,11 @@ int main() {
         require(pipeline.silenceUntil(240001)); require(sink.samples == 240001 && sink.allSilent);
         require(pipeline.silenceUntil(200000)); require(sink.samples == 240001 && sink.allSilent);
         pipeline.stop(true); require(sink.finished == 0);
+        Sink stamped; wasapi::AudioPipeline timestamped(stamped);
+        timestamped.setCaptureTimeUs(123456000000);
+        require(timestamped.silenceUntil(960));
+        require(stamped.lastCaptureUs == 123456010000 && stamped.samples == 960);
+        timestamped.stop(false); require(stamped.finished == 1);
         Sink closed; closed.reject = true; wasapi::AudioPipeline failed(closed);
         require(!failed.silenceUntil(480)); failed.stop(false); require(closed.finished == 0);
         std::cout << "WASAPI PCM conversion, PTS, idle silence, drain and abort passed\n";

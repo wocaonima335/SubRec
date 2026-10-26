@@ -1,4 +1,7 @@
 #include "demuxer.h"
+extern "C" {
+#include <libavutil/time.h>
+}
 
 #include "queue/ffapacketqueue.h"
 #include "queue/ffvpacketqueue.h"
@@ -177,6 +180,22 @@ int Demuxer::demux()
     }
 
     if (aStream && packet->stream_index == aStream->index) {
+        if (captureClock) {
+            // Calibrate at the first demuxed packet, before video preparation and
+            // downstream queueing. Thereafter preserve the device PTS deltas,
+            // including pauses/gaps and rate drift; never re-anchor queued audio.
+            const auto *par = aStream->codecpar;
+            const int bytes = av_get_bytes_per_sample(static_cast<AVSampleFormat>(par->format));
+            const int64_t durationUs = bytes > 0 && par->ch_layout.nb_channels > 0 && par->sample_rate > 0
+                ? int64_t(packet->size) * 1000000 / (bytes * par->ch_layout.nb_channels) / par->sample_rate : 0;
+            const int64_t deviceUs = packet->pts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE
+                : av_rescale_q(packet->pts, aStream->time_base, AVRational{1,1000000});
+            if (captureOffsetUs == AV_NOPTS_VALUE && deviceUs != AV_NOPTS_VALUE)
+                captureOffsetUs = av_gettime_relative() - durationUs - deviceUs;
+            const int64_t captureUs = deviceUs == AV_NOPTS_VALUE ? av_gettime_relative() - durationUs
+                : deviceUs + captureOffsetUs;
+            packet->pts = packet->dts = av_rescale_q(captureUs, AVRational{1,1000000}, aStream->time_base);
+        }
         if (aPktQueue) {
             aPktQueue->enqueue(packet);
             av_packet_free(&packet);
@@ -432,7 +451,18 @@ void Demuxer::initDemuxer(const std::function<bool()> &shouldOpen)
     av_dict_free(&localOpts);
 
     if (cancelled()) return;
-    ret = avformat_find_stream_info(fmtCtx, nullptr);
+    // DirectShow describes raw PCM in read_header. Probing it can pre-buffer
+    // seconds of samples before the first packet used for clock calibration.
+    bool describedPcm = false;
+    if (captureClock && format == "dshow") {
+        for (unsigned i = 0; i < fmtCtx->nb_streams; ++i) {
+            const auto *par = fmtCtx->streams[i]->codecpar;
+            if (par->codec_type == AVMEDIA_TYPE_AUDIO && par->sample_rate > 0 &&
+                par->ch_layout.nb_channels > 0 && av_get_bytes_per_sample(static_cast<AVSampleFormat>(par->format)) > 0)
+                describedPcm = true;
+        }
+    }
+    ret = describedPcm ? 0 : avformat_find_stream_info(fmtCtx, nullptr);
     if (ret < 0) {
         failOpen(CaptureErrorStage::StreamInfo, ret);
         printError(ret);

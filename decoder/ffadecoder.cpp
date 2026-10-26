@@ -61,6 +61,12 @@ void FFADecoder::decode(AVPacket *packet)
         }
         else
         {
+            if (captureTimestampOutput) {
+                frame->time_base = stream->time_base;
+                processDecodedFrame(frame);
+                frmQueue->enqueue(frame);
+                continue;
+            }
             if (aPars == nullptr)
             {
                 aPars = new FFAudioPars();
@@ -167,6 +173,7 @@ void FFADecoder::init(AVStream *stream_, FFAFrameQueue *frmQueue_)
         return;
     }
 
+    codecCtx->pkt_timebase = stream->time_base;
     AVDictionary *codec_options = nullptr;
 
     ret = avcodec_open2(codecCtx, codec, &codec_options);

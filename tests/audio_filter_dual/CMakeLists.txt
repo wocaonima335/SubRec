@@ -46,3 +46,15 @@ if(WIN32)
         ENVIRONMENT "PATH=${_audio_filter_path}"
     )
 endif()
+
+# Hardware-independent production timeline/amix/limiter regression tests.
+add_executable(audio_timeline_mix_tests ../audio_timeline_mix/audio_timeline_mix_tests.cpp
+    ../../filter/audio_timeline_mixer.cpp)
+target_compile_features(audio_timeline_mix_tests PRIVATE cxx_std_17)
+target_include_directories(audio_timeline_mix_tests PRIVATE ../.. ${FFMPEG_INCLUDE_DIR})
+target_link_libraries(audio_timeline_mix_tests PRIVATE ${FFMPEG_LIBRARIES})
+add_test(NAME audio_timeline_mix COMMAND audio_timeline_mix_tests)
+set_tests_properties(audio_timeline_mix PROPERTIES TIMEOUT 30 LABELS "audio;mix;synthetic")
+if(WIN32)
+    set_tests_properties(audio_timeline_mix PROPERTIES ENVIRONMENT "PATH=${_audio_filter_path}")
+endif()

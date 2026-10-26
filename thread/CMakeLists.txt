@@ -26,6 +26,7 @@ target_link_libraries(thread_module
     Qt::Core
     ${FFMPEG_LIBRARIES}
     queue_module
+    filter_module
     opengl_module
     event_module
     decoder_module

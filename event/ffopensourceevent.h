@@ -25,6 +25,7 @@ public:
     bool openAndStart(const std::function<bool()> &shouldStart = {});
     virtual bool requiresSerialization() const override { return true; }
     // DirectShow screen request used when the ddagrab screen cannot be opened.
+    void setMixMicrophone(const std::optional<InputRequest> &input) { microphoneMixInput = input; }
     void setAudioFallback(const std::optional<InputRequest> &fallback) { audioFallback = fallback; }
     void setVideoFallback(const std::optional<InputRequest> &fallback) { videoFallback = fallback; }
 
@@ -42,6 +43,7 @@ private:
     std::optional<InputRequest> videoFallback;
     std::optional<InputRequest> audioFallback;
     bool usingWasapi = false;
+    std::optional<InputRequest> microphoneMixInput;
     bool openScreenGrab(const std::function<bool()> &shouldStart);
     void switchToVideoFallback();
     void startVideo();

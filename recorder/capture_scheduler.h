@@ -44,6 +44,8 @@ public:
     void refreshDevices();
     bool selectVideoDevice(const QString &deviceId);
     bool selectAudioDevice(const QString &deviceId);
+    // Select a DirectShow microphone in addition to the WASAPI system source.
+    bool selectMixMicrophone(const QString &deviceId);
     // Screen backend: SUBREC_CAPTURE_BACKEND (auto|ddagrab|dshow) wins over the saved setting
     // (QSettings "capture/screenBackend"); setScreenBackendPreference() saves the setting.
     bool setScreenBackendPreference(ScreenBackendPreference preference);
@@ -86,6 +88,7 @@ private:
     QList<CaptureDevice> m_devices;
     QString m_selectedVideoDeviceId;
     QString m_selectedAudioDeviceId;
+    QString m_mixMicrophoneId;
     bool m_useScreen = true;
     bool m_useSystemAudio = true;
     ScreenBackendPreference m_screenBackendPreference = ScreenBackendPreference::Auto;

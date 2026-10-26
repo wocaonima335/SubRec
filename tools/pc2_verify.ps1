@@ -97,7 +97,7 @@ $rc = Invoke-Logged 'main-ctest' 'ctest' @('--test-dir', $mainBuild, '--output-o
 Add-Result 'main ctest (capture_lifecycle, audio_filter_dual)' ($rc -eq 0) "rc=$rc"
 
 # --- 2. standalone test projects -------------------------------------------------------------
-foreach ($t in 'input_startup', 'media_conversion', 'muxer_lifecycle', 'wasapi_loopback') {
+foreach ($t in 'input_startup', 'media_conversion', 'muxer_lifecycle', 'wasapi_loopback', 'audio_timeline_mix') {
     $dir = Join-Path $BuildRoot $t
     if (-not $SkipBuild) {
         $rc = Invoke-Logged "$t-configure" 'cmake' (@('-S', (Join-Path $SourceDir "tests\$t"), '-B', $dir) + $commonCMake)
@@ -186,6 +186,10 @@ function Invoke-Recording([string]$Name, [hashtable]$Environment) {
     if ($Name -like 'rec-wasapi-*') {
         $nativeStarted = (Test-Path $runLog) -and [bool](Select-String -Path $runLog -SimpleMatch '[WASAPI] started')
         Add-Result "WASAPI source $Name" $nativeStarted 'Requires native source startup; a DirectShow fallback does not pass.'
+        if ($Name -eq 'rec-wasapi-mix') {
+            $mixed = (Test-Path $runLog) -and [bool](Select-String -Path $runLog -Pattern '\[AudioMix\] finished system_frames= [1-9][0-9]* mic_frames= [1-9][0-9]*')
+            Add-Result 'mix consumed both sources' $mixed 'Requires non-zero system and microphone frame counts.'
+        }
     }
 
     # Read the file back without decoding (needs the mov demuxer of the test components).
@@ -224,6 +228,11 @@ if (Test-Path $app) {
     try {
         $player.PlayLooping()
         Invoke-Recording 'rec-wasapi-tone' $systemVars
+        if ($MicDevice) {
+            $mixVars = $systemVars.Clone()
+            $mixVars['SUBREC_AUTOTEST_MIC_DEVICE'] = $MicDevice
+            Invoke-Recording 'rec-wasapi-mix' $mixVars
+        }
         $player.Stop()
         Write-Host 'Idle test: stop other applications playing audio to exercise no-packet silence filling.'
         Invoke-Recording 'rec-wasapi-idle' $systemVars

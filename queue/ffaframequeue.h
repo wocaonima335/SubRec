@@ -9,6 +9,7 @@ public:
     ~FFAFrameQueue();
 
     MediaQueueReadResult<AVFrame> receive();
+    MediaQueueReadResult<AVFrame> tryReceive();
     void enqueue(AVFrame *srcFrame);
     MediaQueueResult sendFinish();
     void receiveFinish();

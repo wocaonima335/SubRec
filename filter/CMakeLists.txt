@@ -3,6 +3,8 @@ qt_add_library(filter_module STATIC
     ffvfilter.h
     ffafilter.h
     ffafilter.cpp
+    audio_timeline_mixer.cpp
+    audio_timeline_mixer.h
     
 )
 

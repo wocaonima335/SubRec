@@ -39,6 +39,7 @@ public:
               bool openNow = true,
               const std::function<bool()> &shouldOpen = {});
     int demux();
+    void enableCaptureClock(bool enabled) { captureClock = enabled; captureOffsetUs = AV_NOPTS_VALUE; }
     AVStream *getAStream();
     AVStream *getVStream();
     bool isOpen();
@@ -79,6 +80,8 @@ private:
     CaptureErrorStage failureStage = CaptureErrorStage::None;
     int failureCode = 0;
     bool offsetFlag = false;
+    bool captureClock = false;
+    int64_t captureOffsetUs = AV_NOPTS_VALUE;
 
     std::mutex mutex;
     std::atomic<bool> stopFlag{false};

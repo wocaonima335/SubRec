@@ -166,6 +166,7 @@ struct LoopbackCapture::Impl {
                 auto target = (qpc100ns() - startQpc) * 48000 / 10000000;
                 if (target - pipeline.samples() > 960) {
                     auto before = pipeline.samples();
+                    pipeline.setCaptureTimeUs(startUs + before * 1000000 / 48000);
                     if (!pipeline.silenceUntil(target)) abort = true;
                     std::lock_guard<std::mutex> lock(mutex);
                     statistics.generatedSilenceFrames += pipeline.samples() - before;
@@ -209,7 +210,10 @@ struct LoopbackCapture::Impl {
                                     first = false;
                                 }
                                 auto before = av_gettime_relative();
-                                if (!pipeline.packet(*frame)) abort = true;
+                                const int64_t captureUs = (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
+                                    ? av_gettime_relative() - int64_t(count) * 1000000 / info.sampleRate
+                                    : startUs + (static_cast<int64_t>(qpc) - startQpc) / 10;
+                                if (!pipeline.packet(*frame, captureUs)) abort = true;
                                 std::lock_guard<std::mutex> lock(mutex);
                                 ++statistics.packets; statistics.deviceFrames += count;
                                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT) statistics.silentPacketFrames += count;

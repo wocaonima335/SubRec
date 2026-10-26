@@ -156,7 +156,6 @@ join()               -> IAudioClient::Stop, 释放 COM, CoUninitialize; Idle
 
 - 独占模式、进程级 loopback（`ActivateAudioInterfaceAsync` + `AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK`，
   Windows 10 2004+）：以后可按应用录音。
-- 系统声音 + 麦克风混音：要走 `FFAFilter::processDualtAudioFrames`（双路图已在
-  `tests/audio_filter_dual` 中测试），需要 `FFAFilterThread` 同时读两个队列并按时间对齐，单独设计。
+- 系统声音 + 麦克风混音已另行实现：见 [AUDIO_MIXING.md](AUDIO_MIXING.md)，使用独立的时间轴混音器。
 - 设备采样率改变（用户在声音设置里改格式）：按“设备失效”重开，新 mix format 需要新的
   `AudioConverter`；时间轴连续由“补静音 + 样本计数”保证。

@@ -1,6 +1,7 @@
 #include "ffopensourceevent.h"
 
 #include "thread/ffscreengrabthread.h"
+#include <cstdlib>
 
 extern "C" {
 #include <libavutil/time.h>
@@ -11,9 +12,16 @@ using namespace FFRecordContextType;
 namespace {
 class QueueAudioSink final : public capture::wasapi::AudioFrameSink {
     FFAFrameQueue *queue;
+    bool timestamped;
 public:
-    explicit QueueAudioSink(FFAFrameQueue *q) : queue(q) {}
+    explicit QueueAudioSink(FFAFrameQueue *q, bool mix) : queue(q), timestamped(mix) {}
     bool push(AVFrame *frame) override {
+        if (timestamped) {
+            auto *entry = av_dict_get(frame->metadata, "capture_time_us", nullptr, 0);
+            if (!entry) return false;
+            frame->pts = std::strtoll(entry->value, nullptr, 10);
+            frame->time_base = {1,1000000};
+        }
         queue->enqueue(frame);
         return !queue->isClosed();
     }
@@ -124,6 +132,7 @@ CaptureStartResult FFOpenSourceEvent::openAndStartResult(const std::function<boo
   if (!initVideo(shouldStart)) return unwind();
   if (!checkContinue(videoInput, shouldStart)) return unwind();
   const int64_t t0 = av_gettime_relative();
+  aFilterThread->configureMix(microphoneMixInput.has_value(), t0);
   aEncoderThread->setStartTimeUs(t0);
   vEncoderThread->setStartTimeUs(t0);
   startAudio();
@@ -153,14 +162,18 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
   aFilterThread->wait();
   aFilterThread->closeAudioSource(demuxerType::AUDIO);
   aFilterThread->closeAudioSource(demuxerType::MICROPHONE);
+  aFilterThread->configureMix(false);
 
-  aDemuxerThread[audioIndex]->requestAbort();
-  aDemuxerThread[audioIndex]->wait();
-  aDemuxerThread[audioIndex]->close();
-
-  aDecoderThread[audioIndex]->requestAbort();
-  aDecoderThread[audioIndex]->wait();
-  aDecoderThread[audioIndex]->close();
+  for (int input = 0; input < int(A_DECODER_SIZE); ++input) {
+    aDemuxerThread[input]->requestAbort();
+    aDemuxerThread[input]->wait();
+    aDemuxerThread[input]->close();
+    aDecoderThread[input]->requestAbort();
+    aDecoderThread[input]->wait();
+    aDecoderThread[input]->close();
+    aDecoder[input]->setCaptureTimestampOutput(false);
+    aDemuxer[input]->enableCaptureClock(false);
+  }
 
   aEncoderThread->requestAbort();
   aEncoderThread->wait();
@@ -178,7 +191,7 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
     context->systemAudioSink.reset();
   }
   if (audioSourceType == AUDIO && audioInput.backend == CaptureBackend::Wasapi) {
-    context->systemAudioSink = std::make_unique<QueueAudioSink>(aFrmQueue[A_AUDIO]);
+    context->systemAudioSink = std::make_unique<QueueAudioSink>(aFrmQueue[A_AUDIO], microphoneMixInput.has_value());
     context->systemAudioCapture = std::make_unique<capture::wasapi::LoopbackCapture>(capture::wasapi::LoopbackConfig{});
     auto *recorder = recoderContext;
     context->systemAudioCapture->onRuntimeError = [recorder](const capture::wasapi::LoopbackRuntimeError &error) {
@@ -191,7 +204,7 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
     if (!usingWasapi) {
       context->systemAudioCapture->requestAbort();
       context->systemAudioCapture->join();
-      if (!audioFallback || !checkContinue(audioInput, shouldStart)) return false;
+      if (microphoneMixInput || !audioFallback || !checkContinue(audioInput, shouldStart)) return false;
       qWarning() << "[WASAPI] open failed; falling back to DirectShow";
       audioInput = *audioFallback;
       audioUrl = audioInput.url.toStdString();
@@ -215,6 +228,29 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
   aDecoderThread[audioIndex]->init(aDecoder[audioIndex], aPktQueue[audioIndex]);
   }
 
+  if (microphoneMixInput) {
+    const auto &input = *microphoneMixInput;
+    if (!usingWasapi) return fail(input, CaptureErrorStage::Configuration, AVERROR(EINVAL),
+                                  QStringLiteral("Mixed audio requires WASAPI system capture."));
+    if (!checkContinue(input, shouldStart)) return false;
+    auto *demux = aDemuxer[A_MICROPHONE];
+    demux->enableCaptureClock(true);
+    demux->init(input.url.toStdString(), input.format.toStdString(), aPktQueue[A_MICROPHONE], nullptr,
+                MICROPHONE, true, shouldStart);
+    startupResult = demux->openResult(input);
+    if (!startupResult.ok) return false;
+    if (!demux->getAStream()) return fail(input, CaptureErrorStage::StreamInfo, AVERROR_STREAM_NOT_FOUND,
+                                        QStringLiteral("Microphone has no audio stream."));
+    aDecoder[A_MICROPHONE]->init(demux->getAStream(), aFrmQueue[A_MICROPHONE]);
+    aDecoder[A_MICROPHONE]->setCaptureTimestampOutput(true);
+    aDemuxerThread[A_MICROPHONE]->init(demux);
+    aDecoderThread[A_MICROPHONE]->init(aDecoder[A_MICROPHONE], aPktQueue[A_MICROPHONE]);
+    // Establish the microphone's device-clock epoch before video initialization.
+    // It may block on the bounded frame queue until the filter consumer starts.
+    aPktQueue[A_MICROPHONE]->start(); aFrmQueue[A_MICROPHONE]->start();
+    aDemuxerThread[A_MICROPHONE]->start(); aDecoderThread[A_MICROPHONE]->start();
+  }
+
   if (!checkContinue(audioInput, shouldStart)) return false;
   aEncoder->init(aEncoderPktQueue);
   aFilter->initalize(aFilterEncoderFrmQueue,
@@ -230,6 +266,7 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
     aFilterThread->closeAudioSource(demuxerType::AUDIO);
     aFilterThread->openAudioSource(demuxerType::MICROPHONE);
   }
+  if (microphoneMixInput) aFilterThread->openAudioSource(demuxerType::MICROPHONE);
   aEncoderThread->init(aFilter,
                        aEncoder,
                        muxer,

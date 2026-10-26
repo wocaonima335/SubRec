@@ -114,11 +114,11 @@ bool applyAutoTestEnvironment()
     qInfo() << "[AutoTest] output =" << info.absoluteFilePath();
   }
 
-  if (qEnvironmentVariableIntValue("SUBREC_AUTOTEST_SYSTEM_AUDIO") == 1)
-    scheduler.changeAudioSource(true);
+  const bool withSystem = qEnvironmentVariableIntValue("SUBREC_AUTOTEST_SYSTEM_AUDIO") == 1;
+  if (withSystem) scheduler.changeAudioSource(true);
   const QString wanted = qEnvironmentVariable("SUBREC_AUTOTEST_MIC_DEVICE").trimmed();
   if (!wanted.isEmpty()) {
-    scheduler.changeAudioSource(false);
+    if (!withSystem) scheduler.changeAudioSource(false);
     QStringList candidates;
     QString exact;
     QStringList partial;
@@ -138,7 +138,7 @@ bool applyAutoTestEnvironment()
         partial << id;
     }
     const QString chosen = !exact.isEmpty() ? exact : (partial.size() == 1 ? partial.first() : QString());
-    if (chosen.isEmpty() || !scheduler.selectAudioDevice(chosen)) {
+    if (chosen.isEmpty() || !(withSystem ? scheduler.selectMixMicrophone(chosen) : scheduler.selectAudioDevice(chosen))) {
       qWarning().noquote() << "[AutoTest] SUBREC_AUTOTEST_MIC_DEVICE=" + wanted
                                   + " matches no single available microphone; candidates: "
                                   + (candidates.isEmpty() ? QStringLiteral("none") : candidates.join(QStringLiteral(", ")));

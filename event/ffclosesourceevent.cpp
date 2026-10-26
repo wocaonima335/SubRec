@@ -32,6 +32,10 @@ void FFCloseSourceEvent::close()
 void FFCloseSourceEvent::closeAudioSourceChain()
 {
     stopAudioInputPath();
+    if (sourceType == AUDIO && aFilterThread && aFilterThread->isMixing()) {
+        FFCloseSourceEvent microphone(recoderContext, MICROPHONE);
+        microphone.stopAudioInputPath();
+    }
     drainAudioEncoderPath();
 }
 

@@ -86,6 +86,7 @@ bool CaptureSession::start(const CaptureConfig &config,
         qDebug() << "[CaptureSession] open task begin";
         auto openEvent = std::make_unique<FFOpenSourceEvent>(
             &m_recorder, startConfig.videoInput, startConfig.audioInput);
+        openEvent->setMixMicrophone(startConfig.microphoneMixInput);
         openEvent->setAudioFallback(startConfig.audioFallbackInput);
         openEvent->setVideoFallback(startConfig.videoFallbackInput);
         const CaptureStartResult result = openEvent->openAndStartResult([this]() {

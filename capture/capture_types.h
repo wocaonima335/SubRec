@@ -94,6 +94,7 @@ struct CaptureConfig
     std::optional<InputRequest> videoFallbackInput;
     InputRequest audioInput;
     std::optional<InputRequest> audioFallbackInput;
+    std::optional<InputRequest> microphoneMixInput;
     QString outputPath;
     QString outputFileName;
 };

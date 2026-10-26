@@ -4,6 +4,7 @@
 // commands, and ownership/error paths of processDualtAudioFrames().
 #include "filter/ffafilter.h"
 #include "queue/ffaframequeue.h"
+#include "thread/ffafilterthread.h"
 
 #include <cmath>
 #include <iostream>
@@ -248,6 +249,36 @@ void dualGraphMixesBothInputs()
               << ", microphone muted " << microphoneMuted.lastLeft << ")\n";
 }
 
+// Production worker consumes both queues and sends a single EOF after both drain.
+void mixedWorkerDrainsBothSources(bool paused = false)
+{
+    FFAFrameQueue system, microphone, output;
+    FFAFilter filter;
+    filter.initalize(&output, nullptr, nullptr);
+    const int64_t epoch = av_gettime_relative();
+    auto *sys = makeFltpFrame(kSystemLevel, epoch);
+    auto *mic = makeFltpFrame(kMicrophoneLevel, epoch);
+    sys->time_base = mic->time_base = AVRational{1,1000000};
+    system.enqueue(sys); microphone.enqueue(mic);
+    av_frame_free(&sys); av_frame_free(&mic);
+    system.sendFinish(); microphone.sendFinish();
+    FFAFilterThread worker;
+    worker.init(&microphone, &system, &filter);
+    worker.configureMix(true, epoch);
+    worker.startEncoder();
+    if (paused) {
+        worker.onPauseChanged(true, epoch + 5000);
+        worker.onPauseChanged(false, epoch + 15000);
+    }
+    worker.start(); worker.wait();
+    auto mixed = drain(output);
+    CHECK(mixed.samples == kFrameSamples - (paused ? 480 : 0));
+    CHECK(near(mixed.lastLeft, kSystemLevel + kMicrophoneLevel));
+    CHECK(near(mixed.lastRight, kSystemLevel + kMicrophoneLevel));
+    CHECK(output.receive().result == MediaQueueResult::Eof);
+    std::cout << "PASS: mixed worker consumes both sources and drains one output\n";
+}
+
 // Error/ownership paths must neither crash nor leak a half-built graph.
 void dualErrorPaths()
 {
@@ -300,6 +331,8 @@ int main()
         sinkRestrictsToFltp();
         dualGraphMixesBothInputs();
         dualErrorPaths();
+        mixedWorkerDrainsBothSources();
+        mixedWorkerDrainsBothSources(true);
         std::cout << "PASS: audio filter dual\n";
         return 0;
     } catch (const std::exception &error) {

@@ -17,6 +17,8 @@ MediaQueueReadResult<AVFrame> FFAFrameQueue::receive()
     return impl->receive();
 }
 
+MediaQueueReadResult<AVFrame> FFAFrameQueue::tryReceive() { return impl->tryReceive(); }
+
 void FFAFrameQueue::enqueue(AVFrame *srcFrame)
 {
     impl->enqueueFromSrc(srcFrame);

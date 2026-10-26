@@ -94,6 +94,7 @@ public:
     // Once flushing starts, convert() throws; create a new converter to restart.
     FramePtr drain();
     FramePtr flush() { return drain(); }
+    int64_t delayUs() const { return swr_get_delay(context_.get(), 1000000); }
     const AudioFormat& outputFormat() const noexcept { return output_; }
 private:
     struct Deleter { void operator()(SwrContext* p) const noexcept; };

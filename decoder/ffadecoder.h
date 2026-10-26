@@ -31,6 +31,7 @@ public:
     ~FFADecoder();
 
     void decode(AVPacket *packet);
+    void setCaptureTimestampOutput(bool enabled) { captureTimestampOutput = enabled; }
     void init(AVStream *stream_, FFAFrameQueue *frmQueue_);
     void flushDecoder();
     FFAudioPars *getAudioPars();
@@ -55,6 +56,7 @@ private:
     void processDecodedFrame(AVFrame *frame);
 
 private:
+    bool captureTimestampOutput = false;
     AVCodecContext *codecCtx = nullptr;
     FFAFrameQueue *frmQueue = nullptr;
     AVStream *stream = nullptr;

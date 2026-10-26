@@ -195,10 +195,10 @@ void FFAFilter::applyVolume(AVFilterContext *volumeContext, double volume)
 
 void FFAFilter::setAudioVolume(double systemVolume, double microphoneVolume)
 {
-    if (m_audioVolume >= 0.0) {
+    if (systemVolume >= 0.0) {
         setSystemAudioVolume(systemVolume);
     }
-    if (m_microphoneVolume >= 0.0) {
+    if (microphoneVolume >= 0.0) {
         setMicrophoneAudioVolume(microphoneVolume);
     }
 }

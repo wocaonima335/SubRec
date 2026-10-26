@@ -12,7 +12,13 @@ public:
         drainConverter();
         converter_ = std::make_unique<media::AudioConverter>(format);
     }
-    bool packet(const AVFrame &frame) { return deliver(converter_->convert(frame)); }
+    void setCaptureTimeUs(int64_t time) { captureUs_ = time; }
+    bool packet(const AVFrame &frame, int64_t captureUs = AV_NOPTS_VALUE) {
+        captureUs_ = captureUs == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : captureUs - converter_->delayUs();
+        const bool ok = deliver(converter_->convert(frame));
+        converterTailUs_ = captureUs_;
+        return ok;
+    }
     int64_t samples() const { return samples_; }
     bool silenceUntil(int64_t target) {
         while (target > samples_ && !aborted_) {
@@ -39,11 +45,17 @@ private:
         frame->pts = samples_;
         frame->time_base = {1, kOutputSampleRate};
         const int count = frame->nb_samples;
+        if (captureUs_ != AV_NOPTS_VALUE) {
+            const int result = av_dict_set_int(&frame->metadata, "capture_time_us", captureUs_, 0);
+            if (result < 0) throw media::FfmpegError("capture timestamp", result);
+            captureUs_ += av_rescale_q(count, {1,48000}, {1,1000000});
+        }
         if (!sink_.push(frame.get())) { aborted_ = true; return false; }
         samples_ += count;
         return true;
     }
     void drainConverter() {
+        captureUs_ = converterTailUs_;
         if (converter_) while (!aborted_) {
             auto frame = converter_->drain();
             if (!frame) break;
@@ -53,6 +65,8 @@ private:
     AudioFrameSink &sink_;
     std::unique_ptr<media::AudioConverter> converter_;
     int64_t samples_ = 0;
+    int64_t captureUs_ = AV_NOPTS_VALUE;
+    int64_t converterTailUs_ = AV_NOPTS_VALUE;
     bool aborted_ = false, finished_ = false;
 };
 }

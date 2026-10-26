@@ -1,11 +1,14 @@
 #include "ffafilterthread.h"
 
 #include "filter/ffafilter.h"
+#include "filter/audio_timeline_mixer.h"
 #include "queue/ffaframequeue.h"
 #include "recorder/ffrecorder.h"
 
 #include <QDebug>
 #include <iostream>
+#include <algorithm>
+#include <stdexcept>
 
 using namespace FFRecordContextType;
 
@@ -59,6 +62,7 @@ void FFAFilterThread::init(FFAFrameQueue *micFrmQueue_,
     micFrmQueue = micFrmQueue_;
     sysFrmQueue = sysFrmQueue_;
     filter = filter_;
+    mixPauses.clear();
 }
 
 void FFAFilterThread::startEncoder()
@@ -88,11 +92,13 @@ void FFAFilterThread::pauseEncoder()
 {
     std::lock_guard<std::mutex> lock(mutex);
     if (pauseFlag.load()) {
+        recordMixPause(false, av_gettime_relative());
         pauseTime += av_gettime_relative() - lastPauseTime;
         pauseFlag.store(false);
     } else {
         pauseFlag.store(true);
         lastPauseTime = av_gettime_relative();
+        recordMixPause(true, lastPauseTime);
     }
 }
 
@@ -104,6 +110,7 @@ void FFAFilterThread::onPauseChanged(bool pausedFlag, int64_t ts_us)
         if (pauseFlag.load(std::memory_order_acquire)) {
             return;
         }
+        recordMixPause(true, now);
         pauseFlag.store(true, std::memory_order_release);
         lastPauseTime.store(now, std::memory_order_release);
         qDebug() << "[FFAFilterThread] paused at" << now;
@@ -111,6 +118,7 @@ void FFAFilterThread::onPauseChanged(bool pausedFlag, int64_t ts_us)
         if (!pauseFlag.load(std::memory_order_acquire)) {
             return;
         }
+        recordMixPause(false, now);
         pauseTime.store(pauseTime.load(std::memory_order_acquire)
                             + (now - lastPauseTime.load(std::memory_order_acquire)),
                         std::memory_order_release);
@@ -123,6 +131,7 @@ void FFAFilterThread::onPauseChanged(bool pausedFlag, int64_t ts_us)
 
 void FFAFilterThread::setAudioVolume(double value)
 {
+    if (value >= 0) systemGain = value;
     if (filter) {
         if (audioFlag.load() && microphoneFlag.load()) {
             filter->setAudioVolume(value, -1);
@@ -134,6 +143,7 @@ void FFAFilterThread::setAudioVolume(double value)
 
 void FFAFilterThread::setMicrophoneVolume(double value)
 {
+    if (value >= 0) microphoneGain = value;
     if (filter) {
         if (audioFlag.load() && microphoneFlag.load()) {
             filter->setAudioVolume(-1, value);
@@ -161,6 +171,7 @@ void FFAFilterThread::wakeAllThread()
 
 void FFAFilterThread::run()
 {
+    if (mixing) { runMixed(); return; }
     while (!m_stop) {
         bool microphoneActive = microphoneFlag.load(std::memory_order_seq_cst);
         bool audioActive = audioFlag.load(std::memory_order_seq_cst);
@@ -195,6 +206,7 @@ void FFAFilterThread::run()
                                                 start,
                                                 pauseTime,
                                                 AudioSourceType::AUDIO_SOURCE_SYSTEM);
+                sysFrame = nullptr;
                 const auto forwarded =
                     forwardedFrameCount.fetch_add(1, std::memory_order_acq_rel) + 1;
                 if (forwarded == 1 || forwarded % 30 == 0) {
@@ -234,6 +246,7 @@ void FFAFilterThread::run()
                                                 start,
                                                 pauseTime,
                                                 AudioSourceType::AUDIO_SOURCE_MICROPHONE);
+                micFrame = nullptr;
                 const auto forwarded =
                     forwardedFrameCount.fetch_add(1, std::memory_order_acq_rel) + 1;
                 if (forwarded == 1 || forwarded % 30 == 0) {
@@ -297,4 +310,88 @@ AVFrame *FFAFilterThread::generateMuteFrame()
     }
 
     return frame;
+}
+
+void FFAFilterThread::recordMixPause(bool paused, int64_t timestampUs)
+{
+    if (!mixing) return;
+    if (paused) mixPauses.emplace_back(timestampUs, AV_NOPTS_VALUE);
+    else if (!mixPauses.empty() && mixPauses.back().second == AV_NOPTS_VALUE)
+        mixPauses.back().second = timestampUs;
+}
+
+void FFAFilterThread::runMixed()
+{
+    try {
+        AudioTimelineMixer mixer(mixStartUs);
+        bool eof[2]{};
+        FFAFrameQueue *queues[] = {sysFrmQueue, micFrmQueue};
+        qInfo() << "[AudioMix] enabled: WASAPI + microphone, 48k stereo FLTP, amix normalize=0, peak limiter=0.95";
+        while (!m_stop) {
+            for (unsigned source = 0; source < 2; ++source) {
+                // Bound each turn so a busy input cannot starve the other input.
+                for (int n = 0; n < 30 && !eof[source]; ++n) {
+                    auto received = queues[source]->tryReceive();
+                    if (received.result == MediaQueueResult::Again) break;
+                    if (received.result == MediaQueueResult::Eof) {
+                        eof[source] = true; mixer.finish(source); break;
+                    }
+                    if (!received.ok()) {
+                        if (received.closeReason == MediaQueueCloseReason::Error)
+                            throw std::runtime_error("Audio mix input queue failed");
+                        return; // abort: the session closes all downstream queues
+                    }
+                    AudioTimelineMixer::Frame frame(received.item);
+                    mixer.push(source, *frame);
+                }
+            }
+            const bool done = eof[0] && eof[1];
+            const int64_t target = done ? mixer.end() :
+                std::max<int64_t>(0, (av_gettime_relative() - mixStartUs - 200000) * 48000 / 1000000);
+            while (!m_stop && mixer.position() < target) {
+                int64_t until = target;
+                bool discard = false;
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    const auto sample = [this](int64_t us) {
+                        return av_rescale_q(us - mixStartUs, AVRational{1,1000000}, AVRational{1,48000});
+                    };
+                    while (!mixPauses.empty() && mixPauses.front().second != AV_NOPTS_VALUE &&
+                           sample(mixPauses.front().second) <= mixer.position()) mixPauses.pop_front();
+                    if (!mixPauses.empty()) {
+                        const auto &pause = mixPauses.front();
+                        if (sample(pause.first) <= mixer.position()) {
+                            discard = true;
+                            if (pause.second != AV_NOPTS_VALUE) until = std::min(until, sample(pause.second));
+                        } else until = std::min(until, sample(pause.first));
+                    }
+                }
+                auto frame = mixer.render(until, systemGain, microphoneGain);
+                if (encoderFlag && !discard) {
+                    filter->forwardAudioFrame(frame.release(), mixStartUs, pauseTime);
+                    ++forwardedFrameCount;
+                } else ++droppedFrameCount;
+            }
+            if (done) {
+                const auto &s = mixer.stats();
+                qInfo() << "[AudioMix] finished system_frames=" << s.frames[0] << "mic_frames=" << s.frames[1]
+                        << "system_silence_samples=" << s.silence[0] << "mic_silence_samples=" << s.silence[1]
+                        << "trimmed_system=" << s.trimmed[0] << "trimmed_mic=" << s.trimmed[1]
+                        << "limited_samples=" << s.limited;
+                filter->sendFinish();
+                return;
+            }
+            std::unique_lock<std::mutex> lock(mutex);
+            cond.wait_for(lock, std::chrono::milliseconds(5));
+        }
+    } catch (const std::exception &error) {
+        qWarning() << "[AudioMix] failed:" << error.what();
+        sysFrmQueue->close(MediaQueueCloseReason::Error);
+        micFrmQueue->close(MediaQueueCloseReason::Error);
+        filter->sendFinish();
+        auto *recorder = &FFRecorder::getInstance();
+        QMetaObject::invokeMethod(recorder, "setCaptureError", Qt::QueuedConnection,
+            Q_ARG(QString, QString::fromUtf8(error.what())),
+            Q_ARG(QString, QStringLiteral("Check the microphone and system audio devices.")));
+    }
 }

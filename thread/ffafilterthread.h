@@ -10,6 +10,8 @@ extern "C" {
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
+#include <deque>
+#include <utility>
 
 class FFAFrameQueue;
 class FFAFilter;
@@ -25,6 +27,8 @@ public:
     void closeAudioSource(int audioType);
     void init(FFAFrameQueue *micFrmQueue_, FFAFrameQueue *sysFrmQueue_, FFAFilter *filter_);
 
+    void configureMix(bool enabled, int64_t startUs = 0) { mixing = enabled; mixStartUs = startUs; }
+    bool isMixing() const { return mixing; }
     void startEncoder();
     void stopEncoder();
     void pauseEncoder();
@@ -41,8 +45,14 @@ protected:
 
 private:
     AVFrame *generateMuteFrame();
+    void runMixed();
+    void recordMixPause(bool paused, int64_t timestampUs); // mutex held
 
 private:
+    std::atomic<bool> mixing{false};
+    int64_t mixStartUs = 0;
+    std::deque<std::pair<int64_t, int64_t>> mixPauses;
+    std::atomic<double> systemGain{1}, microphoneGain{1};
     FFAFrameQueue *micFrmQueue = nullptr;
     FFAFrameQueue *sysFrmQueue = nullptr;
     FFAFilter *filter = nullptr;
