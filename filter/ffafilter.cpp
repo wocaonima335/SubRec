@@ -1,7 +1,8 @@
 #include "ffafilter.h"
 #include "decoder/ffadecoder.h"
 #include "queue/ffaframequeue.h"
-#include "recorder/ffrecorder.h"
+
+#include <QDebug>
 
 #include <sstream>
 #include <stdexcept>
@@ -426,13 +427,16 @@ void FFAFilter::createBufferSinkFilter(AVFilterGraph *filterGraph,
         throw std::runtime_error("abuffersink filter not found");
     }
 
-    // sample_formats must be set before avfilter_init_str(): init appends the list terminator.
+    // FFmpeg 8 exposes sample_formats as a private SAMPLE_FMT array option.
+    // Set it before avfilter_init_str(): init appends the list terminator.
     AVFilterContext *sink = avfilter_graph_alloc_filter(filterGraph, sinkFilter, name);
     if (!sink) {
         throw std::runtime_error(std::string("Failed to allocate filter: ") + name);
     }
 
-    int result = av_opt_set(sink, "sample_formats", av_get_sample_fmt_name(AUDIO_SAMPLE_FORMAT), 0);
+    const AVSampleFormat formats[] = {AUDIO_SAMPLE_FORMAT};
+    int result = av_opt_set_array(sink, "sample_formats", AV_OPT_SEARCH_CHILDREN,
+                                  0, 1, AV_OPT_TYPE_SAMPLE_FMT, formats);
     if (result >= 0) {
         result = avfilter_init_str(sink, nullptr);
     }

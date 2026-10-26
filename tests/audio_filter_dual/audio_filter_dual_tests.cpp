@@ -154,8 +154,9 @@ bool near(float value, float expected)
 }
 
 // abuffer(S16) -> FFAFilter::createBufferSinkFilter(): with the sample_formats restriction
-// applied the graph must insert a converter and deliver FLTP. Without it (the old string
-// "sample_fmts" call failed with EINVAL) the sink would accept and return S16 unchanged.
+// applied the graph must insert a converter and deliver FLTP. FFmpeg 8's sample_formats
+// is a private array option: looking it up on AVFilterContext without SEARCH_CHILDREN
+// fails with OPTION_NOT_FOUND. Omitting the restriction would return S16 unchanged.
 void sinkRestrictsToFltp()
 {
     FFAFilter filter;
@@ -180,6 +181,7 @@ void sinkRestrictsToFltp()
         avfilter_graph_set_auto_convert(graph, AVFILTER_AUTO_CONVERT_ALL);
         CHECK(avfilter_graph_config(graph, nullptr) >= 0);
         CHECK(av_buffersink_get_format(sink) == AV_SAMPLE_FMT_FLTP);
+        CHECK(av_buffersink_get_sample_rate(sink) == AUDIO_SAMPLE_RATE);
 
         AVFrame *input = makeS16Frame(16384, 0);
         CHECK(av_buffersrc_add_frame_flags(source, input, 0) >= 0);
@@ -188,8 +190,16 @@ void sinkRestrictsToFltp()
         CHECK(output);
         CHECK(av_buffersink_get_frame(sink, output) >= 0);
         CHECK(output->format == AV_SAMPLE_FMT_FLTP);
+        CHECK(output->sample_rate == AUDIO_SAMPLE_RATE);
+        CHECK(output->ch_layout.nb_channels == 2);
+        CHECK(output->pts == 0);
         CHECK(output->nb_samples == kFrameSamples);
-        CHECK(near(reinterpret_cast<const float *>(output->extended_data[0])[0], 0.5f));
+        for (int channel = 0; channel < 2; ++channel) {
+            const auto *samples = reinterpret_cast<const float *>(output->extended_data[channel]);
+            for (int i = 0; i < output->nb_samples; ++i) {
+                CHECK(near(samples[i], 0.5f));
+            }
+        }
     } catch (...) {
         av_frame_free(&output);
         avfilter_graph_free(&graph);
