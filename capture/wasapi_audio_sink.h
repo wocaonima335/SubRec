@@ -19,6 +19,10 @@ public:
     // Takes the frame's reference (av_frame_move_ref semantics); frame is blank afterwards.
     virtual bool push(AVFrame *frame) = 0;
     virtual void finish() = 0;
+    // Nonblocking and idempotent. Wake blocked pushes and permanently reject late
+    // push/finish calls, including after the recorder has restarted its queues.
+    // A sink and everything it accesses must survive until the capture task exits.
+    virtual void cancel() noexcept {}
 };
 
 }

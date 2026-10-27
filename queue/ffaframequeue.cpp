@@ -3,13 +3,12 @@
 #define MAX_FRAME_SIZE 3
 
 FFAFrameQueue::FFAFrameQueue()
-    : impl(new FFBoundedQueue<AVFrame, AVFrameTraits>(30))
+    : impl(std::make_shared<State>(30))
 {}
 
 FFAFrameQueue::~FFAFrameQueue()
 {
     close();
-    delete impl;
 }
 
 MediaQueueReadResult<AVFrame> FFAFrameQueue::receive()

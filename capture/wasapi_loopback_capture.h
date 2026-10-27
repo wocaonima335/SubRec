@@ -13,6 +13,7 @@
 
 #include "capture_types.h"
 #include "wasapi_audio_sink.h"
+#include "wasapi_worker_lifetime.h"
 
 #include <chrono>
 #include <cstdint>
@@ -89,7 +90,7 @@ struct LoopbackStats
 
 enum class LoopbackState
 {
-    Idle,      // constructed or after join()
+    Idle,      // constructed, not opened yet (instances are single-use)
     Prepared,  // open() succeeded, stream initialized but not started
     Running,   // IAudioClient::Start called, delivering frames
     Stopping,  // requestDrainStop()/requestAbort() seen
@@ -106,12 +107,13 @@ struct LoopbackRuntimeError
 };
 
 // One instance per recording. All COM objects live on the internal capture thread (MTA),
-// created in open() and released before join() returns - same rule as the probe.
+// created in open() and released there. A timed-out worker retains its own state
+// and sink until it exits; the recorder is never kept waiting indefinitely.
 class LoopbackCapture
 {
 public:
     explicit LoopbackCapture(LoopbackConfig config);
-    ~LoopbackCapture(); // requestAbort() + join()
+    ~LoopbackCapture(); // abort + bounded join, then detach if the driver is stuck
     LoopbackCapture(const LoopbackCapture &) = delete;
     LoopbackCapture &operator=(const LoopbackCapture &) = delete;
 
@@ -124,7 +126,7 @@ public:
     // Blocks up to timeout for that result. Errors use CaptureErrorStage InputOpen /
     // InputFormat with backend = CaptureBackend::Wasapi (to be added) and hresult in
     // CaptureError::ffmpegError (negative HRESULT value) and a readable message.
-    CaptureStartResult open(AudioFrameSink *sink,
+    CaptureStartResult open(std::shared_ptr<AudioFrameSink> sink,
                             std::chrono::milliseconds timeout = std::chrono::milliseconds(5000));
 
     // IAudioClient::Start; the first delivered sample gets pts 0 and its QPC time becomes
@@ -138,8 +140,10 @@ public:
     // Stop reading and return without finish() (the caller closes the queue). Used by
     // CaptureSession::abortPipeline and failed starts.
     void requestAbort();
-    // Wait for the capture thread; afterwards all COM objects are released.
+    // Wait at most 500 ms, then detach on timeout. Never resets this instance to Idle.
     void join();
+    bool joinFor(std::chrono::milliseconds timeout);
+    void abandon(); // abort + detach; marks the instance Failed permanently
 
     LoopbackState state() const;
     MixFormat mixFormat() const;      // valid after a successful open()
@@ -150,12 +154,14 @@ public:
 
     // Called on the capture thread for every runtime error (recovered or not); must not
     // block. Production: QMetaObject::invokeMethod(recorder, "setCaptureError", Queued) when
-    // !recovered.
+    // !recovered. Set before open(); copied into the worker. Captured targets must
+    // have independent lifetime protection (the worker can outlive this object).
     std::function<void(const LoopbackRuntimeError &)> onRuntimeError;
 
 private:
     struct Impl;
-    std::unique_ptr<Impl> d;
+    std::shared_ptr<Impl> d;
+    WorkerLifetime worker_;
 };
 
 } // namespace capture::wasapi

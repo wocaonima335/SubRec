@@ -151,7 +151,7 @@ namespace FFRecordURLS
         // ddagrab 屏幕帧源（替代屏幕的 demuxer + decoder，帧写入 vDecoderFrmQueue[SCREEN]）
         FFScreenGrabThread *screenGrabThread;
 #ifdef _WIN32
-        std::unique_ptr<capture::wasapi::AudioFrameSink> systemAudioSink;
+        std::shared_ptr<capture::wasapi::AudioFrameSink> systemAudioSink;
         std::unique_ptr<capture::wasapi::LoopbackCapture> systemAudioCapture;
 #endif
 

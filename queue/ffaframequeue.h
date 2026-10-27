@@ -1,12 +1,18 @@
 #ifndef FFAFRAMEQUEUE_H
 #define FFAFRAMEQUEUE_H
 #include "ffboundedqueue.h"
+#include <memory>
 
 class FFAFrameQueue
 {
 public:
     explicit FFAFrameQueue();
     ~FFAFrameQueue();
+    FFAFrameQueue(const FFAFrameQueue &) = delete;
+    FFAFrameQueue &operator=(const FFAFrameQueue &) = delete;
+    // A timed-out WASAPI producer retains the storage, never this recorder-owned wrapper.
+    using State = FFBoundedQueue<AVFrame, AVFrameTraits>;
+    std::shared_ptr<State> sharedState() const { return impl; }
 
     MediaQueueReadResult<AVFrame> receive();
     MediaQueueReadResult<AVFrame> tryReceive();
@@ -30,6 +36,6 @@ public:
 
 private:
     AVFrame *peekQueue();
-    FFBoundedQueue<AVFrame, AVFrameTraits> *impl;
+    std::shared_ptr<State> impl;
 };
 #endif

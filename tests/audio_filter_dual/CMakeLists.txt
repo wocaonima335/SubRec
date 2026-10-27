@@ -80,3 +80,19 @@ set_tests_properties(audio_mix_drift PROPERTIES TIMEOUT 120 LABELS "audio;mix;dr
 if(WIN32)
     set_tests_properties(audio_mix_drift PROPERTIES ENVIRONMENT "PATH=${_audio_filter_path}")
 endif()
+
+# M8 lifetime regressions also run in the normal application test build.
+find_package(Threads REQUIRED)
+add_executable(wasapi_worker_lifetime_test ../wasapi_loopback/worker_lifetime_test.cpp)
+add_executable(wasapi_queue_sink_lifetime_test ../wasapi_loopback/queue_sink_lifetime_test.cpp
+    ../../queue/ffaframequeue.cpp)
+foreach(target IN ITEMS wasapi_worker_lifetime_test wasapi_queue_sink_lifetime_test)
+    target_compile_features(${target} PRIVATE cxx_std_17)
+    target_include_directories(${target} PRIVATE ../.. ${FFMPEG_INCLUDE_DIR})
+    target_link_libraries(${target} PRIVATE Threads::Threads Qt6::Core ${FFMPEG_LIBRARIES})
+    add_test(NAME ${target} COMMAND ${target})
+    set_tests_properties(${target} PROPERTIES TIMEOUT 10 LABELS "audio;wasapi;lifetime")
+    if(WIN32)
+        set_tests_properties(${target} PROPERTIES ENVIRONMENT "PATH=${_audio_filter_path}")
+    endif()
+endforeach()

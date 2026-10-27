@@ -66,29 +66,28 @@ CaptureStartResult failure(HRESULT hr, const QString &op, CaptureErrorStage stag
 }
 }
 struct LoopbackCapture::Impl {
-    LoopbackCapture &owner;
     LoopbackConfig config;
-    std::thread worker;
+    std::shared_ptr<WorkerLifetime::Signals> lifetime;
+    std::function<void(const LoopbackRuntimeError &)> runtimeError;
     mutable std::mutex mutex;
     std::condition_variable cv;
     std::atomic<bool> abort{false}, stop{false}, go{false};
     std::atomic<LoopbackState> state{LoopbackState::Idle};
     // Handle access is serialized with creation/destruction on the worker.
     HANDLE wake = nullptr;
-    bool prepared = false;
     CaptureStartResult result;
     MixFormat mix;
     LoopbackStats statistics;
     std::atomic<int64_t> startUs{0};
     int64_t startQpc = 0;
-    AudioFrameSink *sink = nullptr;
-    Impl(LoopbackCapture &o, LoopbackConfig c) : owner(o), config(std::move(c)) {}
+    std::shared_ptr<AudioFrameSink> sink;
+    explicit Impl(LoopbackConfig c) : config(std::move(c)) {}
     void signal() { std::lock_guard<std::mutex> lock(mutex); if (wake) SetEvent(wake); cv.notify_all(); }
     void publish(CaptureStartResult r) {
         std::lock_guard<std::mutex> lock(mutex);
-        result = std::move(r); prepared = true;
+        result = std::move(r);
         state = result.ok ? LoopbackState::Prepared : LoopbackState::Failed;
-        cv.notify_all();
+        lifetime->prepared();
     }
     std::unique_ptr<Stream> openStream(IMMDeviceEnumerator *enumerator, HANDLE event,
                                        AudioPipeline &pipeline) {
@@ -308,7 +307,7 @@ struct LoopbackCapture::Impl {
                         });
                     if (abort || stop) break;
                     if (!recovered) throw error;
-                    if (owner.onRuntimeError) owner.onRuntimeError({error.code, QString::fromLatin1(error.operation), message(error.code), true});
+                    if (runtimeError) runtimeError({error.code, QString::fromLatin1(error.operation), message(error.code), true});
                 }
                 { std::lock_guard<std::mutex> lock(mutex); statistics.outputFrames = pipeline.samples(); }
                 WaitForSingleObject(event.handle, 5);
@@ -339,35 +338,55 @@ struct LoopbackCapture::Impl {
         } catch (const std::exception &error) {
             if (!opened) publish(failure(E_INVALIDARG, QString::fromUtf8(error.what()), CaptureErrorStage::InputFormat));
             else runtimeFailure(E_FAIL, QString::fromUtf8(error.what()));
+        } catch (...) {
+            if (!opened) publish(failure(E_FAIL, QStringLiteral("unexpected capture error"), CaptureErrorStage::InputOpen));
+            else runtimeFailure(E_FAIL, QStringLiteral("unexpected capture error"));
         }
     }
     void runtimeFailure(HRESULT hr, const QString &operation) {
         state = LoopbackState::Failed;
         if (!abort) {
             sink->finish();
-            if (owner.onRuntimeError) owner.onRuntimeError({hr, operation, message(hr), false});
+            if (runtimeError) runtimeError({hr, operation, message(hr), false});
         }
     }
 };
-LoopbackCapture::LoopbackCapture(LoopbackConfig c) : d(std::make_unique<Impl>(*this, std::move(c))) {}
+LoopbackCapture::LoopbackCapture(LoopbackConfig c) : d(std::make_shared<Impl>(std::move(c))) {
+    d->lifetime = worker_.completion();
+}
 LoopbackCapture::~LoopbackCapture() { requestAbort(); join(); }
-CaptureStartResult LoopbackCapture::open(AudioFrameSink *sink, std::chrono::milliseconds timeout) {
-    if (!sink || d->worker.joinable()) return failure(E_INVALIDARG, QStringLiteral("open"), CaptureErrorStage::Configuration);
-    d->sink = sink; d->abort = false; d->stop = false; d->go = false;
-    d->prepared = false; d->statistics = {}; d->startQpc = 0; d->startUs = 0;
-    d->worker = std::thread([this] { d->run(); });
-    std::unique_lock<std::mutex> lock(d->mutex);
-    if (!d->cv.wait_for(lock, timeout, [this]{ return d->prepared; })) {
-        lock.unlock(); requestAbort();
+CaptureStartResult LoopbackCapture::open(std::shared_ptr<AudioFrameSink> sink, std::chrono::milliseconds timeout) {
+    if (!sink || worker_.started() || worker_.completion()->timedOut())
+        return failure(E_INVALIDARG, QStringLiteral("open (single-use instance)"), CaptureErrorStage::Configuration);
+    d->sink = std::move(sink);
+    d->runtimeError = onRuntimeError;
+    worker_.start([impl = d] { impl->run(); });
+    if (!worker_.waitPrepared(timeout)) {
+        abandon();
+        qWarning() << "[WASAPI] open timeout; aborted and detached, state/sink retained until driver returns";
         return failure(HRESULT_FROM_WIN32(WAIT_TIMEOUT), QStringLiteral("open timeout"), CaptureErrorStage::InputOpen);
     }
+    std::lock_guard<std::mutex> lock(d->mutex);
     return d->result;
 }
-void LoopbackCapture::start() { d->go = true; d->signal(); }
+void LoopbackCapture::start() { if (!d->abort && !worker_.completion()->timedOut()) { d->go = true; d->signal(); } }
 void LoopbackCapture::requestDrainStop() { d->stop = true; d->signal(); }
-void LoopbackCapture::requestAbort() { d->abort = true; d->signal(); }
-void LoopbackCapture::join() { if (d->worker.joinable()) d->worker.join(); d->state = LoopbackState::Idle; }
-LoopbackState LoopbackCapture::state() const { return d->state; }
+void LoopbackCapture::requestAbort() {
+    d->abort = true;
+    if (d->sink) d->sink->cancel();
+    d->signal();
+}
+bool LoopbackCapture::joinFor(std::chrono::milliseconds timeout) { return worker_.joinFor(timeout); }
+void LoopbackCapture::abandon() { requestAbort(); worker_.abandon(); }
+void LoopbackCapture::join() {
+    if (!joinFor(std::chrono::milliseconds(500))) {
+        qWarning() << "[WASAPI] join deadline exceeded; detached worker will reclaim its own resources";
+        abandon();
+    }
+}
+LoopbackState LoopbackCapture::state() const {
+    return worker_.completion()->timedOut() ? LoopbackState::Failed : d->state.load();
+}
 MixFormat LoopbackCapture::mixFormat() const { std::lock_guard<std::mutex> lock(d->mutex); return d->mix; }
 LoopbackStats LoopbackCapture::stats() const { std::lock_guard<std::mutex> lock(d->mutex); return d->statistics; }
 int64_t LoopbackCapture::startQpcUs() const { return d->startUs; }

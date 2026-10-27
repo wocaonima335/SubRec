@@ -110,9 +110,9 @@ public:
     void wakeAllThread();
     void close(MediaQueueCloseReason reason = MediaQueueCloseReason::RequestedStop,
                int errorCode = 0);
-    MediaQueueResult enqueueFromSrc(T *src);
+    MediaQueueResult enqueueFromSrc(T *src, const std::atomic<bool> *cancelled = nullptr);
     bool tryEnqueueFromSrc(T *src);
-    MediaQueueResult sendFinish();
+    MediaQueueResult sendFinish(const std::atomic<bool> *cancelled = nullptr);
     void receiveFinish();
     void enqueueNull();
     MediaQueueReadResult<T> receive();
@@ -179,7 +179,7 @@ void FFBoundedQueue<T, Traits>::close(MediaQueueCloseReason reason, int errorCod
 }
 
 template<typename T, typename Traits>
-MediaQueueResult FFBoundedQueue<T, Traits>::enqueueFromSrc(T *src)
+MediaQueueResult FFBoundedQueue<T, Traits>::enqueueFromSrc(T *src, const std::atomic<bool> *cancelled)
 {
     if constexpr (std::is_same_v<T, AVFrame>) {
         qDebug() << "[FFBoundedQueue<AVFrame>] enqueue before lock";
@@ -189,7 +189,14 @@ MediaQueueResult FFBoundedQueue<T, Traits>::enqueueFromSrc(T *src)
         qDebug() << "[FFBoundedQueue<AVFrame>] enqueue after lock";
     }
 
-    cond.wait(lock, [this]() { return q.size() < m_maxSize || m_closed || m_upstreamFinished; });
+    // A cancelled producer stays cancelled even if a subsequent session calls start().
+    cond.wait(lock, [this, cancelled]() {
+        return q.size() < m_maxSize || m_closed || m_upstreamFinished || (cancelled && cancelled->load());
+    });
+    if (cancelled && cancelled->load()) {
+        Traits::releaseSrc(src);
+        return MediaQueueResult::Closed;
+    }
 
     if (m_closed) {
         Traits::releaseSrc(src);
@@ -241,9 +248,10 @@ bool FFBoundedQueue<T, Traits>::tryEnqueueFromSrc(T *src)
 }
 
 template<typename T, typename Traits>
-MediaQueueResult FFBoundedQueue<T, Traits>::sendFinish()
+MediaQueueResult FFBoundedQueue<T, Traits>::sendFinish(const std::atomic<bool> *cancelled)
 {
     std::lock_guard<std::mutex> lock(mutex);
+    if (cancelled && cancelled->load()) return MediaQueueResult::Closed;
     if (m_closed) {
         return mediaQueueResultFromCloseReason(m_closeReason);
     }

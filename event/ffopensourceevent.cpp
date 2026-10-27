@@ -9,25 +9,8 @@ extern "C" {
 
 using namespace FFRecordContextType;
 #ifdef _WIN32
-namespace {
-class QueueAudioSink final : public capture::wasapi::AudioFrameSink {
-    FFAFrameQueue *queue;
-    bool timestamped;
-public:
-    explicit QueueAudioSink(FFAFrameQueue *q, bool mix) : queue(q), timestamped(mix) {}
-    bool push(AVFrame *frame) override {
-        if (timestamped) {
-            auto *entry = av_dict_get(frame->metadata, "capture_time_us", nullptr, 0);
-            if (!entry) return false;
-            frame->pts = std::strtoll(entry->value, nullptr, 10);
-            frame->time_base = {1,1000000};
-        }
-        queue->enqueue(frame);
-        return !queue->isClosed();
-    }
-    void finish() override { queue->sendFinish(); }
-};
-}
+#include "capture/wasapi_queue_sink.h"
+#include <QPointer>
 #endif
 
 FFOpenSourceEvent::FFOpenSourceEvent(FFRecorder *recorderCtx,
@@ -191,19 +174,28 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
     context->systemAudioSink.reset();
   }
   if (audioSourceType == AUDIO && audioInput.backend == CaptureBackend::Wasapi) {
-    context->systemAudioSink = std::make_unique<QueueAudioSink>(aFrmQueue[A_AUDIO], microphoneMixInput.has_value());
+    context->systemAudioSink = std::make_shared<capture::wasapi::QueueAudioSink>(*aFrmQueue[A_AUDIO], microphoneMixInput.has_value());
     context->systemAudioCapture = std::make_unique<capture::wasapi::LoopbackCapture>(capture::wasapi::LoopbackConfig{});
-    auto *recorder = recoderContext;
-    context->systemAudioCapture->onRuntimeError = [recorder](const capture::wasapi::LoopbackRuntimeError &error) {
-      if (!error.recovered) QMetaObject::invokeMethod(recorder, "setCaptureError", Qt::QueuedConnection,
-          Q_ARG(QString, error.operation + ": " + error.message),
-          Q_ARG(QString, QStringLiteral("Check the playback device and restart recording.")));
+    // The relay is owned by the task. Inspect the weak receiver only on its UI
+    // thread, avoiding the QPointer-check/invoke race with recorder destruction.
+    auto relay = std::shared_ptr<QObject>(new QObject, [](QObject *object) { object->deleteLater(); });
+    relay->moveToThread(recoderContext->thread());
+    QPointer<FFRecorder> receiver(recoderContext);
+    context->systemAudioCapture->onRuntimeError = [relay, receiver](const capture::wasapi::LoopbackRuntimeError &error) {
+      if (!error.recovered) QMetaObject::invokeMethod(relay.get(), [receiver, error] {
+        if (receiver) receiver->setCaptureError(error.operation + ": " + error.message,
+            QStringLiteral("Check the playback device and restart recording."));
+      }, Qt::QueuedConnection);
     };
-    startupResult = context->systemAudioCapture->open(context->systemAudioSink.get());
+    startupResult = context->systemAudioCapture->open(context->systemAudioSink);
     usingWasapi = startupResult.ok;
     if (!usingWasapi) {
       context->systemAudioCapture->requestAbort();
       context->systemAudioCapture->join();
+      // The timed-out worker retains its own references. Remove this failed
+      // source so normal stop handles a possible DirectShow fallback correctly.
+      context->systemAudioCapture.reset();
+      context->systemAudioSink.reset();
       if (microphoneMixInput || !audioFallback || !checkContinue(audioInput, shouldStart)) return false;
       qWarning() << "[WASAPI] open failed; falling back to DirectShow";
       audioInput = *audioFallback;

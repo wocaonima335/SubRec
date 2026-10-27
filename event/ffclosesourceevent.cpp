@@ -112,8 +112,13 @@ void FFCloseSourceEvent::stopAudioInputPath()
 #ifdef _WIN32
     auto &capture = recoderContext->getContext()->systemAudioCapture;
     if (sourceType == AUDIO && capture && capture->state() != capture::wasapi::LoopbackState::Idle) {
-        capture->requestDrainStop();
-        capture->join();
+        capture::wasapi::stopWithDeadline(*capture, [&] {
+            // Release blocked producer/consumer waits when normal EOF cannot arrive.
+            for (auto *queue : aPktQueue) if (queue) queue->close();
+            for (auto *queue : aFrmQueue) if (queue) queue->close();
+            if (aFilterEncoderFrmQueue) aFilterEncoderFrmQueue->close();
+            if (aEncoderPktQueue) aEncoderPktQueue->close();
+        }, [](const char *message) { qWarning() << "[WASAPI] stop:" << message; });
         return; // This source owns EOF; idle decoders must not send it again.
     }
 #endif
