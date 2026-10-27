@@ -58,3 +58,14 @@ set_tests_properties(audio_timeline_mix PROPERTIES TIMEOUT 30 LABELS "audio;mix;
 if(WIN32)
     set_tests_properties(audio_timeline_mix PROPERTIES ENVIRONMENT "PATH=${_audio_filter_path}")
 endif()
+
+add_executable(audio_mix_aac_tests ../audio_timeline_mix/audio_mix_aac_tests.cpp
+    ../../filter/audio_timeline_mixer.cpp ../../filter/audio_mix_dump.cpp)
+target_compile_features(audio_mix_aac_tests PRIVATE cxx_std_17)
+target_include_directories(audio_mix_aac_tests PRIVATE ../.. ${FFMPEG_INCLUDE_DIR})
+target_link_libraries(audio_mix_aac_tests PRIVATE ${FFMPEG_LIBRARIES})
+add_test(NAME audio_mix_aac COMMAND audio_mix_aac_tests)
+set_tests_properties(audio_mix_aac PROPERTIES TIMEOUT 60 LABELS "audio;mix;aac;synthetic")
+if(WIN32)
+    set_tests_properties(audio_mix_aac PROPERTIES ENVIRONMENT "PATH=${_audio_filter_path}")
+endif()

@@ -148,7 +148,8 @@ AudioTimelineMixer::Frame AudioTimelineMixer::render(int64_t target, double syst
     check(av_buffersink_get_frame(sink_, out.get()));
     if (dump_ && retainedOutput) dump_->submit(*aligned[0], *aligned[1]);
     // Stereo-linked sample-peak limiter: immediate attack, 50 ms exponential
-    // release, -0.45 dBFS ceiling. Attenuates both channels; never hard-clips peaks.
+    // release. Additional post-limiter headroom covers AAC reconstruction overshoot.
+    // No buffering: sample count, PTS and the pre-amix dump timeline stay unchanged.
     auto *left = reinterpret_cast<float *>(out->extended_data[0]);
     auto *right = reinterpret_cast<float *>(out->extended_data[1]);
     const double release = std::exp(-1.0 / (0.050 * 48000));
@@ -156,10 +157,11 @@ AudioTimelineMixer::Frame AudioTimelineMixer::render(int64_t target, double syst
         if (!std::isfinite(left[i])) left[i] = 0;
         if (!std::isfinite(right[i])) right[i] = 0;
         const double peak = std::max(std::abs(left[i]), std::abs(right[i]));
-        const double needed = peak > 0.95 ? 0.95 / peak : 1;
+        const double needed = peak > limiterCeiling ? limiterCeiling / peak : 1;
         limiterGain_ = std::min(needed, 1 - (1 - limiterGain_) * release);
         if (limiterGain_ < 0.999999) ++stats_.limited;
-        left[i] *= limiterGain_; right[i] *= limiterGain_;
+        left[i] *= limiterGain_ * aacHeadroomGain;
+        right[i] *= limiterGain_ * aacHeadroomGain;
     }
     out->time_base = {1,48000}; cursor_ += count;
     return out;

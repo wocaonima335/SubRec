@@ -15,6 +15,12 @@ class AudioMixDump;
 // av_gettime_relative clock, NOT arrival at this queue. Output PTS starts at zero.
 class AudioTimelineMixer {
 public:
+    // Reserve headroom for lossy native AAC reconstruction at 64*1024 bps.
+    // 0.84 (-1.51 dBFS) * 0.4 (-7.96 dB) = 0.336 (-9.47 dBFS).
+    // Loud square-wave AAC regression needs substantially more than 1.5 dB.
+    // See docs/AUDIO_MIXING.md before raising either value.
+    static constexpr double limiterCeiling = 0.84;
+    static constexpr double aacHeadroomGain = 0.4;
     struct FrameDelete { void operator()(AVFrame *f) const { av_frame_free(&f); } };
     using Frame = std::unique_ptr<AVFrame, FrameDelete>;
     struct Stats { uint64_t frames[2]{}, silence[2]{}, trimmed[2]{}, limited = 0; };

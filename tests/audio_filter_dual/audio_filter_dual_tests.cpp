@@ -3,6 +3,7 @@
 // the dual graph abuffer -> volume -> amix(pad 0 / pad 1) -> abuffersink, runtime volume
 // commands, and ownership/error paths of processDualtAudioFrames().
 #include "filter/ffafilter.h"
+#include "filter/audio_timeline_mixer.h"
 #include "queue/ffaframequeue.h"
 #include "thread/ffafilterthread.h"
 
@@ -273,8 +274,8 @@ void mixedWorkerDrainsBothSources(bool paused = false)
     worker.start(); worker.wait();
     auto mixed = drain(output);
     CHECK(mixed.samples == kFrameSamples - (paused ? 480 : 0));
-    CHECK(near(mixed.lastLeft, kSystemLevel + kMicrophoneLevel));
-    CHECK(near(mixed.lastRight, kSystemLevel + kMicrophoneLevel));
+    CHECK(near(mixed.lastLeft, (kSystemLevel + kMicrophoneLevel) * AudioTimelineMixer::aacHeadroomGain));
+    CHECK(near(mixed.lastRight, (kSystemLevel + kMicrophoneLevel) * AudioTimelineMixer::aacHeadroomGain));
     CHECK(output.receive().result == MediaQueueResult::Eof);
     std::cout << "PASS: mixed worker consumes both sources and drains one output\n";
 }

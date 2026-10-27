@@ -326,7 +326,9 @@ void FFAFilterThread::runMixed()
         AudioTimelineMixer mixer(mixStartUs);
         bool eof[2]{};
         FFAFrameQueue *queues[] = {sysFrmQueue, micFrmQueue};
-        qInfo() << "[AudioMix] enabled: WASAPI + microphone, 48k stereo FLTP, amix normalize=0, peak limiter=0.95";
+        qInfo() << "[AudioMix] enabled: WASAPI + microphone, 48k stereo FLTP, amix normalize=0, peak limiter="
+                << AudioTimelineMixer::limiterCeiling << "AAC headroom gain=" << AudioTimelineMixer::aacHeadroomGain
+                << "PCM ceiling=" << AudioTimelineMixer::limiterCeiling * AudioTimelineMixer::aacHeadroomGain;
         while (!m_stop) {
             for (unsigned source = 0; source < 2; ++source) {
                 // Bound each turn so a busy input cannot starve the other input.

@@ -174,7 +174,8 @@ if [ "$WITH_TEST_COMPONENTS" = 1 ]; then
     # (lavfi audio from "sine" is s16 -> pcm_s16le, already in the decoder list.)
     # mov: tools/pc2_verify.ps1 reads SubRec's .mp4 back with "ffmpeg.exe -i rec.mp4 -c copy -f null".
     indevs+=(lavfi); filters+=(sine color); demuxers+=(wav matroska nut mov)
-    decoders+=(wrapped_avframe)
+    # audio_mix_aac: decode native AAC packets to check reconstructed peaks.
+    decoders+=(wrapped_avframe aac)
     muxers+=(null nut); encoders+=(pcm_s16le rawvideo)
 fi
 
