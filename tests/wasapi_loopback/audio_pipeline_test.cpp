@@ -1,4 +1,5 @@
 #include "capture/wasapi_audio_pipeline.h"
+#include "capture/wasapi_silence_policy.h"
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
@@ -47,8 +48,35 @@ void conversion(int rate, bool surround) {
     pipeline.stop(false); pipeline.stop(false);
     require(sink.samples == 48000 && sink.finished == 1 && !sink.allSilent);
 }
+void guardedSilence() {
+    // Real resampler tail must be reserved by the same policy/call sequence as
+    // LoopbackCapture. A later drain must not overshoot the last packet end.
+    Sink sink; wasapi::AudioPipeline pipeline(sink);
+    AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+    pipeline.configure(media::AudioFormat(44100, AV_SAMPLE_FMT_FLT, stereo, {1,44100}));
+    auto frame = media::makeFrame();
+    frame->format = AV_SAMPLE_FMT_FLT; frame->sample_rate = 44100;
+    frame->ch_layout = stereo; frame->nb_samples = 441;
+    require(av_frame_get_buffer(frame.get(), 0) >= 0);
+    require(av_samples_set_silence(frame->extended_data, 0, frame->nb_samples, 2, AV_SAMPLE_FMT_FLT) == 0);
+    require(pipeline.packet(*frame, 123456100000)); // 100 ms gap before this packet
+    require(pipeline.pendingSamples() > 0);
+    wasapi::SilencePolicy policy;
+    const int64_t end = wasapi::kOutputSampleRate / 10 + wasapi::kOutputFrameSamples;
+    policy.packet(end);
+    for (int ms = 0; ms < 100; ms += 5)
+        require(policy.target(ms*1000, pipeline.samples(), pipeline.pendingSamples(), false, true) == pipeline.samples());
+    const auto target = policy.target(100000, pipeline.samples(), pipeline.pendingSamples(), false, true);
+    require(target > pipeline.samples() && target < end);
+    pipeline.setCaptureTimeUs(123456000000 + av_rescale_q(pipeline.samples(),
+                              {1,wasapi::kOutputSampleRate}, {1,1000000}));
+    require(pipeline.silenceUntil(target));
+    pipeline.stop(false);
+    require(sink.samples <= end && end - sink.samples <= 1 && sink.allSilent && sink.finished == 1);
+}
 int main() {
     try {
+        guardedSilence();
         conversion(48000, false); conversion(44100, false); conversion(48000, true);
         Sink sink; wasapi::AudioPipeline pipeline(sink);
         require(pipeline.silenceUntil(240001)); require(sink.samples == 240001 && sink.allSilent);

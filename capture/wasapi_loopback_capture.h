@@ -44,9 +44,10 @@ struct LoopbackConfig
     // Event-driven (AUDCLNT_STREAMFLAGS_EVENTCALLBACK) when the OS supports it for loopback,
     // otherwise 5 ms polling as in the probe. The implementation decides and reports it.
     bool preferEventCallback = true;
-    // Loopback delivers NO packets while nothing plays. RecorderSyncQueue uses audio as the
-    // master clock (pts = sample count), so the source must synthesize silence for those gaps,
-    // paced by QPC. Only tests may turn this off.
+    // Allow padding confirmed gaps after >=100 ms of consecutive empty polls.
+    // The boundary is the last valid packet end, never the current wall clock.
+    // Before the first packet / beyond the last packet, this cannot advance the
+    // single-source audio master clock. SILENT packets are delivered normally.
     bool fillIdleWithSilence = true;
     // Follow a change of the default device (IMMNotificationClient::OnDefaultDeviceChanged)
     // by reopening on the new endpoint, keeping the output timeline continuous.

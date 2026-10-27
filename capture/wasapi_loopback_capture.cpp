@@ -8,6 +8,7 @@
 #include "wasapi_loopback_capture.h"
 #include "wasapi_native.h"
 #include "wasapi_audio_pipeline.h"
+#include "wasapi_silence_policy.h"
 #include <QDebug>
 #include <condition_variable>
 #include <mutex>
@@ -161,12 +162,14 @@ struct LoopbackCapture::Impl {
                 qInfo() << "[WASAPI] started";
             }
             bool first = true;
-            auto fill = [&] {
-                if (!config.fillIdleWithSilence || !startQpc || abort) return;
-                auto target = (qpc100ns() - startQpc) * 48000 / 10000000;
-                if (target - pipeline.samples() > 960) {
+            SilencePolicy silence;
+            auto fill = [&](bool receivedPacket, bool bufferEmpty) {
+                if (!config.fillIdleWithSilence || !startQpc || abort || stop) return;
+                const auto target = silence.target(av_gettime_relative(), pipeline.samples(),
+                    pipeline.pendingSamples(), receivedPacket, bufferEmpty);
+                if (target > pipeline.samples()) {
                     auto before = pipeline.samples();
-                    pipeline.setCaptureTimeUs(startUs + before * 1000000 / 48000);
+                    pipeline.setCaptureTimeUs(startUs + before * 1000000 / kOutputSampleRate);
                     if (!pipeline.silenceUntil(target)) abort = true;
                     std::lock_guard<std::mutex> lock(mutex);
                     statistics.generatedSilenceFrames += pipeline.samples() - before;
@@ -176,12 +179,14 @@ struct LoopbackCapture::Impl {
                 try {
                     if (notification->changed.exchange(false)) throw Error{AUDCLNT_E_DEVICE_INVALIDATED, "Default device changed"};
                     UINT32 size = 0;
+                    bool receivedPacket = false;
                     check(stream->capture->GetNextPacketSize(&size), "GetNextPacketSize");
                     while (size && !abort && !stop) {
                         BYTE *data = nullptr; UINT32 count = 0; DWORD flags = 0; UINT64 position = 0, qpc = 0;
                         HRESULT hr = stream->capture->GetBuffer(&data, &count, &flags, &position, &qpc);
-                        if (hr == AUDCLNT_S_BUFFER_EMPTY) break;
+                        if (hr == AUDCLNT_S_BUFFER_EMPTY) { size = 0; break; }
                         check(hr, "GetBuffer");
+                        receivedPacket = true;
                         {
                             Packet packet{stream->capture.p, count};
                             if (count) {
@@ -201,10 +206,10 @@ struct LoopbackCapture::Impl {
                                         out[i] = uint32_t(data[i*3]) << 8 | uint32_t(data[i*3+1]) << 16 | uint32_t(data[i*3+2]) << 24;
                                 } else memcpy(frame->data[0], data, size_t(count) * stream->format.p->nBlockAlign);
                                 if (!(flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)) {
-                                    int64_t expected = (static_cast<int64_t>(qpc) - startQpc) * 48000 / 10000000;
-                                    if (first || std::llabs(expected - pipeline.samples()) > 4800)
+                                    int64_t expected = (static_cast<int64_t>(qpc) - startQpc) * kOutputSampleRate / 10000000;
+                                    if (first || std::llabs(expected - pipeline.samples()) > SilencePolicy::kMinimumGapSamples)
                                         qInfo() << "[WASAPI] packet clock delta samples" << expected - pipeline.samples() << "first" << first;
-                                    if (std::llabs(expected - pipeline.samples()) > 4800) {
+                                    if (std::llabs(expected - pipeline.samples()) > SilencePolicy::kMinimumGapSamples) {
                                         std::lock_guard<std::mutex> lock(mutex); ++statistics.driftWarnings;
                                     }
                                     first = false;
@@ -213,6 +218,14 @@ struct LoopbackCapture::Impl {
                                 const int64_t captureUs = (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
                                     ? av_gettime_relative() - int64_t(count) * 1000000 / info.sampleRate
                                     : startUs + (static_cast<int64_t>(qpc) - startQpc) / 10;
+                                // Only device timestamps may establish a padding boundary.
+                                // Arrival-time fallback remains usable for the real packet,
+                                // but cannot authorize synthetic audio beyond known data.
+                                const int64_t packetEnd = (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) ? -1 :
+                                    av_rescale_q(static_cast<int64_t>(qpc) - startQpc,
+                                                 {1, 10000000}, {1, kOutputSampleRate}) +
+                                    av_rescale_q(count, {1, info.sampleRate}, {1, kOutputSampleRate});
+                                silence.packet(packetEnd);
                                 if (!pipeline.packet(*frame, captureUs)) abort = true;
                                 std::lock_guard<std::mutex> lock(mutex);
                                 ++statistics.packets; statistics.deviceFrames += count;
@@ -224,14 +237,16 @@ struct LoopbackCapture::Impl {
                         }
                         check(stream->capture->GetNextPacketSize(&size), "GetNextPacketSize");
                     }
-                    fill();
+                    fill(receivedPacket, size == 0);
                 } catch (const Error &error) {
                     if (error.code != AUDCLNT_E_DEVICE_INVALIDATED && error.code != AUDCLNT_E_SERVICE_NOT_RUNNING) throw;
                     stream.reset();
+                    silence.reset(); // No confirmed empty buffer while the device is absent.
                     bool recovered = false;
                     for (int retry = 0; retry < 10 && !abort && !stop; ++retry) {
-                        // Keep the audio master clock moving throughout the retry delay.
-                        for (int tick = 0; tick < 40 && !abort && !stop; ++tick) { fill(); WaitForSingleObject(event.handle, 5); }
+                        // Device loss is not proof of silence; do not advance from wall time.
+                        for (int tick = 0; tick < 40 && !abort && !stop; ++tick)
+                            WaitForSingleObject(event.handle, 5);
                         if (abort || stop) break;
                         try {
                             stream = openStream(enumerator.p, event.handle, pipeline);

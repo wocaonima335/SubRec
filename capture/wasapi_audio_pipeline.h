@@ -20,13 +20,18 @@ public:
         return ok;
     }
     int64_t samples() const { return samples_; }
+    int64_t pendingSamples() const {
+        // Round up: even a fractional resampler tail must not become padding.
+        return converter_ ? av_rescale_rnd(converter_->delayUs(), kOutputSampleRate,
+                                           1000000, AV_ROUND_UP) : 0;
+    }
     bool silenceUntil(int64_t target) {
         while (target > samples_ && !aborted_) {
             auto frame = media::makeFrame();
             frame->format = AV_SAMPLE_FMT_FLTP;
             frame->sample_rate = kOutputSampleRate;
             frame->ch_layout = AV_CHANNEL_LAYOUT_STEREO;
-            frame->nb_samples = static_cast<int>(std::min<int64_t>(480, target - samples_));
+            frame->nb_samples = static_cast<int>(std::min<int64_t>(kOutputFrameSamples, target - samples_));
             if (av_frame_get_buffer(frame.get(), 0) < 0) throw std::bad_alloc();
             av_samples_set_silence(frame->extended_data, 0, frame->nb_samples, 2, AV_SAMPLE_FMT_FLTP);
             if (!deliver(std::move(frame))) return false;
@@ -48,7 +53,7 @@ private:
         if (captureUs_ != AV_NOPTS_VALUE) {
             const int result = av_dict_set_int(&frame->metadata, "capture_time_us", captureUs_, 0);
             if (result < 0) throw media::FfmpegError("capture timestamp", result);
-            captureUs_ += av_rescale_q(count, {1,48000}, {1,1000000});
+            captureUs_ += av_rescale_q(count, {1,kOutputSampleRate}, {1,1000000});
         }
         if (!sink_.push(frame.get())) { aborted_ = true; return false; }
         samples_ += count;

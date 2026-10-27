@@ -16,3 +16,10 @@ if(WIN32)
 endif()
 add_test(NAME wasapi_audio_pipeline COMMAND wasapi_audio_pipeline_test)
 set_tests_properties(wasapi_audio_pipeline PROPERTIES TIMEOUT 30)
+
+# Pure policy test: no Windows devices, Qt or FFmpeg runtime dependencies.
+add_executable(wasapi_silence_policy_test silence_policy_test.cpp)
+target_include_directories(wasapi_silence_policy_test PRIVATE ../..)
+target_compile_features(wasapi_silence_policy_test PRIVATE cxx_std_17)
+add_test(NAME wasapi_silence_policy COMMAND wasapi_silence_policy_test)
+set_tests_properties(wasapi_silence_policy PROPERTIES TIMEOUT 10)

@@ -6,7 +6,7 @@ namespace capture::wasapi {
 constexpr int kOutputSampleRate = 48000;
 constexpr int kOutputChannels = 2;          // AV_CHANNEL_LAYOUT_STEREO
 // Output sample format is AV_SAMPLE_FMT_FLTP; pts in 1/48000 (see LoopbackCapture::start()).
-constexpr int kOutputFrameSamples = 480;    // 10 ms per AVFrame (any size is accepted downstream)
+constexpr int kOutputFrameSamples = kOutputSampleRate / 100;    // 10 ms per AVFrame (any size is accepted downstream)
 
 // Where frames go. The production adapter wraps FFAFrameQueue (aFrmQueue[A_AUDIO]):
 //   push   -> FFAFrameQueue::enqueue (moves the reference; blocks while full; returns false
