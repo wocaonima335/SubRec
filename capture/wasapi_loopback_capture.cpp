@@ -8,6 +8,7 @@
 #include "wasapi_loopback_capture.h"
 #include "wasapi_native.h"
 #include "wasapi_mmcss_scope.h"
+#include "wasapi_reconnect.h"
 #include <avrt.h>
 #include "wasapi_audio_pipeline.h"
 #include "wasapi_silence_policy.h"
@@ -15,6 +16,7 @@
 #include <condition_variable>
 #include <mutex>
 #include <thread>
+#include <type_traits>
 #include <cmath>
 extern "C" {
 #include <libavutil/time.h>
@@ -259,20 +261,25 @@ struct LoopbackCapture::Impl {
                     if (error.code != AUDCLNT_E_DEVICE_INVALIDATED && error.code != AUDCLNT_E_SERVICE_NOT_RUNNING) throw;
                     stream.reset();
                     silence.reset(); // No confirmed empty buffer while the device is absent.
-                    bool recovered = false;
-                    for (int retry = 0; retry < 10 && !abort && !stop; ++retry) {
-                        // Device loss is not proof of silence; do not advance from wall time.
-                        for (int tick = 0; tick < 40 && !abort && !stop; ++tick)
-                            WaitForSingleObject(event.handle, 5);
-                        if (abort || stop) break;
-                        try {
+                    const bool recovered = reconnect<Error>(
+                        [&] { return abort || stop; },
+                        [&] {
+                            // Device loss is not proof of silence; do not advance from wall time.
+                            for (int tick = 0; tick < 40 && !abort && !stop; ++tick)
+                                WaitForSingleObject(event.handle, 5);
+                        },
+                        [&] {
                             stream = openStream(enumerator.p, event.handle, pipeline);
                             check(stream->client->Start(), "Restart"); stream->started = true;
-                            recovered = true;
-                            { std::lock_guard<std::mutex> lock(mutex); ++statistics.reopenCount; }
-                            break;
-                        } catch (const Error &) { stream.reset(); }
-                    }
+                            std::lock_guard<std::mutex> lock(mutex); ++statistics.reopenCount;
+                        },
+                        [&](int attempt, const auto &failure) {
+                            stream.reset();
+                            if constexpr (std::is_base_of_v<std::exception, std::decay_t<decltype(failure)>>)
+                                qWarning() << "[WASAPI] reopen attempt" << attempt << "failed:" << failure.what();
+                            else
+                                qWarning() << "[WASAPI] reopen attempt" << attempt << "failed:" << failure.code;
+                        });
                     if (abort || stop) break;
                     if (!recovered) throw error;
                     if (owner.onRuntimeError) owner.onRuntimeError({error.code, QString::fromLatin1(error.operation), message(error.code), true});
