@@ -168,10 +168,19 @@ Audio loudMix(int scenario) {
             }
             mixer.push(source, *f);
         }
-        auto mixed = mixer.render(pos + count);
-        require(mixed && mixed->pts == pos && mixed->nb_samples == count, "limiter shifted timeline");
+        // Match the worker's 200 ms margin: compensation-capable resampling
+        // buffers a filter tail even for 48k input. Do not render ahead of it.
+        while (auto mixed = mixer.render(pos + count - 9600)) {
+            require(mixed->pts == int64_t(result[0].size()), "mixer shifted timeline");
+            append(result, *mixed);
+        }
+    }
+    mixer.finish(0); mixer.finish(1);
+    while (auto mixed = mixer.render(mixer.end())) {
+        require(mixed->pts == int64_t(result[0].size()), "mixer shifted drained timeline");
         append(result, *mixed);
     }
+    require(result[0].size() == duration, "resampler lost final samples");
     require(mixer.stats().limited > 0, "test did not exercise limiter");
     return result;
 }

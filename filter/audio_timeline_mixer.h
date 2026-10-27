@@ -23,7 +23,11 @@ public:
     static constexpr double aacHeadroomGain = 0.4;
     struct FrameDelete { void operator()(AVFrame *f) const { av_frame_free(&f); } };
     using Frame = std::unique_ptr<AVFrame, FrameDelete>;
-    struct Stats { uint64_t frames[2]{}, silence[2]{}, trimmed[2]{}, limited = 0; };
+    static constexpr int64_t resyncThresholdUs = 10000;
+    struct Stats {
+        uint64_t frames[2]{}, silence[2]{}, trimmed[2]{}, limited = 0, resyncs[2]{};
+        double compensationPpm[2]{}, phaseErrorUs[2]{};
+    };
     explicit AudioTimelineMixer(int64_t startUs);
     ~AudioTimelineMixer();
     void push(unsigned source, const AVFrame &frame);
@@ -40,11 +44,17 @@ private:
         SwrContext *swr = nullptr;
         AVChannelLayout layout{};
         int rate = 0, format = -1;
-        int64_t nextUs = AV_NOPTS_VALUE, tailPts = 0;
+        // Fractional microseconds avoid accumulating per-packet rounding error.
+        long double nextUs = AV_NOPTS_VALUE;
+        int64_t tailPts = 0;
+        double errorIntegralPpm = 0, observationUs = 0, weightedError = 0;
+        int compensationDelta = 0;
+        bool finished = false;
         std::deque<Frame> frames;
     };
     Frame allocate(int samples, int64_t pts);
     void append(unsigned source, Frame frame);
+    void compensate(unsigned source, double errorUs, double durationUs);
     std::array<Input, 2> inputs_;
     AVFilterGraph *graph_ = nullptr;
     AVFilterContext *sources_[2]{}, *sink_ = nullptr;

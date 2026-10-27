@@ -29,3 +29,15 @@ if(WIN32)
 endif()
 add_test(NAME audio_mix_aac COMMAND audio_mix_aac_tests)
 set_tests_properties(audio_mix_aac PROPERTIES TIMEOUT 60 LABELS "audio;mix;aac;synthetic")
+
+add_executable(audio_mix_drift_tests audio_mix_drift_tests.cpp ../../filter/audio_timeline_mixer.cpp ../../filter/audio_mix_dump.cpp)
+target_compile_features(audio_mix_drift_tests PRIVATE cxx_std_17)
+target_include_directories(audio_mix_drift_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(audio_mix_drift_tests PRIVATE
+    "${FFMPEG_ROOT}/lib/avfilter.lib" "${FFMPEG_ROOT}/lib/avutil.lib" "${FFMPEG_ROOT}/lib/swresample.lib")
+if(WIN32)
+    add_custom_command(TARGET audio_mix_drift_tests POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${runtime_dlls} $<TARGET_FILE_DIR:audio_mix_drift_tests>)
+endif()
+add_test(NAME audio_mix_drift COMMAND audio_mix_drift_tests)
+set_tests_properties(audio_mix_drift PROPERTIES TIMEOUT 120 LABELS "audio;mix;drift;synthetic")

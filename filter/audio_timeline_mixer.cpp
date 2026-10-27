@@ -10,6 +10,7 @@ extern "C" {
 #include <libavutil/opt.h>
 }
 namespace {
+constexpr int kCompensationDistance = 48000 * 10;
 void check(int code) { if (code < 0) { char text[AV_ERROR_MAX_STRING_SIZE]; av_strerror(code, text, sizeof(text)); throw std::runtime_error(text); } }
 }
 AudioTimelineMixer::AudioTimelineMixer(int64_t startUs) : startUs_(startUs) {
@@ -66,9 +67,12 @@ void AudioTimelineMixer::push(unsigned source, const AVFrame &frame) {
     const int64_t us = av_rescale_q(frame.pts, frame.time_base, {1, 1000000});
     bool changed = input.rate != frame.sample_rate || input.format != frame.format ||
                    av_channel_layout_compare(&input.layout, &frame.ch_layout);
-    // Retain device PTS on every packet. Gaps insert silence, overlaps are trimmed
-    // when rendering: hardware clock drift cannot accumulate into inter-source skew.
-    if (changed || (input.nextUs != AV_NOPTS_VALUE && std::llabs(us - input.nextUs) > 2000)) {
+    const double errorUs = input.nextUs == AV_NOPTS_VALUE ? 0 : static_cast<double>(us - input.nextUs);
+    const bool discontinuity = std::abs(errorUs) > resyncThresholdUs;
+    // Within 10 ms, PTS is an observation of the source clock, not a new output
+    // position. Keep every converted block adjacent to the previous one.
+    if (changed || input.finished || discontinuity) {
+        if (input.swr && !input.finished && (changed || discontinuity)) ++stats_.resyncs[source];
         finish(source);
         swr_free(&input.swr); av_channel_layout_uninit(&input.layout);
         check(av_channel_layout_copy(&input.layout, &frame.ch_layout));
@@ -76,26 +80,68 @@ void AudioTimelineMixer::push(unsigned source, const AVFrame &frame) {
         AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
         check(swr_alloc_set_opts2(&input.swr, &stereo, AV_SAMPLE_FMT_FLTP, 48000,
             &input.layout, static_cast<AVSampleFormat>(frame.format), frame.sample_rate, 0, nullptr));
+        // Otherwise the first compensation at equal rates calls swr_init(),
+        // dropping buffered history. Enable the resampler before any input.
+        check(av_opt_set_int(input.swr, "flags", SWR_FLAG_RESAMPLE, 0));
         check(swr_init(input.swr));
+        input.nextUs = us;
+        input.tailPts = av_rescale_q(us - startUs_, {1,1000000}, {1,48000});
+        input.errorIntegralPpm = input.observationUs = input.weightedError = 0;
+        input.compensationDelta = 0;
+        input.finished = false;
+        stats_.compensationPpm[source] = 0;
     }
-    const int64_t delay = swr_get_delay(input.swr, 1000000);
-    auto out = allocate(swr_get_out_samples(input.swr, frame.nb_samples),
-                        av_rescale_q(us - startUs_ - delay, {1,1000000}, {1,48000}));
+    const double durationUs = double(frame.nb_samples) * 1000000 / frame.sample_rate;
+    compensate(source, static_cast<double>(us - input.nextUs), durationUs);
+    auto out = allocate(swr_get_out_samples(input.swr, frame.nb_samples), input.tailPts);
     int n = swr_convert(input.swr, out->extended_data, out->nb_samples,
                         const_cast<const uint8_t **>(frame.extended_data), frame.nb_samples);
     check(n); out->nb_samples = n;
-    input.nextUs = us + av_rescale_q(frame.nb_samples, {1,frame.sample_rate}, {1,1000000});
     ++stats_.frames[source]; append(source, std::move(out));
+    // Advance from the actual continuous output and buffered resampler tail,
+    // never from this packet's jittery PTS. swr's compensated ratio is
+    // 1/(1-delta/distance); delay is reported at the nominal ratio.
+    input.nextUs = startUs_ + input.tailPts * (1000000.0L / 48000) +
+        swr_get_delay(input.swr, 1000000) /
+            (1.0L - static_cast<long double>(input.compensationDelta) / kCompensationDistance);
 }
+void AudioTimelineMixer::compensate(unsigned source, double errorUs, double durationUs) {
+    auto &input = inputs_[source];
+    input.observationUs += durationUs;
+    input.weightedError += errorUs * durationUs;
+    stats_.phaseErrorUs[source] = errorUs;
+    if (input.observationUs < 1000000) return;
+    // Average a second of PTS observations so packet scheduling jitter does not
+    // become a rate change. PI clock tracking: 0.2/s phase correction and 0.01/s²
+    // frequency integration give roughly critically damped, slow convergence.
+    const double seconds = input.observationUs / 1000000;
+    const double average = input.weightedError / input.observationUs;
+    input.errorIntegralPpm = std::clamp(input.errorIntegralPpm + average * 0.01 * seconds, -1000.0, 1000.0);
+    const double desiredPpm = std::clamp(input.errorIntegralPpm + average * 0.2, -1000.0, 1000.0);
+    // delta is the TOTAL output samples inserted/removed over distance, not a
+    // per-packet count. Ten output seconds give ~2.08 ppm resolution. Refresh
+    // once/second; slew by at most 50 ppm per elapsed source second (not an
+    // absolute +/-50 ppm cap, which could never track a +/-200 ppm device).
+    constexpr int distance = kCompensationDistance;
+    const int maxStep = static_cast<int>(std::floor(50 * seconds * distance / 1000000));
+    const int desiredDelta = static_cast<int>(std::llround(desiredPpm * distance / 1000000));
+    input.compensationDelta = std::clamp(desiredDelta, input.compensationDelta - maxStep,
+                                        input.compensationDelta + maxStep);
+    check(swr_set_compensation(input.swr, input.compensationDelta, distance));
+    stats_.compensationPpm[source] = double(input.compensationDelta) * 1000000 / distance;
+    input.observationUs = input.weightedError = 0;
+}
+
 void AudioTimelineMixer::finish(unsigned source) {
     auto &input = inputs_.at(source);
-    if (!input.swr) return;
+    if (!input.swr || input.finished) return;
     for (;;) {
         auto frame = allocate(std::max(480, swr_get_out_samples(input.swr, 0)), input.tailPts);
         int n = swr_convert(input.swr, frame->extended_data, frame->nb_samples, nullptr, 0);
         check(n); if (!n) break;
         frame->nb_samples = n; append(source, std::move(frame));
     }
+    input.finished = true;
 }
 AudioTimelineMixer::Frame AudioTimelineMixer::render(int64_t target, double systemGain, double micGain, bool retainedOutput) {
     if (target <= cursor_) return {};

@@ -141,7 +141,7 @@ void debugDumpTimeline() {
         AudioTimelineMixer mixer(epoch);
         auto system = pcm(0, 960, .8f, .4f);
         auto mono = pcm(0, 882, .8f, .8f, 44100, 1);
-        mixer.push(0, *system); mixer.push(1, *mono); mixer.finish(1);
+        mixer.push(0, *system); mixer.push(1, *mono); mixer.finish(0); mixer.finish(1);
         while (auto out = mixer.render(960))
             for (int n = 0; n < out->nb_samples; ++n) CHECK(std::abs(value(*out, 0, n)) <= ceiling + 1e-6);
     }
@@ -211,6 +211,7 @@ void alignmentAndSilence() {
     auto system = pcm(0, 4800, .2f, .2f);
     auto mic = pcm(960, 960, .4f, .4f); // starts 20 ms late, ends 40 ms in
     mixer.push(0, *system); mixer.push(1, *mic);
+    mixer.finish(0);
     mixer.finish(1); // An ended input must not end the other source.
     for (int64_t pts = 0; pts < 4800; pts += 480) {
         auto f = mixer.render(4800); CHECK(f && f->pts == pts);
@@ -232,7 +233,7 @@ void alignmentAndSilence() {
 void limiter() {
     AudioTimelineMixer mixer(epoch);
     auto f = pcm(0, 4800, .8f, .4f);
-    mixer.push(0, *f); mixer.push(1, *f);
+    mixer.push(0, *f); mixer.push(1, *f); mixer.finish(0); mixer.finish(1);
     for (int i = 0; i < 10; ++i) {
         auto out = mixer.render(4800);
         for (int j = 0; j < out->nb_samples; ++j) {
@@ -260,38 +261,44 @@ void resamplingAndDrain() {
 }
 void packedMicrophoneAndOverlap() {
     AudioTimelineMixer mixer(epoch);
-    auto f = pcm(0, 480, .0f, .0f, 48000, 1);
+    auto f = pcm(0, 1440, .0f, .0f, 48000, 1);
     av_frame_unref(f.get());
-    f->format = AV_SAMPLE_FMT_S16; f->sample_rate = 48000; f->nb_samples = 480;
+    f->format = AV_SAMPLE_FMT_S16; f->sample_rate = 48000; f->nb_samples = 1440;
     f->time_base = {1,1000000}; f->pts = epoch; av_channel_layout_default(&f->ch_layout, 1);
     CHECK(av_frame_get_buffer(f.get(), 0) >= 0);
-    for (int i = 0; i < 480; ++i) reinterpret_cast<int16_t *>(f->data[0])[i] = 8192;
+    for (int i = 0; i < 1440; ++i) reinterpret_cast<int16_t *>(f->data[0])[i] = 8192;
     mixer.push(1, *f);
     auto out = mixer.render(480);
     CHECK(value(*out,0,0) > .1f * headroom && value(*out,0,0) < .3f * headroom);
     CHECK(std::abs(value(*out,0,0) - value(*out,1,0)) < 1e-6);
-    // The second packet overlaps already emitted samples by 240 samples.
-    f->pts = epoch + 5000; mixer.push(1, *f);
-    out = mixer.render(960);
-    CHECK(value(*out,0,0) > 0);
-    CHECK(value(*out,0,239) > 0 && value(*out,0,240) == 0);
-    CHECK(mixer.stats().trimmed[1] == 240);
+    // A genuine 15 ms backward jump exceeds the jitter tolerance and overlaps
+    // 720 samples. Small (e.g. 5 ms) PTS jitter now stays contiguous instead.
+    f->pts = epoch + 15000; mixer.push(1, *f); mixer.finish(1);
+    while (auto rest = mixer.render(mixer.end()))
+        for (int i = 0; i < rest->nb_samples; ++i) CHECK(value(*rest,0,i) > 0);
+    CHECK(mixer.position() == 2160 && mixer.stats().trimmed[1] == 720);
 }
 void clockDriftAndPacketSizes() {
     AudioTimelineMixer mixer(epoch);
-    // Each packet is 479 samples but capture timestamps advance 480 samples.
-    // Missing samples must stay at their clock position, not accumulate skew.
+    int64_t samples = 0;
+    // Variable packet sizes with +/-3 ms scheduling jitter: retain a 200 ms
+    // production-like margin for the resampler, never insert one-sample holes.
     for (int packet = 0; packet < 500; ++packet) {
-        auto f = pcm(packet * 480, 479, .2f, .2f);
-        mixer.push(0, *f);
-        auto out = mixer.render((packet+1)*480);
-        CHECK(out->pts == packet*480);
-        CHECK(std::abs(value(*out,0,478)-.2f * headroom) < 1e-6);
-        CHECK(value(*out,0,479) == 0);
+        const int count = packet % 2 ? 481 : 479;
+        auto f = pcm(samples, count, .2f, .2f);
+        if (packet) f->pts += packet % 2 ? 3000 : -3000;
+        mixer.push(0, *f); samples += count;
+        while (auto out = mixer.render(samples-9600))
+            for (int i = 0; i < out->nb_samples; ++i)
+                CHECK(std::abs(value(*out,0,i)-.2f * headroom) < 1e-5);
     }
-    CHECK(mixer.position() == 240000);
-    CHECK(mixer.stats().silence[0] == 500);
-    CHECK(mixer.stats().frames[0] == 500);
+    mixer.finish(0);
+    while (auto out = mixer.render(mixer.end()))
+        for (int i = 0; i < out->nb_samples; ++i)
+            CHECK(std::abs(value(*out,0,i)-.2f * headroom) < 1e-5);
+    CHECK(std::llabs(mixer.position() - samples) < 10);
+    CHECK(mixer.stats().silence[0] == 0 && mixer.stats().trimmed[0] == 0);
+    CHECK(mixer.stats().resyncs[0] == 0 && mixer.stats().frames[0] == 500);
 }
 }
 int main() {
