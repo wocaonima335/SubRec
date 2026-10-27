@@ -1,3 +1,4 @@
+#include "capture/test_video_start_delay.h"
 #include "ffdemuxerthread.h"
 
 #include "demuxer/demuxer.h"
@@ -156,6 +157,16 @@ void FFDemuxerThread::run()
             qDebug() << "[FFDemuxerThread] reopen screen demuxer failed";
             return;
         }
+    }
+    if (demuxer && (demuxer->getType() == SCREEN || demuxer->getType() == CAMERA || demuxer->getType() == VIDEO)) {
+        capture::test::VideoStartDelay testDelay;
+        const bool ready = testDelay.beforeFirstPacket([&](std::chrono::milliseconds delay) {
+            std::unique_lock<std::mutex> lock(mutex);
+            return cond.wait_for(lock, delay, [this] { return m_stop.load(); });
+        }, [](int64_t delayMs) {
+            qInfo() << "[TestHook] SUBREC_TEST_VIDEO_START_DELAY_MS enabled ms=" << delayMs;
+        });
+        if (!ready) return;
     }
     while (!m_stop) {
         stopFlag.store(false, std::memory_order_release);

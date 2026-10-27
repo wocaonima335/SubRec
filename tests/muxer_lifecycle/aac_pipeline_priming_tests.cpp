@@ -3,6 +3,7 @@
 #include "queue/ffapacketqueue.h"
 #include "queue/ffvpacketqueue.h"
 #include "thread/ffmuxerthread.h"
+#include "capture/test_video_start_delay.h"
 #include <thread>
 
 namespace {
@@ -68,7 +69,10 @@ void runPipeline(const std::filesystem::path &root, int videoStart, int reorder,
     } cleanup{worker, producer};
     // The old worker consumed one audio packet per 5 ms and discarded everything
     // beyond 24 packets. 400 ms exercises both that loss and queue backpressure.
-    if (delayedVideo) std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    capture::test::VideoStartDelay delay(std::chrono::milliseconds(delayedVideo ? 400 : 0));
+    CHECK(delay.beforeFirstPacket([](auto duration) {
+        std::this_thread::sleep_for(duration); return false;
+    }, [](auto ms) { CHECK(ms == 400); }));
     for (int n = 0; n < (stalled == 4 ? 0 : 30); ++n) {
         Packet p(av_packet_alloc()); CHECK(p && av_new_packet(p.get(), sizeof(h264)) == 0);
         std::memcpy(p->data, h264, sizeof(h264)); p->stream_index = vi;
@@ -92,6 +96,18 @@ void runPipeline(const std::filesystem::path &root, int videoStart, int reorder,
     } else worker.wait();
     if (producerError) std::rethrow_exception(producerError);
     CHECK(worker.lastError() == 0); CHECK(mux.close() == 0);
+    const auto diagnostics = worker.diagnostics();
+    CHECK(diagnostics.droppedPackets == 0 && diagnostics.bootstrapMaxPackets <= 24);
+    if (delayedVideo) {
+        CHECK(diagnostics.bootstrapMaxPackets == 24 && diagnostics.bootstrapHoldNs > 0);
+        CHECK(diagnostics.enqueueBlockedNs > 0);
+        std::cout << "PASS: mux diagnostics bootstrap_max=" << diagnostics.bootstrapMaxPackets
+                  << " hold_ms=" << diagnostics.bootstrapHoldNs/1000000.0
+                  << " backpressure_ms=" << diagnostics.enqueueBlockedNs/1000000.0
+                  << " dropped=" << diagnostics.droppedPackets << '\n';
+    }
+    worker.close(); // exercises the one-shot close summary
+    CHECK(worker.diagnostics().droppedPackets == 0);
     if (stalled != 4) checkRecording(path, videoStart, reorder);
     else {
         std::ifstream file(path, std::ios::binary); CHECK(file.good());

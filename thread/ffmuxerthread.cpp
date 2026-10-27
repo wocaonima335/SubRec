@@ -63,6 +63,8 @@ void FFMuxerThread::init(FFAPacketQueue *aPktQueue_,
     (void)aEncoder_;
     (void)vEncoder_;
     errorCode.store(0);
+    bootstrapMaxPackets = bootstrapHoldNs = droppedPackets = 0;
+    diagnosticsLogged = false;
     drainDeadlineMs.store(0);
     drainExpired.store(false);
 
@@ -82,7 +84,30 @@ void FFMuxerThread::close()
         }
     }
 
+    if (!diagnosticsLogged) {
+        const auto s = diagnostics();
+        qInfo() << "[MuxThread] closed bootstrap_max_packets=" << s.bootstrapMaxPackets
+                << "bootstrap_hold_ms=" << s.bootstrapHoldNs / 1000000.0
+                << "enqueue_backpressure_total_ms=" << s.enqueueBlockedNs / 1000000.0
+                << "dropped_packets=" << s.droppedPackets;
+        diagnosticsLogged = true;
+    }
     lastProcessTime = 0;
+}
+
+FFMuxerThread::Diagnostics FFMuxerThread::diagnostics() const
+{
+    Diagnostics result{bootstrapMaxPackets.load(), bootstrapHoldNs.load(), 0, droppedPackets.load()};
+    // Sum producer CV waits on both encoded-packet queues. This is not time
+    // waiting for an empty input, and can exceed wall time if producers overlap.
+    auto add = [&](auto *queue) {
+        if (!queue) return;
+        const auto s = queue->diagnostics();
+        result.enqueueBlockedNs += s.blockedNs;
+        result.droppedPackets += s.rejected + s.discarded;
+    };
+    add(aPktQueue); add(vPktQueue);
+    return result;
 }
 
 void FFMuxerThread::wakeAllThread()
@@ -202,18 +227,20 @@ void FFMuxerThread::run()
     };
 
     std::deque<FFPacket *> bootstrapAudioPackets;
-    auto clearBootstrapAudio = [&bootstrapAudioPackets]() {
+    auto clearBootstrapAudio = [this, &bootstrapAudioPackets]() {
         while (!bootstrapAudioPackets.empty()) {
             FFPacket *pkt = bootstrapAudioPackets.front();
             bootstrapAudioPackets.pop_front();
+            ++droppedPackets;
             FFPacketTraits::release(pkt);
         }
     };
-    auto pushBootstrapAudio = [&bootstrapAudioPackets](FFPacket *pkt) {
+    auto pushBootstrapAudio = [this, &bootstrapAudioPackets](FFPacket *pkt) {
         if (!pkt) {
             return;
         }
         bootstrapAudioPackets.push_back(pkt);
+        bootstrapMaxPackets.store(std::max<uint64_t>(bootstrapMaxPackets.load(), bootstrapAudioPackets.size()));
     };
     auto nextAudioPacket = [this, &bootstrapAudioPackets]() -> MediaQueueReadResult<FFPacket> {
         if (!bootstrapAudioPackets.empty()) {
@@ -232,6 +259,7 @@ void FFMuxerThread::run()
     FFPacket *audioPkt = nullptr;
     FFPacket *videoPkt = nullptr;
 
+    auto holdStart = std::chrono::steady_clock::time_point{};
     while (!m_stop && !videoPkt && !videoFinished) {
         checkDrainDeadline();
         // Preserve the first AAC packet (including priming). Once this bounded
@@ -250,6 +278,9 @@ void FFMuxerThread::run()
             }
         }
 
+        if (bootstrapAudioPackets.size() == kBootstrapAudioPacketLimit &&
+            holdStart == std::chrono::steady_clock::time_point{})
+            holdStart = std::chrono::steady_clock::now();
         const auto videoBootstrap = vPktQueue->tryReceive();
         if (videoBootstrap.ok()) {
             videoPkt = videoBootstrap.item;
@@ -268,7 +299,11 @@ void FFMuxerThread::run()
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
+    if (holdStart != std::chrono::steady_clock::time_point{})
+        bootstrapHoldNs += std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now()-holdStart).count();
     if (m_stop.load() || audioBootstrapFailed || videoBootstrapFailed) {
+        if (videoPkt) ++droppedPackets;
         FFPacketTraits::release(videoPkt);
         clearBootstrapAudio();
         return;
@@ -298,6 +333,8 @@ void FFMuxerThread::run()
 
     if (audioBootstrapFailed || videoBootstrapFailed
         || ((!audioPkt && !audioFinished) || (!videoPkt && !videoFinished))) {
+        if (audioPkt) ++droppedPackets;
+        if (videoPkt) ++droppedPackets;
         FFPacketTraits::release(audioPkt);
         FFPacketTraits::release(videoPkt);
         clearBootstrapAudio();
@@ -376,7 +413,7 @@ void FFMuxerThread::run()
             ret = muxer->mux(aPacket);
             processedSec = aSec;
             FFPacketTraits::release(audioPkt);
-            if (ret < 0) { fail(ret); break; }
+            if (ret < 0) { ++droppedPackets; fail(ret); break; }
             auto nextAudio = nextAudioPacket();
             if (nextAudio.result == MediaQueueResult::Eof) {
                 audioFinished = true;
@@ -394,7 +431,7 @@ void FFMuxerThread::run()
             ret = muxer->mux(vPacket);
             processedSec = vSec;
             FFPacketTraits::release(videoPkt);
-            if (ret < 0) { fail(ret); break; }
+            if (ret < 0) { ++droppedPackets; fail(ret); break; }
             auto nextVideo = receivePacket(vPktQueue);
             if (nextVideo.result == MediaQueueResult::Eof) {
                 videoFinished = true;
@@ -415,10 +452,8 @@ void FFMuxerThread::run()
         }
     }
 
-    if (audioPkt)
-        FFPacketTraits::release(audioPkt);
-    if (videoPkt)
-        FFPacketTraits::release(videoPkt);
+    if (audioPkt) { ++droppedPackets; FFPacketTraits::release(audioPkt); }
+    if (videoPkt) { ++droppedPackets; FFPacketTraits::release(videoPkt); }
     clearBootstrapAudio();
     qDebug() << "[MuxThread] loop end; trailer only on normal drain.";
     if (!m_stop.load()) finish();

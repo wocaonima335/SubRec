@@ -13,6 +13,7 @@
 #include <avrt.h>
 #include "wasapi_audio_pipeline.h"
 #include "wasapi_silence_policy.h"
+#include "wasapi_packet_diagnostics.h"
 #include <QDebug>
 #include <condition_variable>
 #include <mutex>
@@ -78,6 +79,7 @@ struct LoopbackCapture::Impl {
     CaptureStartResult result;
     MixFormat mix;
     LoopbackStats statistics;
+    PacketDiagnostics packetDiagnostics;
     std::atomic<int64_t> startUs{0};
     int64_t startQpc = 0;
     std::shared_ptr<AudioFrameSink> sink;
@@ -151,6 +153,19 @@ struct LoopbackCapture::Impl {
         { std::lock_guard<std::mutex> lock(mutex); mix = info; }
         return stream;
     }
+    void updateStatistics(const AudioPipeline &pipeline) {
+        const auto sinkStats = sink->diagnostics();
+        std::lock_guard<std::mutex> lock(mutex);
+        statistics.outputFrames = pipeline.samples();
+        statistics.generatedSilenceFrames = pipeline.generatedSilenceSamples();
+        statistics.trimmedSamples = pipeline.trimmedSamples();
+        statistics.discontinuities = packetDiagnostics.discontinuities;
+        statistics.estimatedLostSamples = packetDiagnostics.estimatedLostSamples;
+        statistics.unquantifiedDiscontinuities = packetDiagnostics.unquantifiedDiscontinuities;
+        statistics.sinkBlockedMs = sinkStats.blockedNs / 1000000.0;
+        statistics.sinkBlockedMaxMs = sinkStats.maxBlockedNs / 1000000.0;
+        statistics.rejectedSamples = sinkStats.rejectedSamples;
+    }
     void run() {
         bool opened = false;
         try {
@@ -172,6 +187,10 @@ struct LoopbackCapture::Impl {
                 ~Unregister() { if (active) e->UnregisterEndpointNotificationCallback(n); }
             } registration{enumerator.p, notification.p, registered};
             AudioPipeline pipeline(*sink);
+            struct CommitStats {
+                Impl &owner; AudioPipeline &pipeline;
+                ~CommitStats() { owner.updateStatistics(pipeline); }
+            } commit{*this, pipeline};
             auto stream = openStream(enumerator.p, event.handle, pipeline);
             publish(CaptureStartResult::success()); opened = true;
             { std::unique_lock<std::mutex> lock(mutex); cv.wait(lock, [&]{ return go || stop || abort; }); }
@@ -189,8 +208,7 @@ struct LoopbackCapture::Impl {
                     pipeline.pendingSamples(), receivedPacket, bufferEmpty);
                 if (target > pipeline.samples()) {
                     if (!pipeline.idleUntil(target)) abort = true;
-                    std::lock_guard<std::mutex> lock(mutex);
-                    statistics.generatedSilenceFrames = pipeline.generatedSilenceSamples();
+                    updateStatistics(pipeline);
                 }
             };
             auto drain = [&](bool finalDrain) {
@@ -206,6 +224,9 @@ struct LoopbackCapture::Impl {
                         HRESULT hr = stream->capture->GetBuffer(&data, &count, &flags, &position, &qpc);
                         if (hr == AUDCLNT_S_BUFFER_EMPTY) return false;
                         check(hr, "GetBuffer");
+                        packetDiagnostics.observe(position, count, mix.sampleRate,
+                            flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY,
+                            !(flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR));
                         {
                             Packet packet{stream->capture.p, count};
                             if (count) {
@@ -233,19 +254,17 @@ struct LoopbackCapture::Impl {
                                     }
                                     first = false;
                                 }
-                                auto before = av_gettime_relative();
                                 const int64_t captureUs = (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
                                     ? av_gettime_relative() - int64_t(count) * 1000000 / info.sampleRate
                                     : startUs + (static_cast<int64_t>(qpc) - startQpc) / 10;
                                 silence.packet(); // Any real/SILENT packet resets idle evidence.
                                 if (!pipeline.packet(*frame, captureUs)) abort = true;
+                                updateStatistics(pipeline);
                                 std::lock_guard<std::mutex> lock(mutex);
                                 ++statistics.packets; statistics.deviceFrames += count;
                                 statistics.generatedSilenceFrames = pipeline.generatedSilenceSamples();
                                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT) statistics.silentPacketFrames += count;
-                                if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) ++statistics.discontinuities;
                                 if (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) ++statistics.timestampErrors;
-                                statistics.sinkBlockedMs += (av_gettime_relative() - before) / 1000;
                             }
                         }
                         return true;
@@ -278,6 +297,7 @@ struct LoopbackCapture::Impl {
                 } catch (const Error &error) {
                     if (error.code != AUDCLNT_E_DEVICE_INVALIDATED && error.code != AUDCLNT_E_SERVICE_NOT_RUNNING) throw;
                     stream.reset();
+                    packetDiagnostics.resetPosition();
                     silence.reset(); // No confirmed empty buffer while the device is absent.
                     const bool recovered = reconnect<Error>(
                         [&] { return abort || stop; },
@@ -302,7 +322,7 @@ struct LoopbackCapture::Impl {
                     if (!recovered) throw error;
                     if (runtimeError) runtimeError({error.code, QString::fromLatin1(error.operation), message(error.code), true});
                 }
-                { std::lock_guard<std::mutex> lock(mutex); statistics.outputFrames = pipeline.samples(); }
+                updateStatistics(pipeline);
                 WaitForSingleObject(event.handle, 5);
             }
             state = LoopbackState::Stopping;
@@ -317,13 +337,7 @@ struct LoopbackCapture::Impl {
                                                 drained.receivedPacket, drained.empty);
             }
             pipeline.stop(abort, tailTarget, startUs);
-            {
-                std::lock_guard<std::mutex> lock(mutex);
-                statistics.generatedSilenceFrames = pipeline.generatedSilenceSamples();
-                statistics.outputFrames = pipeline.samples();
-            }
-            qInfo() << "[WASAPI] finished samples" << pipeline.samples()
-                    << "generated silence" << statistics.generatedSilenceFrames << "abort" << bool(abort);
+            updateStatistics(pipeline);
             state = LoopbackState::Finished;
         } catch (const Error &error) {
             if (!opened) publish(failure(error.code, QString::fromLatin1(error.operation), CaptureErrorStage::InputOpen));
@@ -335,6 +349,16 @@ struct LoopbackCapture::Impl {
             if (!opened) publish(failure(E_FAIL, QStringLiteral("unexpected capture error"), CaptureErrorStage::InputOpen));
             else runtimeFailure(E_FAIL, QStringLiteral("unexpected capture error"));
         }
+        // The scope guard commits counters even on conversion/device exceptions.
+        const auto &s = statistics; // worker-only writes; public snapshots take mutex
+        qInfo() << "[WASAPI] finished samples=" << s.outputFrames
+                << "generated_silence_samples=" << s.generatedSilenceFrames
+                << "data_discontinuities=" << s.discontinuities
+                << "lost_samples_48k_estimate=" << s.estimatedLostSamples
+                << "unquantified_discontinuities=" << s.unquantifiedDiscontinuities
+                << "trimmed_samples_48k=" << s.trimmedSamples << "sink_rejected_samples_48k=" << s.rejectedSamples
+                << "enqueue_blocked_total_ms=" << s.sinkBlockedMs << "enqueue_blocked_max_ms=" << s.sinkBlockedMaxMs
+                << "abort=" << bool(abort);
     }
     void runtimeFailure(HRESULT hr, const QString &operation) {
         state = LoopbackState::Failed;

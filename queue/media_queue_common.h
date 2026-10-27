@@ -3,6 +3,13 @@
 
 #include <cstdint>
 
+// Snapshot since start(). Nanoseconds retain sub-ms waits; counts are items,
+// not audio samples. Only a full queue's CV wait counts as producer backpressure.
+struct MediaQueueDiagnostics {
+    uint64_t blockedEnqueues = 0, blockedNs = 0, maxBlockedNs = 0;
+    uint64_t rejected = 0, discarded = 0;
+};
+
 enum class MediaQueueResult
 {
     Ok,

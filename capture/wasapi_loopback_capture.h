@@ -84,7 +84,11 @@ struct LoopbackStats
     std::uint64_t driftWarnings = 0;
     std::uint64_t timestampErrors = 0;    // AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR
     std::uint64_t outputFrames = 0;       // samples per channel delivered at 48 kHz
-    std::uint64_t sinkBlockedMs = 0;      // time spent waiting for the frame queue
+    double sinkBlockedMs = 0, sinkBlockedMaxMs = 0; // only full-queue enqueue waits
+    std::uint64_t estimatedLostSamples = 0; // flagged device-position gaps, converted to 48 kHz
+    std::uint64_t unquantifiedDiscontinuities = 0; // no reliable device-position baseline
+    std::uint64_t trimmedSamples = 0;     // actual overlap removed at 48 kHz
+    std::uint64_t rejectedSamples = 0;    // frames rejected by the sink, at 48 kHz
     std::uint32_t reopenCount = 0;        // device invalidated / default device changed
 };
 

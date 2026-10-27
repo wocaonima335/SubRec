@@ -66,3 +66,13 @@ target_link_libraries(stop_deadline_tests PRIVATE Qt6::Core
     "${FFMPEG_ROOT}/lib/avcodec.lib" "${FFMPEG_ROOT}/lib/avutil.lib")
 add_test(NAME stop_deadline COMMAND stop_deadline_tests)
 set_tests_properties(stop_deadline PROPERTIES TIMEOUT 10)
+
+add_executable(capture_diagnostics_tests capture_diagnostics_tests.cpp
+    ../../queue/ffapacketqueue.cpp ../../queue/ffvpacketqueue.cpp ../../queue/ffaframequeue.cpp
+    ../../thread/ffthread.cpp ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp)
+target_compile_features(capture_diagnostics_tests PRIVATE cxx_std_17)
+target_include_directories(capture_diagnostics_tests PRIVATE ui_stubs ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(capture_diagnostics_tests PRIVATE Qt6::Core
+    "${FFMPEG_ROOT}/lib/avformat.lib" "${FFMPEG_ROOT}/lib/avcodec.lib" "${FFMPEG_ROOT}/lib/avutil.lib")
+add_test(NAME capture_diagnostics COMMAND capture_diagnostics_tests)
+set_tests_properties(capture_diagnostics PROPERTIES TIMEOUT 10)

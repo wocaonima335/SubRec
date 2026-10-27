@@ -33,6 +33,7 @@ public:
         return ok;
     }
     int64_t samples() const { return samples_; }
+    uint64_t trimmedSamples() const { return trimmedSamples_; }
     int64_t generatedSilenceSamples() const { return generatedSilenceSamples_; }
     int64_t pendingSamples() const {
         // Round up: even a fractional resampler tail must not become padding.
@@ -98,6 +99,7 @@ private:
                 if (!silenceUntil(first)) return false;
             }
             const int skip = static_cast<int>(std::min<int64_t>(frame->nb_samples, samples_ - first));
+            trimmedSamples_ += skip;
             if (skip == frame->nb_samples) {
                 // Entire late packet overlaps already delivered silence. Keep aligning
                 // subsequent output (including converter tail) until it catches up.
@@ -142,6 +144,7 @@ private:
     AudioFrameSink &sink_;
     std::unique_ptr<media::AudioConverter> converter_;
     std::unique_ptr<media::AudioFormat> inputFormat_;
+    uint64_t trimmedSamples_ = 0;
     int64_t samples_ = 0;
     int64_t generatedSilenceSamples_ = 0;
     int64_t sessionStartUs_ = AV_NOPTS_VALUE;

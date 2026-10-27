@@ -147,6 +147,7 @@ void lateResume() {
     require(pipeline.packet(*next, epoch+915000));
     pipeline.stop(false);
     require(sink.samples == atMs(925) && pipeline.generatedSilenceSamples() == silent);
+    require(pipeline.trimmedSamples() == static_cast<uint64_t>(atMs(15)));
     for (int64_t i = 0; i < silent; ++i) require(sink.left[i] == 0);
     for (int64_t i = silent; i < atMs(915); ++i) require(sink.left[i] == .5f);
     for (int64_t i = atMs(915); i < sink.samples; ++i) require(sink.left[i] == .25f);
@@ -227,7 +228,7 @@ void reconnectImmediatePacket() {
         require(pipeline.packet(*next, epoch+40000));
         pipeline.stop(false);
         require(sink.samples == atMs(50) && sink.finished == 1);
-        require(pipeline.generatedSilenceSamples() == atMs(20));
+        require(pipeline.generatedSilenceSamples() == atMs(20) && pipeline.trimmedSamples() == 0);
         require(sink.lastCaptureEndUs == epoch+50000);
         for (int64_t i = 0; i < sink.samples; ++i) {
             const float expected = i < atMs(10) ? .25f : i < atMs(30) ? 0 :
@@ -254,6 +255,7 @@ void reconnectOverlappingPackets() {
     require(pipeline.packet(*next, epoch+15000));
     pipeline.stop(false);
     require(sink.samples == atMs(25) && pipeline.generatedSilenceSamples() == 0);
+    require(pipeline.trimmedSamples() == static_cast<uint64_t>(atMs(10)));
     require(sink.lastCaptureEndUs == epoch+25000 && sink.finished == 1);
     for (int64_t i = 0; i < sink.samples; ++i)
         require(sink.left[i] == (i < atMs(10) ? .25f : i < atMs(15) ? .5f : .75f));

@@ -10,6 +10,8 @@ extern "C" {
 
 #include <QDebug>
 #include <atomic>
+#include <chrono>
+#include <algorithm>
 #include <condition_variable>
 #include <corecrt.h>
 #include <functional>
@@ -111,7 +113,11 @@ public:
     void wakeAllThread();
     void close(MediaQueueCloseReason reason = MediaQueueCloseReason::RequestedStop,
                int errorCode = 0);
-    MediaQueueResult enqueueFromSrc(T *src, const std::atomic<bool> *cancelled = nullptr);
+    MediaQueueResult enqueueFromSrc(T *src, const std::atomic<bool> *cancelled = nullptr,
+                                    uint64_t *blockedNs = nullptr);
+    MediaQueueDiagnostics diagnostics() const {
+        std::lock_guard<std::mutex> lock(mutex); return diagnostics_;
+    }
     bool tryEnqueueFromSrc(T *src);
     MediaQueueResult sendFinish(const std::atomic<bool> *cancelled = nullptr);
     void receiveFinish();
@@ -140,6 +146,8 @@ private:
     std::condition_variable cond;
     std::queue<T *> q;
     size_t m_maxSize;
+    MediaQueueDiagnostics diagnostics_;
+    uint64_t diagnosticsGeneration_ = 0;
     bool m_upstreamFinished = false;
     bool m_closed = false;
     MediaQueueCloseReason m_closeReason = MediaQueueCloseReason::None;
@@ -157,6 +165,8 @@ void FFBoundedQueue<T, Traits>::start()
     std::lock_guard<std::mutex> lock(mutex);
     m_upstreamFinished = false;
     m_closed = false;
+    diagnostics_ = {};
+    ++diagnosticsGeneration_;
     m_closeReason = MediaQueueCloseReason::None;
     m_errorCode = 0;
     cond.notify_all();
@@ -180,7 +190,7 @@ void FFBoundedQueue<T, Traits>::close(MediaQueueCloseReason reason, int errorCod
 }
 
 template<typename T, typename Traits>
-MediaQueueResult FFBoundedQueue<T, Traits>::enqueueFromSrc(T *src, const std::atomic<bool> *cancelled)
+MediaQueueResult FFBoundedQueue<T, Traits>::enqueueFromSrc(T *src, const std::atomic<bool> *cancelled, uint64_t *blockedNs)
 {
     if constexpr (std::is_same_v<T, AVFrame>) {
         qDebug() << "[FFBoundedQueue<AVFrame>] enqueue before lock";
@@ -190,26 +200,47 @@ MediaQueueResult FFBoundedQueue<T, Traits>::enqueueFromSrc(T *src, const std::at
         qDebug() << "[FFBoundedQueue<AVFrame>] enqueue after lock";
     }
 
+    const auto generation = diagnosticsGeneration_;
+    if (blockedNs) *blockedNs = 0;
+    const bool blocked = q.size() >= m_maxSize && !m_closed && !m_upstreamFinished &&
+                         !(cancelled && cancelled->load());
+    const auto begin = blocked ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     // A cancelled producer stays cancelled even if a subsequent session calls start().
     cond.wait(lock, [this, cancelled]() {
         return q.size() < m_maxSize || m_closed || m_upstreamFinished || (cancelled && cancelled->load());
     });
+    if (blocked) {
+        const auto ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now()-begin).count());
+        // A cancelled old producer may wake after start() resets this queue.
+        // Keep its per-call wait for its sink, without polluting the new session.
+        if (generation == diagnosticsGeneration_) {
+            ++diagnostics_.blockedEnqueues;
+            diagnostics_.blockedNs += ns;
+            diagnostics_.maxBlockedNs = std::max(diagnostics_.maxBlockedNs, ns);
+        }
+        if (blockedNs) *blockedNs = ns;
+    }
     if (cancelled && cancelled->load()) {
+        if (generation == diagnosticsGeneration_) ++diagnostics_.rejected;
         Traits::releaseSrc(src);
         return MediaQueueResult::Closed;
     }
 
     if (m_closed) {
+        if (generation == diagnosticsGeneration_) ++diagnostics_.rejected;
         Traits::releaseSrc(src);
         return mediaQueueResultFromCloseReason(m_closeReason);
     }
 
     if (m_upstreamFinished) {
+        if (generation == diagnosticsGeneration_) ++diagnostics_.rejected;
         Traits::releaseSrc(src);
         return MediaQueueResult::Closed;
     }
     T *dest = Traits::allocateFromSrc(src); // 由 Traits 执行 move/ref
     if (!dest) {
+        if (generation == diagnosticsGeneration_) ++diagnostics_.rejected;
         Traits::releaseSrc(src);
         return MediaQueueResult::Error;
     }
@@ -227,18 +258,21 @@ bool FFBoundedQueue<T, Traits>::tryEnqueueFromSrc(T *src)
     std::unique_lock<std::mutex> lock(mutex);
 
     if (m_closed || m_upstreamFinished) {
+        ++diagnostics_.rejected;
         Traits::releaseSrc(src);
         return false;
     }
 
     // 检查队列是否已满
     if (q.size() >= m_maxSize) {
+        ++diagnostics_.rejected;
         Traits::releaseSrc(src);
         return false; // 队列已满，不阻塞直接返回
     }
 
     T *dest = Traits::allocateFromSrc(src);
     if (!dest) {
+        ++diagnostics_.rejected;
         Traits::releaseSrc(src);
         return false;
     }
@@ -399,6 +433,7 @@ void FFBoundedQueue<T, Traits>::clearQueueLocked()
     while (!q.empty()) {
         T *item = q.front();
         q.pop();
+        ++diagnostics_.discarded;
         Traits::release(item);
     }
 }

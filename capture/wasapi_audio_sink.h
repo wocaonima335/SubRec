@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 struct AVFrame;
 namespace capture::wasapi {
 // Fixed output of the source: what FFADecoder delivers today and what FFAFilter /
@@ -19,6 +20,9 @@ constexpr int kOutputFrameSamples = kOutputSampleRate / 100;    // 10 ms per AVF
 // (microphoneMixInput set), QueueAudioSink replaces pts with capture_time_us and
 // time_base with 1/1000000. Missing metadata returns false before enqueueing.
 // A false push return means abort: AudioPipeline stops delivering and omits EOF.
+struct SinkDiagnostics {
+    uint64_t blockedNs = 0, maxBlockedNs = 0, rejectedSamples = 0;
+};
 class AudioFrameSink
 {
 public:
@@ -35,6 +39,7 @@ public:
     // push/finish calls, including after the recorder has restarted its queues.
     // A sink and everything it accesses must survive until the capture task exits.
     virtual void cancel() noexcept {}
+    virtual SinkDiagnostics diagnostics() const { return {}; }
 };
 
 }

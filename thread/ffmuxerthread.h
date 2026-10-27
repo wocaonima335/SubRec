@@ -35,6 +35,11 @@ public:
     void requestDrainStop(std::chrono::milliseconds timeout = capture_stop::timeout());
     void finishQueuedPackets(); // Seal producers, keep queued packets and write trailer.
     bool drainTimedOut() const { return drainExpired.load(); }
+    struct Diagnostics {
+        uint64_t bootstrapMaxPackets = 0, bootstrapHoldNs = 0;
+        uint64_t enqueueBlockedNs = 0, droppedPackets = 0;
+    };
+    Diagnostics diagnostics() const;
     int lastError() const { return errorCode.load(); }
 
 protected:
@@ -56,6 +61,8 @@ private:
     std::atomic<int64_t> drainDeadlineMs{0};
     std::atomic<bool> drainExpired{false};
 
+    std::atomic<uint64_t> bootstrapMaxPackets{0}, bootstrapHoldNs{0}, droppedPackets{0};
+    bool diagnosticsLogged = false; // control thread, close after join
     double lastProcessTime = 0;
 
     FFRecorder *recorderCtx = nullptr;

@@ -1,3 +1,4 @@
+#include "capture/test_video_start_delay.h"
 #include "ffscreengrabthread.h"
 
 #include "queue/ffvframequeue.h"
@@ -215,6 +216,15 @@ void FFScreenGrabThread::grabLoop()
         std::lock_guard<std::mutex> lock(m_mutex);
         queue = m_queue;
     }
+
+    capture::test::VideoStartDelay testDelay;
+    const bool ready = testDelay.beforeFirstPacket([&](std::chrono::milliseconds delay) {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        return m_cond.wait_for(lock, delay, [this] { return m_stop.load(); });
+    }, [](int64_t delayMs) {
+        qInfo() << "[TestHook] SUBREC_TEST_VIDEO_START_DELAY_MS enabled ms=" << delayMs;
+    });
+    if (!ready) { av_frame_free(&frame); return; }
 
     std::uint64_t frames = 0;
     while (!m_stop.load(std::memory_order_acquire)) {

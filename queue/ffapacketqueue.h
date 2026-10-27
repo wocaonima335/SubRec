@@ -37,6 +37,7 @@ public:
                int errorCode = 0);
     void start();
     int length();
+    MediaQueueDiagnostics diagnostics() const { return impl->diagnostics(); }
 
 private:
     std::atomic<size_t> serial;
