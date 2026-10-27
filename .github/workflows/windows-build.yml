@@ -42,6 +42,9 @@ jobs:
     timeout-minutes: 90
     env:
       SUBREC_FFMPEG_VARIANT: gpl
+      # Release package: no test-only components (no native aac decoder, lavfi, wrapped_avframe...).
+      # Local/PC2 test builds keep using the script default (1).
+      SUBREC_FFMPEG_TEST_COMPONENTS: '0'
       SUBREC_FFMPEG_WORK: ${{ github.workspace }}/_ffbuild
     steps:
       - uses: actions/checkout@v4
@@ -138,11 +141,22 @@ jobs:
             if (-not (Test-Path (Join-Path $root "lib/$c.lib"))) { throw "lib/$c.lib is missing" }
             if (Test-Path (Join-Path $root "bin/$c.lib")) { throw "bin/$c.lib must have been moved to lib/" }
           }
-          # Encode smoke test with lavfi generators (needs the wrapped_avframe decoder, libx264, aac).
-          $smoke = Join-Path $env:RUNNER_TEMP 'smoke.mp4'
-          & $ff -hide_banner -loglevel error -y -f lavfi -i 'color=c=black:s=320x240:r=30:d=1' -f lavfi -i 'sine=d=1' -c:v libx264 -pix_fmt yuv420p -c:a aac $smoke
-          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg.exe lavfi -> libx264/aac smoke encode failed' }
-          if (-not (Test-Path $smoke) -or (Get-Item $smoke).Length -lt 1000) { throw 'smoke.mp4 is missing or too small' }
+          # The release FFmpeg is built with SUBREC_FFMPEG_TEST_COMPONENTS=0: it must NOT contain the
+          # test-only native aac decoder.
+          $dec = (& $ff -hide_banner -decoders) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw 'ffmpeg.exe -decoders failed' }
+          if ($dec -match "(?m)^\s*A\S*\s+aac\s") { throw 'release FFmpeg must not contain the aac decoder (SUBREC_FFMPEG_TEST_COMPONENTS=0)' }
+          # Encode smoke test with lavfi generators only when the test components are present
+          # (lavfi indev and wrapped_avframe decoder are test components).
+          $devs = (& $ff -hide_banner -devices) -join "`n"
+          if ($devs -match "(?m)\sD\S*\s+lavfi\s") {
+            $smoke = Join-Path $env:RUNNER_TEMP 'smoke.mp4'
+            & $ff -hide_banner -loglevel error -y -f lavfi -i 'color=c=black:s=320x240:r=30:d=1' -f lavfi -i 'sine=d=1' -c:v libx264 -pix_fmt yuv420p -c:a aac $smoke
+            if ($LASTEXITCODE -ne 0) { throw 'ffmpeg.exe lavfi -> libx264/aac smoke encode failed' }
+            if (-not (Test-Path $smoke) -or (Get-Item $smoke).Length -lt 1000) { throw 'smoke.mp4 is missing or too small' }
+          } else {
+            Write-Host 'lavfi not in this build (test components off): skipping the encode smoke test'
+          }
 
       - name: Configure
         shell: pwsh
