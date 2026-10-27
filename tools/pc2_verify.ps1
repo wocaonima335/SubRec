@@ -1,10 +1,15 @@
 <#
 .SYNOPSIS
-  PC2 verification of SubRec (DRAFT, not run yet): build the app and all tests with a given
+  PC2 verification workflow for SubRec: build the app and all tests with a given
   Qt/MinGW kit and FFmpeg, run ctest, check ddagrab with ffmpeg.exe, then record N seconds of
   screen (ddagrab) + a chosen DirectShow microphone with the app's autotest mode.
 
 .DESCRIPTION
+  Status: the user confirms this branch's full test suite passed on PC2.
+  This script covers build/tests, device probes, recordings and MP4 readback;
+  the test-suite result alone does not attest to every script stage or optional mode.
+  Check the summary.txt from the actual invocation for its end-to-end result.
+
   Nothing is installed, deleted or deployed. Every build goes to -BuildRoot (created if
   missing, never cleaned). Recordings and logs go to -BuildRoot\pc2-run-<timestamp>.
   Exit code: 0 = every step passed, 1 = at least one step failed (see summary.txt).
