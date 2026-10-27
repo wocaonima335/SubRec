@@ -25,7 +25,10 @@ No new QML controls are added; the scheduler API and autotest expose this mode.
 
 * WASAPI attaches the packet QPC timestamp, mapped to `av_gettime_relative`, to
   output frames (including swresample delay). Its single-source sample-count PTS
-  contract remains unchanged; only the mix adapter consumes capture timestamps.
+  contract (1/48000) remains unchanged. In mix mode only, `QueueAudioSink`
+  overwrites `pts` with that `capture_time_us` and sets `time_base` to 1/1000000
+  before enqueueing (the reference is moved, not copied); see
+  [WASAPI_LOOPBACK_INTERFACE.md](WASAPI_LOOPBACK_INTERFACE.md) section 4.1.
 * DirectShow preserves packet PTS deltas. Its clock epoch is calibrated when the
   demux thread receives its first packet, subtracting the PCM packet duration.
   This starts before video preparation to avoid calibrating against a backed-up

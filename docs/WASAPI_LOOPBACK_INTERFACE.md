@@ -1,6 +1,9 @@
 # WASAPI loopback 系统声音源：接口设计
 
-状态：**已实现，Windows 实机验证待执行**。Windows 构建默认使用 WASAPI 系统声音；
+状态：**已实现，已在 PC2（NVIDIA GeForce RTX 5060 Ti）上通过实机验证**。验证范围以维护者的
+确认为准：WASAPI 系统声音录制，以及“系统声音 + 麦克风”混音录制（混音后麦克风有声）。
+仓库内没有 PC2 的原始日志，`tools/pc2_verify.ps1` 的逐项结果也未归档；设备移除/默认设备切换后的
+恢复、长时间录制的时钟漂移、A/V 同步精度尚未做专项验证。Windows 构建默认使用 WASAPI 系统声音；
 `SUBREC_SYSTEM_AUDIO_BACKEND=auto|wasapi|dshow` 选择默认后端。麦克风仍走 DirectShow。
 原始 API 参考为 `tests/native_capture_probe/main.cpp` 的 `runWasapi`。
 
@@ -8,7 +11,7 @@
 `tools/pc2_verify.ps1` 自动生成音调并分别执行 5 秒有声/空闲录制、AAC 与时长检查。
 空闲测试前需停止其他应用播放声音。事件模式也使用 5 ms watchdog，以兼容旧系统
 loopback 事件不触发并及时补静音。设备 24-bit packed PCM 会展开为 S32 再转换。
-本机仅可交叉编译检查，尚未证明 Windows 运行、设备恢复或 A/V 同步效果。
+Linux 开发机只能交叉编译并运行不依赖设备的测试；上面列出的未专项验证项需要在 PC2 上继续测。
 
 目标：用 Windows 自带的 WASAPI 共享模式 loopback 取代第三方 DirectShow 组件
 `virtual-audio-capturer`，录系统声音不再需要用户另装组件。麦克风和摄像头继续走 DirectShow。
@@ -43,8 +46,8 @@ wasapi::LoopbackCapture (自带线程)  ----------------------->  aFrmQueue[A_AU
 | 采样率 | 48000 Hz | `AUDIO_SAMPLE_RATE`；`FFAEncoderThread::initEncoder` 用第一帧的参数打开 AAC |
 | 声道 | 立体声，`AV_CHANNEL_LAYOUT_STEREO` | 与 `FFAudioSampler` / FFAFilter 一致；设备是 5.1/7.1 时由 swresample 下混 |
 | 每帧样本数 | 建议 480（10 ms），任意正数都可以 | `FFAEncoder::encode` 自己重新切成 AAC 帧大小 |
-| `pts` | 1/48000 时间基，第一帧 0，之后严格等于已输出样本数 | 见第 4 节 |
-| 所有权 | `AudioFrameSink::push` 拿走引用（`av_frame_move_ref` 语义） | 与 `FFAFrameQueue::enqueue` 相同 |
+| `pts` | 单源模式：1/48000 时间基，第一帧 0，之后严格等于已输出样本数。**混音模式**：`AudioPipeline` 仍按此约定产出，但生产环境的 sink 适配器入队前把 `pts` 改写为 `capture_time_us`、`time_base` 改为 1/1000000 | 见第 4 节和 4.1 |
+| 所有权 | `AudioFrameSink::push` 拿走引用（`av_frame_move_ref` 语义），返回后传入的 `AVFrame` 是空的 | 生产适配器调用 `FFAFrameQueue::enqueue`：`av_frame_alloc` 一个队列自有的 `AVFrame`，`av_frame_move_ref` 过去，再 `av_frame_unref` 源帧（`queue/ffboundedqueue.h:55-67`）；缓冲区是移动，不是拷贝。队列已关闭时同样释放源帧（`:194-197`） |
 
 转换用现成的 `capture::media::AudioConverter`（`capture/media/media_conversion.h`）：它接受
 U8/S16/S32/S64/FLT/DBL 的 packed/planar 输入，固定输出 48000/stereo/FLTP，并保证 pts 连续
@@ -73,7 +76,7 @@ U8/S16/S32/S64/FLT/DBL 的 packed/planar 输入，固定输出 48000/stereo/FLTP
 
 ## 4. 时钟与时间戳
 
-现状：`RecorderSyncQueue` 以**音频为主时钟**：它按累计样本数给音频打 pts
+现状（单源模式；混音模式见 4.1）：`RecorderSyncQueue` 以**音频为主时钟**：它按累计样本数给音频打 pts
 （`queue/recordersyncqueue.cpp` `m_nextAudioPts`），视频帧按音频时钟丢/补。输入帧自带的 pts
 不被采用。由此得到两条约束：
 
@@ -83,7 +86,7 @@ U8/S16/S32/S64/FLT/DBL 的 packed/planar 输入，固定输出 48000/stereo/FLTP
    和已输出样本数比较，差值超过 20 ms 就补静音帧（每次最多补到当前时刻，不提前）。
    `virtual-audio-capturer` 据其上游说明也是没有声音时输出静音（*未在本仓库核实*）；补静音后
    替换前后对同步队列的行为一致。
-2. **pts = 已输出样本数（1/48000）。** 设备包的 `qpcPosition`（`GetBuffer` 的第 5 个参数，
+2. **pts = 已输出样本数（1/48000）（单源模式；混音模式见 4.1）。** 设备包的 `qpcPosition`（`GetBuffer` 的第 5 个参数，
    100 ns 单位的 QPC 时间）只用于：
    - 计算第一包相对 `start()` 的延迟，写日志；
    - 检测漂移：`|(qpcPosition - startQpc) * 48000 / 10^7 - 已输出样本数|` 超过 100 ms 时记日志并
@@ -96,6 +99,47 @@ U8/S16/S32/S64/FLT/DBL 的 packed/planar 输入，固定输出 48000/stereo/FLTP
   winpthreads 的 `clock_gettime(CLOCK_MONOTONIC)`，*未核实*是否就是 QPC）不影响结果。
 - 暂停：不在源里处理。`FFAFilterThread` 暂停时丢帧、`RecorderSyncQueue::onPauseChanged` 处理
   时间轴，和 dshow 源一样。源在暂停期间照常输出（包括补静音）。
+
+### 4.1 混音模式下 sink 的时间戳语义
+
+| | 单源模式（契约不变） | 混音模式（`microphoneMixInput` 有值） |
+| --- | --- | --- |
+| 帧的 `pts` | 已输出样本数 | `capture_time_us`：该帧第一个样本的采集时刻，微秒，`av_gettime_relative()` 时钟 |
+| `time_base` | 1/48000 | 1/1000000 |
+| 谁使用 | 下游滤镜/编码器直接使用样本计数 pts | `AudioTimelineMixer::push` 按采集时刻把帧摆到共享时间轴上；混音输出的 pts 是相对会话起点 `startUs_` 换算成 1/48000 的时间轴位置 |
+| 入队 | `FFAFrameQueue::enqueue`，移动引用 | 同左，只是入队前先改写 `pts`/`time_base` |
+
+事实来源（均已在代码中核对）：
+
+以下行号为当前工作区文件的行号。
+
+- `AudioPipeline::deliver` 在两种模式下都输出 `pts` = 样本计数、`time_base` = 1/48000，并在
+  `captureUs_` 有效时给帧（含补出的静音帧）附元数据 `capture_time_us`
+  （`capture/wasapi_audio_pipeline.h:42-56`，元数据在 `:48-52`）。该值由设备包的 QPC 时刻映射到
+  `av_gettime_relative` 得到（`TIMESTAMP_ERROR` 时退化为当前时刻减去包时长，
+  `capture/wasapi_loopback_capture.cpp:213-215`），再扣掉 swresample 的延迟
+  （`wasapi_audio_pipeline.h:17`）。
+- 生产适配器 `QueueAudioSink`（`event/ffopensourceevent.cpp:13-29`，仅 Windows）在构造时由
+  `microphoneMixInput.has_value()` 决定是否改写（`:194`）。混音模式下 `push` 读取
+  `capture_time_us`（`:20`），写入 `frame->pts`，并把 `time_base` 设为 1/1000000（`:22-23`），然后
+  `queue->enqueue(frame)`（`:25`）。入队走 `av_frame_move_ref`，元数据随帧进入队列；`push`
+  返回 `!queue->isClosed()`（`:26`）。
+- 混音模式下缺少 `capture_time_us` 时 `push` 返回 `false`（`:21`），帧未入队；`AudioPipeline`
+  把 `false` 当作中止（`wasapi_audio_pipeline.h:53`），采集线程随之结束。只要 `packet()` 传入了有效的
+  `captureUs`，就不会触发。
+- 消费端：`FFAFilterThread` 的混音循环调用 `AudioTimelineMixer::push(source, frame)`
+  （`thread/ffafilterthread.cpp:347`）。它要求 `pts != AV_NOPTS_VALUE`、`time_base` 有效，否则抛
+  `std::invalid_argument`（`filter/audio_timeline_mixer.cpp:61-64`）；然后用
+  `av_rescale_q(pts, time_base, 1/1000000)` 换成微秒（`:66`），减去会话起点和 swresample 延迟后换成
+  1/48000 的时间轴位置（`:81-83`）。两帧间隔超过 2 ms 时重建重采样器；间隙补静音、重叠在渲染时裁掉
+  （`:69-71`）。
+- 麦克风一侧（DirectShow）用同一个时钟：`Demuxer::enableCaptureClock(true)` 把设备 PTS 校准到
+  `av_gettime_relative`（`event/ffopensourceevent.cpp:237`），解码器开启
+  `setCaptureTimestampOutput(true)`（`:245`）后，直接以流的 `time_base` 带着该 PTS 入队
+  （`decoder/ffadecoder.cpp:64-68`）。
+
+注意：混音模式下不要假设 sink 收到的 `pts` 连续或等于样本数。设备停顿会表现为时间轴上的空隙，
+由混音器处理（见 [AUDIO_MIXING.md](AUDIO_MIXING.md)）。
 
 ## 5. 生命周期、错误处理
 
