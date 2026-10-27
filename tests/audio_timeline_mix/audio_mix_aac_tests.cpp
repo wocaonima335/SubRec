@@ -11,6 +11,7 @@ extern "C" {
 #include <cstdlib>
 #include <iostream>
 #include <iomanip>
+#include <limits>
 #include <string>
 #include <stdexcept>
 #include <vector>
@@ -233,7 +234,31 @@ Audio music(unsigned source) {
     require(crest >= 12 && crest <= 15, "synthetic music crest factor must be 12..15 dB");
     return result;
 }
-enum class DecodedPeakPolicy { Strict, ReportOnly };
+// Native AAC can overshoot strongly on hard synthetic edges (observed square
+// peak about +4.3 dBFS). Allow that known codec behavior, but fail above +6 dBFS
+// to catch excessive regressions. This is not a clipping-safety limit for music.
+constexpr double kExtremeDecodedSamplePeakLimitDbfs = 6.0;
+const double kExtremeDecodedSamplePeakLimit =
+    std::pow(10.0, kExtremeDecodedSamplePeakLimitDbfs / 20.0);
+bool extremeDecodedSamplePeakOk(double samplePeak) {
+    return std::isfinite(samplePeak) && samplePeak <= kExtremeDecodedSamplePeakLimit;
+}
+void testExtremeDecodedSamplePeakLimit() {
+    require(extremeDecodedSamplePeakOk(std::pow(10.0, 4.3/20.0)), "known AAC square overshoot must pass");
+    require(extremeDecodedSamplePeakOk(std::nextafter(kExtremeDecodedSamplePeakLimit, 0.0)),
+            "peak just below +6 dBFS must pass");
+    require(extremeDecodedSamplePeakOk(kExtremeDecodedSamplePeakLimit), "peak exactly +6 dBFS must pass");
+    require(!extremeDecodedSamplePeakOk(std::nextafter(kExtremeDecodedSamplePeakLimit,
+                                                     std::numeric_limits<double>::infinity())),
+            "peak just above +6 dBFS must fail");
+    require(!extremeDecodedSamplePeakOk(2.0), "2x full scale exceeds +6 dBFS and must fail");
+    require(!extremeDecodedSamplePeakOk(std::numeric_limits<double>::infinity()), "infinite peak must fail");
+    require(!extremeDecodedSamplePeakOk(std::numeric_limits<double>::quiet_NaN()), "NaN peak must fail");
+    std::cout << "PASS: extreme decoded sample peak boundary: <= +"
+              << kExtremeDecodedSamplePeakLimitDbfs << " dBFS ("
+              << kExtremeDecodedSamplePeakLimit << ") passes; above fails\n";
+}
+enum class DecodedPeakPolicy { Strict, ExtremeSynthetic };
 bool verify(const char *name, const Audio &mixed, double minimumRms,
             DecodedPeakPolicy policy = DecodedPeakPolicy::Strict) {
     const auto decoded = roundTrip(mixed);
@@ -247,25 +272,25 @@ bool verify(const char *name, const Audio &mixed, double minimumRms,
               << " AAC_peak=" << samplePeak << " (" << 20*std::log10(samplePeak)
               << " dBFS) AAC_8x_peak=" << truePeak << " RMS=" << level
               << " RMS_min=" << minimumRms
-              << " decoded_peaks=" << (strict ? "strict" : "report-only") << '\n';
+              << " decoded_peaks=" << (strict ? "strict" : "sample <= +6 dBFS; 8x report-only") << '\n';
     if (!strict) {
-        // Extreme synthetic inputs exercise the PCM limiter. Native AAC's lossy
-        // reconstruction/quantization can overshoot substantially for these inputs;
-        // float decoding retains values above unity. Such codec peaks are diagnostic,
-        // not the acceptance criterion used for sine/music/real recordings.
-        std::cout << "INFO: " << name << " decoded peaks are report-only: native AAC may overshoot"
-                  << " on extreme synthetic signals; float decoding retains peaks above 1.0."
-                  << " Assert PCM ceiling, RMS floor and finite decoded samples instead.\n";
+        std::cout << "INFO: " << name << " native AAC may overshoot on extreme synthetic signals;"
+                  << " float decoding retains peaks above 1.0. Assert decoded sample peak <= +"
+                  << kExtremeDecodedSamplePeakLimitDbfs
+                  << " dBFS, PCM ceiling, RMS floor and finite samples; 8x peak remains report-only.\n";
     }
     const bool levelOk = std::isfinite(level) && level >= minimumRms && level > 0;
     const bool pcmOk = strict || pcmPeak <= AudioTimelineMixer::limiterCeiling + 1e-6;
-    const bool decodedPeaksOk = !strict || (samplePeak < maximumSamplePeak && truePeak < 1.0);
+    const bool decodedPeaksOk = strict ? (samplePeak < maximumSamplePeak && truePeak < 1.0)
+                                       : extremeDecodedSamplePeakOk(samplePeak);
     const bool passed = levelOk && pcmOk && decodedPeaksOk;
     if (!passed) {
         std::cerr << "FAIL: " << name << ": finite RMS >= floor=" << levelOk;
         if (strict) std::cerr << ", sample peak < -0.5 dBFS=" << (samplePeak < maximumSamplePeak)
                               << ", 8x peak < 1=" << (truePeak < 1.0);
-        else std::cerr << ", PCM peak <= ceiling + 1e-6=" << pcmOk;
+        else std::cerr << ", PCM peak <= ceiling + 1e-6=" << pcmOk
+                       << ", decoded sample peak <= +" << kExtremeDecodedSamplePeakLimitDbfs
+                       << " dBFS=" << decodedPeaksOk;
         std::cerr << '\n';
     }
     return passed;
@@ -289,6 +314,7 @@ int main() {
 #endif
         std::cout << std::setprecision(9);
         std::cout << "native AAC bitrate=" << audio_encoding::kAacBitRate << " bps\n";
+        testExtremeDecodedSamplePeakLimit();
         bool passed = true;
         // Measured with native FFmpeg n8.0.3, production bitrate/limiter, including
         // priming and padding. Fixed baselines prevent a quieter implementation
@@ -298,7 +324,7 @@ int main() {
         const char *names[] = {"sine", "square", "transients", "high-frequency"};
         for (int scenario = 0; scenario < 4; ++scenario)
             passed &= verify(names[scenario], loudMix(scenario), measuredRms[scenario]*rmsMargin,
-                             scenario == 0 ? DecodedPeakPolicy::Strict : DecodedPeakPolicy::ReportOnly);
+                             scenario == 0 ? DecodedPeakPolicy::Strict : DecodedPeakPolicy::ExtremeSynthetic);
         std::array<Audio, 2> materials{music(0), music(1)};
         constexpr double measuredMusicRms = .215276092;
         passed &= verify("synthetic-music", mix(materials), measuredMusicRms*rmsMargin);
@@ -327,6 +353,6 @@ int main() {
         require(passed, "AAC regression failed (all scenarios measured; see individual assertions above)");
         std::cout << "PASS: production mix -> native AAC " << audio_encoding::kAacBitRate
                   << " bps -> decode, RMS floors / finite samples; sine/music/WAV: sample peak < -0.5 dBFS"
-                  << " and 8x peak < 1; extreme synthetic inputs: PCM ceiling, decoded peaks report-only\n";
+                  << " and 8x peak < 1; extreme synthetic inputs: PCM ceiling, decoded sample peak <= +6 dBFS, 8x report-only\n";
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }
