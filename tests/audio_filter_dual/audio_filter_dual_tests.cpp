@@ -251,7 +251,7 @@ void dualGraphMixesBothInputs()
 }
 
 // Production worker consumes both queues and sends a single EOF after both drain.
-void mixedWorkerDrainsBothSources(bool paused = false)
+void mixedWorkerDrainsBothSources(bool paused = false, bool injectFuture = false)
 {
     FFAFrameQueue system, microphone, output;
     FFAFilter filter;
@@ -260,6 +260,14 @@ void mixedWorkerDrainsBothSources(bool paused = false)
     auto *sys = makeFltpFrame(kSystemLevel, epoch);
     auto *mic = makeFltpFrame(kMicrophoneLevel, epoch);
     sys->time_base = mic->time_base = AVRational{1,1000000};
+    if (injectFuture) {
+        for (auto *queue : {&system, &microphone}) {
+            auto *bad = makeFltpFrame(.9f, epoch + 3000000);
+            bad->time_base = {1,1000000};
+            queue->enqueue(bad); // enqueue transfers the frame reference
+            av_frame_free(&bad);
+        }
+    }
     system.enqueue(sys); microphone.enqueue(mic);
     av_frame_free(&sys); av_frame_free(&mic);
     system.sendFinish(); microphone.sendFinish();
@@ -334,6 +342,7 @@ int main()
         dualErrorPaths();
         mixedWorkerDrainsBothSources();
         mixedWorkerDrainsBothSources(true);
+        mixedWorkerDrainsBothSources(false, true);
         std::cout << "PASS: audio filter dual\n";
         return 0;
     } catch (const std::exception &error) {

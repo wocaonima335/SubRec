@@ -26,6 +26,7 @@ public:
     static constexpr int64_t resyncThresholdUs = 10000;
     struct Stats {
         uint64_t frames[2]{}, silence[2]{}, trimmed[2]{}, limited = 0, resyncs[2]{};
+        uint64_t futurePacketsDropped[2]{};
         double compensationPpm[2]{}, phaseErrorUs[2]{};
     };
     explicit AudioTimelineMixer(int64_t startUs);

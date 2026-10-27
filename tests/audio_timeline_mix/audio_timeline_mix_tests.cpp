@@ -300,13 +300,67 @@ void clockDriftAndPacketSizes() {
     CHECK(mixer.stats().silence[0] == 0 && mixer.stats().trimmed[0] == 0);
     CHECK(mixer.stats().resyncs[0] == 0 && mixer.stats().frames[0] == 500);
 }
+void futurePacketsAreIsolated() {
+    AudioTimelineMixer actual(epoch), reference(epoch);
+    auto compareOutput = [&](int64_t target) {
+        while (auto a = actual.render(target)) {
+            auto b = reference.render(target);
+            CHECK(b && a->pts == b->pts && a->nb_samples == b->nb_samples);
+            for (int ch = 0; ch < 2; ++ch) for (int i = 0; i < a->nb_samples; ++i)
+                CHECK(value(*a, ch, i) == value(*b, ch, i));
+        }
+        CHECK(!reference.render(target));
+    };
+    auto inject = [&](unsigned source) {
+        const auto before = actual.stats();
+        const auto end = actual.end(), position = actual.position();
+        // Different format/rate must not flush or replace the active converter.
+        auto bad = pcm(position + 96001, 441, .9f, .9f, 44100, 1);
+        actual.push(source, *bad);
+        CHECK(actual.end() == end && actual.position() == position);
+        for (unsigned ch = 0; ch < 2; ++ch) {
+            CHECK(actual.stats().futurePacketsDropped[ch] == before.futurePacketsDropped[ch] + (ch == source));
+            CHECK(actual.stats().frames[ch] == before.frames[ch]);
+            CHECK(actual.stats().resyncs[ch] == before.resyncs[ch]);
+            CHECK(actual.stats().compensationPpm[ch] == before.compensationPpm[ch]);
+            CHECK(actual.stats().phaseErrorUs[ch] == before.phaseErrorUs[ch]);
+        }
+    };
+    inject(0); inject(1); // bad first packet must not initialize source state
+    for (int n = 0; n < 500; ++n) {
+        for (unsigned source = 0; source < 2; ++source) {
+            if (n % 97 == 0) inject(source);
+            auto f = pcm(n*480, 480, .1f, .2f);
+            f->pts += n * (source ? -2 : 2); // active +/-200 ppm compensation
+            actual.push(source, *f); reference.push(source, *f);
+        }
+        compareOutput(std::max(0, (n+1)*480-9600));
+    }
+    // Repeated bad packets before EOF cannot append a long silent tail.
+    for (int i = 0; i < 5; ++i) inject(i%2);
+    actual.finish(0); actual.finish(1); reference.finish(0); reference.finish(1);
+    CHECK(actual.end() == reference.end()); compareOutput(reference.end());
+    CHECK(actual.stats().futurePacketsDropped[0] == 10);
+    CHECK(actual.stats().futurePacketsDropped[1] == 9);
+    // Boundary is relative to the current cursor, inclusive at exactly two seconds.
+    AudioTimelineMixer boundary(epoch);
+    while (boundary.render(48000)) {}
+    auto accepted = pcm(48000+96000, 480, .2f, .2f);
+    boundary.push(0, *accepted);
+    CHECK(boundary.stats().frames[0] == 1 && boundary.stats().futurePacketsDropped[0] == 0);
+    auto rejected = pcm(48000+96001, 480, .2f, .2f);
+    const auto end = boundary.end(); boundary.push(0, *rejected);
+    CHECK(boundary.end() == end && boundary.stats().futurePacketsDropped[0] == 1);
+}
+
 }
 int main() {
     try {
         DumpEnvironment environment;
         debugDumpTimeline();
         debugDumpWriteFailure();
+        futurePacketsAreIsolated();
         alignmentAndSilence(); limiter(); resamplingAndDrain(); packedMicrophoneAndOverlap(); clockDriftAndPacketSizes();
-        std::cout << "PASS: timestamp alignment, silence, drift, limiter, conversion and raw/JSON debug dumps\n";
+        std::cout << "PASS: timestamp alignment, silence, drift, limiter, conversion, future-packet isolation and raw/JSON debug dumps\n";
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

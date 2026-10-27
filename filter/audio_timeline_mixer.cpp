@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 extern "C" {
 #include <libavfilter/buffersink.h>
@@ -50,21 +51,33 @@ AudioTimelineMixer::Frame AudioTimelineMixer::allocate(int samples, int64_t pts)
 }
 void AudioTimelineMixer::append(unsigned source, Frame frame) {
     if (!frame->nb_samples) return;
-    end_ = std::max(end_, frame->pts + frame->nb_samples);
-    inputs_[source].tailPts = frame->pts + frame->nb_samples;
-    // A producer cannot consume unbounded memory if its clock jumps into the future.
-    if (frame->pts > cursor_ + 48000 * 2) throw std::runtime_error("Audio capture clock is more than 2 s ahead");
+    if (frame->nb_samples < 0 || frame->pts > std::numeric_limits<int64_t>::max() - frame->nb_samples)
+        throw std::overflow_error("Audio frame end timestamp overflow");
+    const auto frameEnd = frame->pts + frame->nb_samples;
     auto &frames = inputs_[source].frames;
     const auto at = std::upper_bound(frames.begin(), frames.end(), frame->pts,
         [](int64_t pts, const Frame &queued) { return pts < queued->pts; });
     frames.insert(at, std::move(frame));
+    // Commit timeline state only after validation and queue insertion succeed.
+    end_ = std::max(end_, frameEnd);
+    inputs_[source].tailPts = frameEnd;
 }
 void AudioTimelineMixer::push(unsigned source, const AVFrame &frame) {
     if (source > 1 || frame.pts == AV_NOPTS_VALUE || frame.time_base.num <= 0 || frame.time_base.den <= 0 ||
         frame.nb_samples <= 0 || frame.sample_rate <= 0 || !av_channel_layout_check(&frame.ch_layout))
         throw std::invalid_argument("Missing audio capture timestamp/format");
-    auto &input = inputs_[source];
     const int64_t us = av_rescale_q(frame.pts, frame.time_base, {1, 1000000});
+    if (us == AV_NOPTS_VALUE) throw std::invalid_argument("Audio capture timestamp overflow");
+    // Reject the incoming packet BEFORE flushing/reconfiguring swr or touching
+    // nextUs, compensation, tailPts, end_ or the queue. A faulty device clock
+    // must not poison the next valid packet or extend recording on final drain.
+    // Subtract in long double to avoid signed overflow on extreme device PTS.
+    const long double relativeUs = static_cast<long double>(us) - startUs_;
+    if (relativeUs > static_cast<long double>(cursor_) * 1000000 / 48000 + 2000000) {
+        ++stats_.futurePacketsDropped[source];
+        return;
+    }
+    auto &input = inputs_[source];
     bool changed = input.rate != frame.sample_rate || input.format != frame.format ||
                    av_channel_layout_compare(&input.layout, &frame.ch_layout);
     const double errorUs = input.nextUs == AV_NOPTS_VALUE ? 0 : static_cast<double>(us - input.nextUs);
@@ -97,7 +110,7 @@ void AudioTimelineMixer::push(unsigned source, const AVFrame &frame) {
     int n = swr_convert(input.swr, out->extended_data, out->nb_samples,
                         const_cast<const uint8_t **>(frame.extended_data), frame.nb_samples);
     check(n); out->nb_samples = n;
-    ++stats_.frames[source]; append(source, std::move(out));
+    append(source, std::move(out)); ++stats_.frames[source];
     // Advance from the actual continuous output and buffered resampler tail,
     // never from this packet's jittery PTS. swr's compensated ratio is
     // 1/(1-delta/distance); delay is reported at the nominal ratio.

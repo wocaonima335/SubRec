@@ -380,6 +380,8 @@ void FFAFilterThread::runMixed()
                 qInfo() << "[AudioMix] finished system_frames=" << s.frames[0] << "mic_frames=" << s.frames[1]
                         << "system_silence_samples=" << s.silence[0] << "mic_silence_samples=" << s.silence[1]
                         << "trimmed_system=" << s.trimmed[0] << "trimmed_mic=" << s.trimmed[1]
+                        << "future_dropped_system=" << s.futurePacketsDropped[0]
+                        << "future_dropped_mic=" << s.futurePacketsDropped[1]
                         << "limited_samples=" << s.limited;
                 filter->sendFinish();
                 return;
