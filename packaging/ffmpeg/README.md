@@ -7,8 +7,8 @@ verified with `sha256sum -c`). The build is wired into `.github/workflows/window
 have not been run. Third-party build options that come from memory are marked *verify* in the
 scripts. Warnings of the first build: [`BUILD_WARNINGS.md`](BUILD_WARNINGS.md).
 **Changed since that build, not built yet:** the `ddagrab`, `hwdownload`, `hwupload`, `hwmap`
-and `scale_d3d11` filters (screen backend) and the test-only `mov` demuxer; new warnings of the
-next run must be classified in `BUILD_WARNINGS.md`.
+and `scale_d3d11` filters (screen backend), the test-only `mov` demuxer and the test-only `aac`
+decoder; new warnings of the next run must be classified in `BUILD_WARNINGS.md`.
 
 Goal: a **SubRec-specific minimal FFmpeg built from pinned, known sources** (instead of a
 prebuilt FFmpeg with about 70 external libraries that could only be partly identified), so that
@@ -32,6 +32,7 @@ Scanned from the SubRec sources (tests listed separately). Paths are repo-relati
 | Audio encoder | native `aac` | `encoder/ffaencoder.cpp:240` |
 | Video decoder | `h264` (by name) or by `codec_id` of the DirectShow stream: `rawvideo` (screen-capture-recorder, YUY2/NV12 webcams), `mjpeg` (MJPG webcams) | `decoder/ffvdecoder.cpp:283-290`, `:315` |
 | Audio decoder | by `codec_id` of the DirectShow stream: PCM (`pcm_s16le`; `pcm_u8`/`pcm_s32le`/`pcm_f32le` enabled defensively) | `decoder/ffadecoder.cpp:147` |
+| Audio decoder (test only) | native `aac`, looked up by name to decode the encoder's output in the mix round-trip test; the product never decodes AAC. Part of the test components (`SUBREC_FFMPEG_TEST_COMPONENTS=1`) | `tests/audio_timeline_mix/audio_mix_aac_tests.cpp:50` |
 | Input device | `dshow` (all inputs: screen via the screen-capture-recorder filter, camera, microphone, virtual-audio-capturer) | `capture/dshow_capture_backend.cpp:57,64,145,158,194-195`; `demuxer/demuxer.cpp:375-377`; options `:388-407`; default URLs `recorder/ffrecorder_p.h:35-38` |
 | Screen source (filter, no input device) | `ddagrab` (DXGI Desktop Duplication) + `hwdownload`, `format`, `scale` for the CPU path; selected by device id `ddagrab:N` / `SUBREC_CAPTURE_BACKEND` | `capture/ddagrab_screen_source.cpp:94,188-196`, hw frames `:140`, encoder probe `:251` |
 | Filters kept for later (unused) | `hwupload`, `hwmap`, `scale_d3d11` (GPU-side conversion, e.g. NV12 for QSV) | `packaging/ffmpeg/build-ffmpeg.sh` comment at the filter list |
@@ -41,7 +42,7 @@ Scanned from the SubRec sources (tests listed separately). Paths are repo-relati
 | Muxer (dead code) | `rtsp` branch, never reached (no caller passes a format) | `muxer/ffmuxer.cpp:187-189` |
 | Protocol | `file` (`avio_open2`) | `muxer/ffmuxer.cpp:276` |
 | Network | only `avformat_network_init()`; no network protocol used | `demuxer/demuxer.cpp:374`, `recorder/ffrecoder.cpp:227` |
-| Audio filters | `abuffer`, `volume`, `amix`, `abuffersink` (+ `aresample`/`aformat` auto-inserted by `AVFILTER_AUTO_CONVERT_ALL`). **No recording path builds this graph today**: `FFAFilterThread` only calls the pass-through `processSingleAudioFrame()` (`thread/ffafilterthread.cpp:194,233`); the graph is exercised by `tests/audio_filter_dual` | `filter/ffafilter.cpp:344,381,404,424`, auto-convert `:269,329` |
+| Audio filters | `abuffer`, `volume`, `amix`, `abuffersink` (+ `aresample`/`aformat` auto-inserted by `AVFILTER_AUTO_CONVERT_ALL`). Single-source recordings build no graph: `FFAFilterThread` only calls the pass-through `processSingleAudioFrame()` (`thread/ffafilterthread.cpp:194,233`). **Mixed (system + microphone) recordings** build `abuffer` ×2 → `amix` → `abuffersink` in `AudioTimelineMixer`. The older `FFAFilter` dual graph is exercised only by `tests/audio_filter_dual` | `filter/audio_timeline_mixer.cpp:19-33`; `filter/ffafilter.cpp:344,381,404,424`, auto-convert `:269,329` |
 | Audio filter (unused) | `afftdn`: `createNoiseReductionFilter()` is never called | `filter/ffafilter.cpp:411-413` |
 | Video filters | `buffer`, `buffersink` (+ `scale` auto-insert), but `FFVFilter::initFilter` returns before building the graph | `filter/ffvfilter.cpp:121,160,202` |
 | swscale | `sws_getContext` (`SWS_FAST_BILINEAR`, `SWS_BILINEAR`, ITU-601 coefficients), `sws_scale` | `resampler/ffvresampler.cpp:76-78`, `capture/media/media_conversion.cpp:112-141` |
@@ -55,13 +56,19 @@ Tests (optional, `SUBREC_FFMPEG_TEST_COMPONENTS=1`, default on): `lavfi` indev w
 `color` (`tests/input_startup/input_startup_tests.cpp:48-67`), `wav`/`matroska` demuxers
 (`:41,43`), `null`/`nut` muxers and `pcm_s16le`/`rawvideo` encoders
 (`tests/muxer_lifecycle/muxer_lifecycle_tests.cpp:17,27,52,116`), and the `mov` demuxer, which
-only `tools/pc2_verify.ps1` uses (reads a SubRec `.mp4` back with `ffmpeg.exe -c copy -f null`).
+only `tools/pc2_verify.ps1` uses (reads a SubRec `.mp4` back with `ffmpeg.exe -c copy -f null`),
+and the native `aac` **decoder** (`tests/audio_timeline_mix/audio_mix_aac_tests.cpp:50`, decodes the
+`aac` encoder's packets to check the reconstructed peaks). The test components default to **on**
+(`build-ffmpeg.sh:29`), the CI workflow does not override that, so the packages it builds contain
+`wrapped_avframe` and `aac` decoders too. Only `SUBREC_FFMPEG_TEST_COMPONENTS=0` leaves them out;
+`need_cfg` checks the decoders listed in the script's `decoders` array, so it only requires
+`CONFIG_AAC_DECODER` when the test components are on.
 Found on PC2 (first test run): `muxer_lifecycle` reads `copied.nut` back with
 `avformat_open_input` (line 133), so it needs the `nut` **demuxer**; it reads nothing else back
 (the `.mp4` cases only write). The `lavfi` indev labels its video stream with the `wrapped_avframe` codec id, so
 every consumer that opens a decoder for it (reported on PC2 for the lavfi input) needs the
 **decoder** `wrapped_avframe`; lavfi audio from `sine` is s16, already
-covered by `pcm_s16le`. Both are now in the test components.
+covered by `pcm_s16le`. Both are now in the test components (as is `aac`, see above).
 
 Install layout: FFmpeg's `make install` puts the MSVC-style import libraries `<comp>.lib` into
 `bin/`. `build-ffmpeg.sh` moves them to `lib/` (where `cmake/SubRecFFmpeg.cmake`,
@@ -80,9 +87,11 @@ Code notes found while scanning:
   applied). Fixed: the filter is now created with `avfilter_graph_alloc_filter`, the new array
   option `sample_formats` is set to `fltp` **before** `avfilter_init_str` (init appends the list
   terminator, so setting it afterwards would leave an unterminated list), and every return value is
-  checked. **A recording does not exercise this**: no recording path builds an audio filter graph
-  (single source = pass-through). It is covered by the synthetic test `tests/audio_filter_dual`
-  (S16 `abuffer` → restricted sink must deliver FLTP), which runs with the main project's `ctest`.
+  checked. **A single-source recording does not exercise this** (pass-through, no graph); a mixed
+  recording builds its own graph in `AudioTimelineMixer`, which sets the same `sample_formats`
+  option on its sink (`filter/audio_timeline_mixer.cpp:26-27`). The `FFAFilter` path is covered by the
+  synthetic test `tests/audio_filter_dual` (S16 `abuffer` → restricted sink must deliver FLTP),
+  which runs with the main project's `ctest`.
 - The same test found and now covers three more bugs of the (unused) dual graph in
   `FFAFilter::initializeDualAudioFilter`: both `volume` filters were linked to `amix` input pad 0
   (`avfilter_link` returns `EINVAL` for an occupied pad), the `abuffer` → `volume` links were
@@ -102,7 +111,7 @@ configure --prefix=<OUT> --enable-cross-compile --cross-prefix=x86_64-w64-mingw3
   --enable-w32threads --enable-avdevice --enable-avfilter --enable-swscale --enable-swresample
   --enable-d3d11va --enable-dxva2 --enable-ffnvcodec --enable-nvenc --enable-cuda --enable-amf --enable-libvpl
   --enable-encoder=aac,h264_nvenc,h264_amf,h264_qsv,pcm_s16le,rawvideo,libx264
-  --enable-decoder=rawvideo,mjpeg,h264,pcm_u8,pcm_s16le,pcm_s32le,pcm_f32le,wrapped_avframe
+  --enable-decoder=rawvideo,mjpeg,h264,pcm_u8,pcm_s16le,pcm_s32le,pcm_f32le,wrapped_avframe,aac
   --enable-parser=h264,mjpeg --enable-muxer=mp4,null,nut --enable-demuxer=wav,matroska,nut,mov
   --enable-indev=dshow,lavfi --enable-protocol=file
   --enable-filter=volume,amix,aresample,aformat,scale,format,anull,null,ddagrab,hwdownload,hwupload,hwmap,scale_d3d11,sine,color
@@ -111,7 +120,8 @@ configure --prefix=<OUT> --enable-cross-compile --cross-prefix=x86_64-w64-mingw3
 ```
 
 The line above is written by hand from the script and is **not yet the output of a real run**
-since `ddagrab`/`hwdownload`/`hwupload`/`hwmap`/`scale_d3d11` and the `mov` demuxer were added;
+since `ddagrab`/`hwdownload`/`hwupload`/`hwmap`/`scale_d3d11`, the `mov` demuxer and the `aac`
+decoder were added;
 the authoritative line of a build is `share/subrec-ffmpeg/configure-args.txt` /
 `sources/BUILD_CONFIG.txt`.
 

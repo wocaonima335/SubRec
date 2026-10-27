@@ -100,8 +100,13 @@ and `ffmpeg.exe` is not shipped in the SubRec package (see `README.md`, "ffmpeg.
   `sample_fmts` option of `abuffersink` with a string. In n8.0.3 that option is a binary (hex)
   option, so the call failed with `EINVAL` (ignored) and the restriction never applied. Now fixed
   with `sample_formats` set before `avfilter_init_str` (see `README.md`, "Code notes"). A
-  recording does **not** check this (no recording path builds an audio filter graph); the
-  synthetic ctest `tests/audio_filter_dual` does.
+  single-source recording does **not** check this (no graph is built); the synthetic ctest
+  `tests/audio_filter_dual` does, and mixed recordings set the same option in `AudioTimelineMixer`.
+- The classified build predates the test-only `aac` decoder (added with `audio_mix_aac`, commit
+  `d375900`), as well as `wrapped_avframe`, the `mov` demuxer, `ddagrab` and its helper filters.
+  Their warnings, if any, are **not** covered by the table above: the rebuilt log must be
+  classified under "Policy for future builds". The #6 and #7 verdicts are unchanged by `aac`: it is
+  neither an HEVC decoder nor a caller of `ff_vlc_init_multi_from_lengths()`.
 
 ## Policy for future builds
 Any new line containing `warning` that is not in the table above should be classified here
