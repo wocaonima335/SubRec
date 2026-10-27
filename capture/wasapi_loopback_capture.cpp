@@ -9,6 +9,7 @@
 #include "wasapi_native.h"
 #include "wasapi_mmcss_scope.h"
 #include "wasapi_reconnect.h"
+#include "wasapi_drain.h"
 #include <avrt.h>
 #include "wasapi_audio_pipeline.h"
 #include "wasapi_silence_policy.h"
@@ -194,18 +195,19 @@ struct LoopbackCapture::Impl {
                     statistics.generatedSilenceFrames += pipeline.samples() - before;
                 }
             };
-            while (!abort && !stop) {
-                try {
-                    if (notification->changed.exchange(false)) throw Error{AUDCLNT_E_DEVICE_INVALIDATED, "Default device changed"};
-                    UINT32 size = 0;
-                    bool receivedPacket = false;
-                    check(stream->capture->GetNextPacketSize(&size), "GetNextPacketSize");
-                    while (size && !abort && !stop) {
+            auto drain = [&](bool finalDrain) {
+                return drainPackets(
+                    [&] { return abort || (!finalDrain && (stop || notification->changed.load())); },
+                    [&] {
+                        UINT32 size = 0;
+                        check(stream->capture->GetNextPacketSize(&size), "GetNextPacketSize");
+                        return size;
+                    },
+                    [&] {
                         BYTE *data = nullptr; UINT32 count = 0; DWORD flags = 0; UINT64 position = 0, qpc = 0;
                         HRESULT hr = stream->capture->GetBuffer(&data, &count, &flags, &position, &qpc);
-                        if (hr == AUDCLNT_S_BUFFER_EMPTY) { size = 0; break; }
+                        if (hr == AUDCLNT_S_BUFFER_EMPTY) return false;
                         check(hr, "GetBuffer");
-                        receivedPacket = true;
                         {
                             Packet packet{stream->capture.p, count};
                             if (count) {
@@ -254,9 +256,33 @@ struct LoopbackCapture::Impl {
                                 statistics.sinkBlockedMs += (av_gettime_relative() - before) / 1000;
                             }
                         }
-                        check(stream->capture->GetNextPacketSize(&size), "GetNextPacketSize");
+                        return true;
+                    });
+            };
+            auto retireStream = [&] {
+                return stopAndDrain<Error>(
+                    [&] {
+                        const HRESULT hr = stream->client->Stop();
+                        stream->started = false;
+                        check(hr, "Stop before drain");
+                    },
+                    [&] { return drain(true); },
+                    [&] { return bool(abort); },
+                    [](const Error &error) {
+                        return error.code == AUDCLNT_E_DEVICE_INVALIDATED || error.code == AUDCLNT_E_SERVICE_NOT_RUNNING;
+                    },
+                    [&](const Error &error) {
+                        qWarning() << "[WASAPI] old device unavailable while draining:" << error.operation << error.code;
+                    });
+            };
+            while (!abort && !stop) {
+                try {
+                    if (notification->changed.exchange(false)) {
+                        retireStream(); // Read/release old packets before resetting the stream.
+                        throw Error{AUDCLNT_E_DEVICE_INVALIDATED, "Default device changed"};
                     }
-                    fill(receivedPacket, size == 0);
+                    const auto drained = drain(false);
+                    fill(drained.receivedPacket, drained.empty);
                 } catch (const Error &error) {
                     if (error.code != AUDCLNT_E_DEVICE_INVALIDATED && error.code != AUDCLNT_E_SERVICE_NOT_RUNNING) throw;
                     stream.reset();
@@ -287,10 +313,23 @@ struct LoopbackCapture::Impl {
                 { std::lock_guard<std::mutex> lock(mutex); statistics.outputFrames = pipeline.samples(); }
                 WaitForSingleObject(event.handle, 5);
             }
-            if (stream && stream->started) { stream->client->Stop(); stream->started = false; }
             state = LoopbackState::Stopping;
-            pipeline.stop(abort);
-            { std::lock_guard<std::mutex> lock(mutex); statistics.outputFrames = pipeline.samples(); }
+            int64_t tailTarget = 0;
+            if (stream && stream->started) {
+                // Qualify silence using only time elapsed while capture was running.
+                // Do not wait on a stopped device to manufacture an idle interval.
+                const int64_t stoppedAtUs = av_gettime_relative();
+                const auto drained = retireStream();
+                if (!abort && config.fillIdleWithSilence && startQpc)
+                    tailTarget = silence.target(stoppedAtUs, pipeline.samples(), 0,
+                                                drained.receivedPacket, drained.empty);
+            }
+            const auto tailSilence = pipeline.stop(abort, tailTarget, startUs);
+            {
+                std::lock_guard<std::mutex> lock(mutex);
+                statistics.generatedSilenceFrames += tailSilence;
+                statistics.outputFrames = pipeline.samples();
+            }
             qInfo() << "[WASAPI] finished samples" << pipeline.samples()
                     << "generated silence" << statistics.generatedSilenceFrames << "abort" << bool(abort);
             state = LoopbackState::Finished;

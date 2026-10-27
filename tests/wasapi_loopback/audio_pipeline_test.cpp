@@ -1,5 +1,7 @@
 #include "capture/wasapi_audio_pipeline.h"
 #include "capture/wasapi_silence_policy.h"
+#include "capture/wasapi_drain.h"
+#include <vector>
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
@@ -11,7 +13,9 @@ struct Sink : wasapi::AudioFrameSink {
     bool reject = false;
     bool allSilent = true;
     int64_t lastCaptureUs = AV_NOPTS_VALUE;
+    std::vector<float> left;
     bool push(AVFrame *frame) override {
+        require(finished == 0); // Nothing may be delivered after terminal EOF.
         if (reject) return false;
         require(frame->format == AV_SAMPLE_FMT_FLTP && frame->sample_rate == 48000);
         require(frame->ch_layout.nb_channels == 2 && frame->pts == samples);
@@ -24,6 +28,8 @@ struct Sink : wasapi::AudioFrameSink {
         }
         if (const auto *entry = av_dict_get(frame->metadata, "capture_time_us", nullptr, 0))
             lastCaptureUs = std::stoll(entry->value);
+        const auto *values = reinterpret_cast<const float *>(frame->extended_data[0]);
+        left.insert(left.end(), values, values + frame->nb_samples);
         samples += frame->nb_samples;
         av_frame_unref(frame);
         return true;
@@ -74,8 +80,50 @@ void guardedSilence() {
     pipeline.stop(false);
     require(sink.samples <= end && end - sink.samples <= 1 && sink.allSilent && sink.finished == 1);
 }
+void terminalDrainAndPadding() {
+    // The same final drain helper feeds actual 44.1k PCM into swresample.
+    // Padding is allowed only if the empty interval qualified before Stop.
+    for (int idleMs : {60, 100}) {
+        Sink sink; wasapi::AudioPipeline pipeline(sink);
+        AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+        pipeline.configure(media::AudioFormat(44100, AV_SAMPLE_FMT_FLT, stereo, {1,44100}));
+        wasapi::SilencePolicy policy;
+        int packets = 0;
+        auto drained = wasapi::drainPackets([] { return false; }, [&] { return packets < 3; }, [&] {
+            auto frame = media::makeFrame();
+            frame->format = AV_SAMPLE_FMT_FLT; frame->sample_rate = 44100;
+            frame->ch_layout = stereo; frame->nb_samples = 441;
+            require(av_frame_get_buffer(frame.get(), 0) >= 0);
+            auto *data = reinterpret_cast<float *>(frame->data[0]);
+            for (int i = 0; i < 441*2; ++i) data[i] = .25f;
+            ++packets;
+            policy.packet(wasapi::kOutputSampleRate / 10 + packets * wasapi::kOutputFrameSamples);
+            return pipeline.packet(*frame, 123456100000 + (packets-1)*10000);
+        });
+        require(drained.empty && drained.receivedPacket && packets == 3);
+        require(sink.samples < 3 * wasapi::kOutputFrameSamples && pipeline.pendingSamples() > 0);
+        // Simulate final observation before client Stop, not an artificially
+        // prolonged wait after it. A 60 ms gap still cannot authorize padding.
+        for (int ms = 0; ms < idleMs; ms += 5)
+            require(policy.target(ms*1000, pipeline.samples(), pipeline.pendingSamples(), false, true) == pipeline.samples());
+        const auto target = policy.target(idleMs*1000, pipeline.samples(), 0, false, true);
+        const auto generated = pipeline.stop(false, target, 123456000000);
+        const auto realSamples = 3 * wasapi::kOutputFrameSamples;
+        require(sink.finished == 1);
+        require(sink.samples == realSamples + (idleMs == 100 ? wasapi::kOutputSampleRate / 10 : 0));
+        require(generated == (idleMs == 100 ? wasapi::kOutputSampleRate / 10 : 0));
+        for (int i = 0; i < realSamples; ++i) require(std::abs(sink.left[i] - .25f) < .001f);
+        for (int64_t i = realSamples; i < sink.samples; ++i) require(sink.left[i] == 0);
+        // Repeated finalization cannot append audio or emit a second EOF.
+        require(pipeline.stop(false, target + 1000, 123456000000) == 0 && sink.finished == 1);
+    }
+    Sink aborted; wasapi::AudioPipeline pipeline(aborted);
+    require(pipeline.stop(true, wasapi::kOutputSampleRate, 123456000000) == 0);
+    require(aborted.samples == 0 && aborted.finished == 0);
+}
 int main() {
     try {
+        terminalDrainAndPadding();
         guardedSilence();
         conversion(48000, false); conversion(44100, false); conversion(48000, true);
         Sink sink; wasapi::AudioPipeline pipeline(sink);

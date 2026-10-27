@@ -38,10 +38,20 @@ public:
         }
         return !aborted_;
     }
-    void stop(bool abort) {
-        if (abort) { aborted_ = true; return; }
+    // Terminal flush precedes any policy-approved tail padding and EOF. Return
+    // generated silence only (exclude real samples released by the resampler).
+    int64_t stop(bool abort, int64_t silenceTarget = 0, int64_t sessionStartUs = AV_NOPTS_VALUE) {
+        if (abort) { aborted_ = true; return 0; }
+        if (finished_ || aborted_) return 0;
         drainConverter();
+        const auto before = samples_;
+        if (!aborted_ && silenceTarget > samples_) {
+            captureUs_ = sessionStartUs == AV_NOPTS_VALUE ? AV_NOPTS_VALUE :
+                sessionStartUs + av_rescale_q(samples_, {1,kOutputSampleRate}, {1,1000000});
+            silenceUntil(silenceTarget);
+        }
         if (!aborted_ && !finished_) { finished_ = true; sink_.finish(); }
+        return samples_ - before;
     }
 private:
     bool deliver(media::FramePtr frame) {
