@@ -38,3 +38,22 @@ if(SUBREC_POWERSHELL)
         -PrimingTest "$<TARGET_FILE:aac_priming_tests>")
     set_tests_properties(mp4_edit_list_parser PROPERTIES TIMEOUT 60)
 endif()
+
+# Run the actual AAC encoder, bounded packet queues and mux worker; only the
+# unused recorder/UI hooks are replaced in this standalone Core-only target.
+add_executable(aac_pipeline_priming_tests aac_pipeline_priming_tests.cpp
+    ../../encoder/ffaencoder.cpp ../../queue/ffapacketqueue.cpp
+    ../../queue/ffvpacketqueue.cpp ../../thread/ffthread.cpp
+    ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp)
+target_compile_features(aac_pipeline_priming_tests PRIVATE cxx_std_17)
+target_include_directories(aac_pipeline_priming_tests PRIVATE
+    ui_stubs ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(aac_pipeline_priming_tests PRIVATE Qt6::Core)
+foreach(component IN ITEMS avformat avcodec avutil)
+    target_link_libraries(aac_pipeline_priming_tests PRIVATE "${FFMPEG_ROOT}/lib/${component}.lib")
+endforeach()
+if(MINGW)
+    target_compile_options(aac_pipeline_priming_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME aac_pipeline_priming COMMAND aac_pipeline_priming_tests)
+set_tests_properties(aac_pipeline_priming PROPERTIES TIMEOUT 30)

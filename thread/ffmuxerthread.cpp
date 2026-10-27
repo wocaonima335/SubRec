@@ -11,14 +11,11 @@
 #include <QtCore/QtGlobal>
 #include <QDebug>
 
-#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <chrono>
 #include <deque>
 #include <thread>
-
-#define CAPTURE_TIME 60
 
 namespace {
 constexpr AVRational kUsecTimeBase{1, AV_TIME_BASE};
@@ -43,42 +40,6 @@ int64_t packetAnchorUs(const AVPacket *packet, AVRational timeBase)
         return AV_NOPTS_VALUE;
     }
     return av_rescale_q(ts, timeBase, kUsecTimeBase);
-}
-
-int64_t rebaseTimestamp(int64_t ts, AVRational timeBase, int64_t baseUs)
-{
-    if (ts == AV_NOPTS_VALUE || baseUs == AV_NOPTS_VALUE) {
-        return ts;
-    }
-
-    int64_t tsUs = av_rescale_q(ts, timeBase, kUsecTimeBase) - baseUs;
-    if (tsUs < 0) {
-        tsUs = 0;
-    }
-
-    return av_rescale_q_rnd(
-        tsUs, kUsecTimeBase, timeBase,
-        static_cast<AVRounding>(AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX));
-}
-
-void normalizePacketTimeline(AVPacket *packet, AVRational timeBase, int64_t baseUs)
-{
-    if (!packet || baseUs == AV_NOPTS_VALUE) {
-        return;
-    }
-
-    packet->pts = rebaseTimestamp(packet->pts, timeBase, baseUs);
-    packet->dts = rebaseTimestamp(packet->dts, timeBase, baseUs);
-
-    if (packet->pts == AV_NOPTS_VALUE && packet->dts != AV_NOPTS_VALUE) {
-        packet->pts = packet->dts;
-    } else if (packet->dts == AV_NOPTS_VALUE && packet->pts != AV_NOPTS_VALUE) {
-        packet->dts = packet->pts;
-    }
-
-    if (packet->pts != AV_NOPTS_VALUE && packet->dts != AV_NOPTS_VALUE && packet->dts > packet->pts) {
-        packet->dts = packet->pts;
-    }
 }
 }
 
@@ -177,12 +138,11 @@ void FFMuxerThread::run()
     if (m_stop.load()) { requestAbort(); return; }
     const int headerResult = muxer->writeHeader();
     if (headerResult < 0) { fail(headerResult); return; }
-    AVRational aTB{}, vTB{}, vFPS{};
+    AVRational aTB{}, vTB{};
     int timingResult = muxer->getStreamTiming(AVMEDIA_TYPE_AUDIO, &aTB);
     if (timingResult >= 0)
-        timingResult = muxer->getStreamTiming(AVMEDIA_TYPE_VIDEO, &vTB, &vFPS);
+        timingResult = muxer->getStreamTiming(AVMEDIA_TYPE_VIDEO, &vTB);
     if (timingResult < 0) { fail(timingResult); return; }
-    if (vFPS.num <= 0 || vFPS.den <= 0) vFPS = AVRational{30, 1};
     auto queueFailure = [this](const MediaQueueReadResult<FFPacket> &result) {
         if (result.result == MediaQueueResult::Error)
             fail(result.errorCode < 0 ? result.errorCode : AVERROR(EIO));
@@ -206,11 +166,6 @@ void FFMuxerThread::run()
             return;
         }
         bootstrapAudioPackets.push_back(pkt);
-        while (bootstrapAudioPackets.size() > kBootstrapAudioPacketLimit) {
-            FFPacket *dropPkt = bootstrapAudioPackets.front();
-            bootstrapAudioPackets.pop_front();
-            FFPacketTraits::release(dropPkt);
-        }
     };
     auto nextAudioPacket = [this, &bootstrapAudioPackets]() -> MediaQueueReadResult<FFPacket> {
         if (!bootstrapAudioPackets.empty()) {
@@ -230,7 +185,10 @@ void FFMuxerThread::run()
     FFPacket *videoPkt = nullptr;
 
     while (!m_stop && !videoPkt && !videoFinished) {
-        if (!audioFinished) {
+        // Preserve the first AAC packet (including priming). Once this bounded
+        // staging area fills, leave packets in the bounded producer queue and
+        // apply backpressure until video arrives; never discard startup audio.
+        if (!audioFinished && bootstrapAudioPackets.size() < kBootstrapAudioPacketLimit) {
             const auto audioBootstrap = aPktQueue->tryReceive();
             if (audioBootstrap.ok()) {
                 pushBootstrapAudio(audioBootstrap.item);
@@ -302,42 +260,6 @@ void FFMuxerThread::run()
         return;
     }
 
-    bool audioNormalized = false;
-    bool videoNormalized = false;
-
-    int64_t vFrameDur = av_rescale_q(1, av_inv_q(vFPS), vTB);
-
-    if (audioPkt && videoPkt) {
-        AVPacket *aPacket = &audioPkt->packet;
-        AVPacket *vPacket = &videoPkt->packet;
-        int64_t vPts0 = vPacket->pts;
-        while (!m_stop && aPacket &&
-               av_compare_ts(aPacket->pts, aTB, vPts0 - vFrameDur, vTB) < 0)
-        {
-            FFPacketTraits::release(audioPkt);
-            auto nextAudio = nextAudioPacket();
-            if (nextAudio.result == MediaQueueResult::Eof) {
-                audioFinished = true;
-                audioPkt = nullptr;
-                break;
-            }
-            if (!nextAudio.ok()) {
-                queueFailure(nextAudio);
-                audioPkt = nullptr;
-                break;
-            }
-            audioPkt = nextAudio.item;
-            aPacket = &audioPkt->packet;
-        }
-    }
-
-    if (!audioPkt && !videoPkt)
-    {
-        clearBootstrapAudio();
-        finish();
-        return;
-    }
-
     auto ptsToSec = [](int64_t pts, AVRational tb) -> double
     {
         if (pts == AV_NOPTS_VALUE)
@@ -350,17 +272,11 @@ void FFMuxerThread::run()
 
     const int64_t firstAudioUs = audioPkt ? packetAnchorUs(&audioPkt->packet, aTB) : AV_NOPTS_VALUE;
     const int64_t firstVideoUs = videoPkt ? packetAnchorUs(&videoPkt->packet, vTB) : AV_NOPTS_VALUE;
-    int64_t baseUs = AV_NOPTS_VALUE;
-    if (firstAudioUs != AV_NOPTS_VALUE && firstVideoUs != AV_NOPTS_VALUE) {
-        baseUs = std::min(firstAudioUs, firstVideoUs);
-    } else if (firstAudioUs != AV_NOPTS_VALUE) {
-        baseUs = firstAudioUs;
-    } else if (firstVideoUs != AV_NOPTS_VALUE) {
-        baseUs = firstVideoUs;
-    }
-
-    qDebug() << "[MuxThread] normalize base(us)=" << baseUs
-             << " firstAudio(us)=" << firstAudioUs
+    // RecorderSyncQueue (or the encoder-thread fallback) already establishes
+    // the session origin. Negative AAC DTS/PTS is encoder priming, and negative
+    // video DTS can be reorder delay, not a new origin. Preserve both, including
+    // positive video start offsets; movenc expresses them using edit lists.
+    qDebug() << "[MuxThread] preserve session timeline: firstAudio(us)=" << firstAudioUs
              << " firstVideo(us)=" << firstVideoUs;
 
     while (!m_stop)
@@ -372,18 +288,11 @@ void FFMuxerThread::run()
             break;
         }
 
-        if (!audioNormalized) {
-            normalizePacketTimeline(aPacket, aTB, baseUs);
-            audioNormalized = true;
-        }
-        if (!videoNormalized) {
-            normalizePacketTimeline(vPacket, vTB, baseUs);
-            videoNormalized = true;
-        }
-
         const double aSec = aPacket ? ptsToSec(aPacket->pts, aTB) : NAN;
         const double vSec = vPacket ? ptsToSec(vPacket->pts, vTB) : NAN;
 
+        const auto aOrder = packetAnchorTs(aPacket);
+        const auto vOrder = packetAnchorTs(vPacket);
         bool chooseAudio = false;
         if (!videoPkt)
         {
@@ -393,21 +302,21 @@ void FFMuxerThread::run()
         {
             chooseAudio = false;
         }
-        else if (aPacket->pts == AV_NOPTS_VALUE && vPacket->pts == AV_NOPTS_VALUE)
+        else if (aOrder == AV_NOPTS_VALUE && vOrder == AV_NOPTS_VALUE)
         {
             chooseAudio = true;
         }
-        else if (aPacket->pts == AV_NOPTS_VALUE)
+        else if (aOrder == AV_NOPTS_VALUE)
         {
             chooseAudio = false;
         }
-        else if (vPacket->pts == AV_NOPTS_VALUE)
+        else if (vOrder == AV_NOPTS_VALUE)
         {
             chooseAudio = true;
         }
         else
         {
-            chooseAudio = av_compare_ts(aPacket->pts, aTB, vPacket->pts, vTB) <= 0;
+            chooseAudio = av_compare_ts(aOrder, aTB, vOrder, vTB) <= 0;
         }
 
         int ret;
@@ -429,7 +338,6 @@ void FFMuxerThread::run()
             } else {
                 audioPkt = nextAudio.item;
             }
-            audioNormalized = false;
         }
         else
         {
@@ -448,7 +356,6 @@ void FFMuxerThread::run()
             } else {
                 videoPkt = nextVideo.item;
             }
-            videoNormalized = false;
         }
 
         if (processedSec - lastProcessTime >= 0.01)
