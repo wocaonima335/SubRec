@@ -1,6 +1,7 @@
 #include "ffclosesourceevent.h"
 
 #include "thread/ffscreengrabthread.h"
+#include "thread/ffmuxerthread.h"
 
 FFCloseSourceEvent::FFCloseSourceEvent(FFRecorder *recordCtx, demuxerType sourceType_)
     : FFEvent(recordCtx)
@@ -9,8 +10,21 @@ FFCloseSourceEvent::FFCloseSourceEvent(FFRecorder *recordCtx, demuxerType source
     sourceType = sourceType_;
 }
 
+bool FFCloseSourceEvent::waitForWorker(FFThread *worker,
+                                     const std::function<void()> &cancel, const char *name)
+{
+    const bool joined = capture_stop::drain(*worker, cancel, [name](const char *message) {
+        qWarning() << "[FFCloseSourceEvent]" << name << message;
+    }, stopTimeout);
+    completed_ = completed_ && joined;
+    return joined;
+}
+
 void FFCloseSourceEvent::work()
 {
+    // Arm before waiting on any upstream stage: a missing opposite stream must
+    // not leave encoder producers blocked behind the muxer during shutdown.
+    if (muxerThread) muxerThread->requestDrainStop(stopTimeout);
     close();
 }
 
@@ -32,9 +46,11 @@ void FFCloseSourceEvent::close()
 void FFCloseSourceEvent::closeAudioSourceChain()
 {
     stopAudioInputPath();
+    if (!completed_) return;
     if (sourceType == AUDIO && aFilterThread && aFilterThread->isMixing()) {
         FFCloseSourceEvent microphone(recoderContext, MICROPHONE);
         microphone.stopAudioInputPath();
+        if (!microphone.completed()) { completed_ = false; return; }
     }
     drainAudioEncoderPath();
 }
@@ -42,6 +58,7 @@ void FFCloseSourceEvent::closeAudioSourceChain()
 void FFCloseSourceEvent::closeVideoSourceChain()
 {
     stopVideoInputPath();
+    if (!completed_) return;
     drainVideoEncoderPath();
 }
 
@@ -49,7 +66,11 @@ void FFCloseSourceEvent::drainAudioEncoderPath()
 {
     if (aFilterThread) {
         qDebug() << "[FFCloseSourceEvent] audio filter wait";
-        aFilterThread->wait();
+        if (!waitForWorker(aFilterThread, [&] {
+            aFilterThread->stop();
+            if (aFilterEncoderFrmQueue) aFilterEncoderFrmQueue->sendFinish();
+            aFilterThread->wakeAllThread();
+        }, "audio filter")) return;
         aFilterThread->stopEncoder();
         aFilterThread->closeAudioSource(sourceType);
         aFilterThread->stop();
@@ -64,7 +85,11 @@ void FFCloseSourceEvent::drainAudioEncoderPath()
     if (aEncoderThread) {
         qDebug() << "[FFCloseSourceEvent] audio encoder drain";
         aEncoderThread->requestDrainStop();
-        aEncoderThread->wait();
+        if (!waitForWorker(aEncoderThread, [&] {
+            aEncoderThread->stop();
+            if (aFilterEncoderFrmQueue) aFilterEncoderFrmQueue->close();
+            if (aEncoderPktQueue) aEncoderPktQueue->sendFinish();
+        }, "audio encoder")) return;
         qDebug() << "[FFCloseSourceEvent] audio encoder close";
         aEncoderThread->close();
     }
@@ -80,7 +105,11 @@ void FFCloseSourceEvent::drainVideoEncoderPath()
 {
     if (vFilterThread) {
         qDebug() << "[FFCloseSourceEvent] video filter wait";
-        vFilterThread->wait();
+        if (!waitForWorker(vFilterThread, [&] {
+            vFilterThread->stop();
+            if (vFilterEncoderFrmQueue) vFilterEncoderFrmQueue->sendFinish();
+            vFilterThread->wakeAllThread();
+        }, "video filter")) return;
         vFilterThread->stopEncoder();
         vFilterThread->closeVideoSource(sourceType);
         vFilterThread->stop();
@@ -95,7 +124,11 @@ void FFCloseSourceEvent::drainVideoEncoderPath()
     if (vEncoderThread) {
         qDebug() << "[FFCloseSourceEvent] video encoder drain";
         vEncoderThread->requestDrainStop();
-        vEncoderThread->wait();
+        if (!waitForWorker(vEncoderThread, [&] {
+            vEncoderThread->stop();
+            if (vFilterEncoderFrmQueue) vFilterEncoderFrmQueue->close();
+            if (vEncoderPktQueue) vEncoderPktQueue->sendFinish();
+        }, "video encoder")) return;
         qDebug() << "[FFCloseSourceEvent] video encoder close";
         vEncoderThread->close();
     }
@@ -126,7 +159,9 @@ void FFCloseSourceEvent::stopAudioInputPath()
         qDebug() << "[FFCloseSourceEvent] audio demuxer drain";
         aDemuxerThread[index]->requestDrainStop();
         qDebug() << "[FFCloseSourceEvent] audio demuxer wait";
-        aDemuxerThread[index]->wait();
+        if (!waitForWorker(aDemuxerThread[index], [&] {
+            aDemuxerThread[index]->requestAbort();
+        }, "audio demuxer")) return;
         qDebug() << "[FFCloseSourceEvent] audio demuxer close";
         aDemuxerThread[index]->close();
     }
@@ -136,7 +171,10 @@ void FFCloseSourceEvent::stopAudioInputPath()
         qDebug() << "[FFCloseSourceEvent] audio decoder drain";
         aDecoderThread[index]->requestDrainStop();
         qDebug() << "[FFCloseSourceEvent] audio decoder wait";
-        aDecoderThread[index]->wait();
+        if (!waitForWorker(aDecoderThread[index], [&] {
+            if (aFrmQueue[index]) aFrmQueue[index]->close();
+            aDecoderThread[index]->requestAbort();
+        }, "audio decoder")) return;
         qDebug() << "[FFCloseSourceEvent] audio decoder close";
         aDecoderThread[index]->close();
     }
@@ -150,7 +188,9 @@ void FFCloseSourceEvent::stopVideoInputPath()
     if (sourceType == SCREEN && screenGrabThread && screenGrabThread->isActive()) {
         qDebug() << "[FFCloseSourceEvent] screen grab drain";
         screenGrabThread->requestDrainStop();
-        screenGrabThread->wait();
+        if (!waitForWorker(screenGrabThread, [&] {
+            screenGrabThread->requestAbort();
+        }, "screen grab")) return;
         screenGrabThread->close();
         qDebug() << "[FFCloseSourceEvent] screen grab thread closed";
     }
@@ -159,7 +199,9 @@ void FFCloseSourceEvent::stopVideoInputPath()
         qDebug() << "[FFCloseSourceEvent] video demuxer drain";
         vDemuxerThread[index]->requestDrainStop();
         qDebug() << "[FFCloseSourceEvent] video demuxer wait";
-        vDemuxerThread[index]->wait();
+        if (!waitForWorker(vDemuxerThread[index], [&] {
+            vDemuxerThread[index]->requestAbort();
+        }, "video demuxer")) return;
         qDebug() << "[FFCloseSourceEvent] video demuxer close";
         vDemuxerThread[index]->close();
     }
@@ -169,7 +211,10 @@ void FFCloseSourceEvent::stopVideoInputPath()
         qDebug() << "[FFCloseSourceEvent] video decoder drain";
         vDecoderThread[index]->requestDrainStop();
         qDebug() << "[FFCloseSourceEvent] video decoder wait";
-        vDecoderThread[index]->wait();
+        if (!waitForWorker(vDecoderThread[index], [&] {
+            if (vFrmQueue[index]) vFrmQueue[index]->close();
+            vDecoderThread[index]->requestAbort();
+        }, "video decoder")) return;
         qDebug() << "[FFCloseSourceEvent] video decoder close";
         vDecoderThread[index]->close();
     }

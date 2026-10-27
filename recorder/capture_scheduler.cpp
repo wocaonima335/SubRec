@@ -111,7 +111,12 @@ bool CaptureScheduler::start()
     }
     // A failed previous opener may still be returning after posting its result.
     // Never join it while holding the state mutex, and never reuse its session.
-    if (previous) previous->release();
+    if (previous && !previous->release()) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_session = std::move(previous);
+        failLocked(QStringLiteral("Previous capture worker is still stopping; retry Stop before recording again."));
+        return false;
+    }
 
     CaptureConfig config;
     const CaptureStartResult configResult =
@@ -170,7 +175,12 @@ void CaptureScheduler::stop()
     // Unique ownership remains here until opener + cleanup have completed.
     // stop is intentionally synchronous for aboutToQuit; requestStop is not.
     stopping->requestStop();
-    stopping->release();
+    if (!stopping->release()) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_session = std::move(stopping); // Keep all borrowed contexts owned; no detach/UAF.
+        failLocked(QStringLiteral("Capture worker did not stop before the deadline; resources retained. Retry Stop."));
+        return;
+    }
     stopping.reset();
     {
         std::lock_guard<std::mutex> lock(m_mutex);

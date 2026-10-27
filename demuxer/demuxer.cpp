@@ -141,7 +141,7 @@ int Demuxer::demux()
             return 1;
         } else if (ret == AVERROR(EAGAIN)) {
             av_packet_free(&packet);
-            return 0;
+            return ret;
         } else {
             if (stopFlag.load(std::memory_order_acquire)
                 && drainRequested.load(std::memory_order_acquire)) {
@@ -490,6 +490,10 @@ void Demuxer::initDemuxer(const std::function<bool()> &shouldOpen)
                      << "r=" << stream->r_frame_rate.num << "/" << stream->r_frame_rate.den;
         }
     }
+    // dshow_read_packet in n8.0.3 otherwise waits INFINITE on an empty device
+    // and does not consult AVIOInterruptCB. Poll after probing so Stop remains
+    // cooperative even when a microphone never delivers another packet.
+    if (format == "dshow") fmtCtx->flags |= AVFMT_FLAG_NONBLOCK;
     const bool wantsAudio = type == AUDIO || type == MICROPHONE;
     if ((wantsAudio && !aStream) || (!wantsAudio && !vStream)) {
         failOpen(CaptureErrorStage::StreamInfo, AVERROR_STREAM_NOT_FOUND);

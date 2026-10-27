@@ -3,6 +3,9 @@
 
 #include <atomic>
 #include <thread>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 
 class FFThread
 {
@@ -13,6 +16,7 @@ public:
     virtual ~FFThread();
     void stop();
     void wait();
+    bool waitFor(std::chrono::milliseconds timeout);
     void start();
 
 protected:
@@ -20,6 +24,9 @@ protected:
 
 private:
     std::thread m_thread;
+    std::mutex completionMutex;
+    std::condition_variable completion;
+    bool finished = true;
 };
 
 #endif // FFTHREAD_H

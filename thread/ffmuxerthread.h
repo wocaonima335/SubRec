@@ -2,6 +2,7 @@
 #define FFMUXERTHREAD_H
 
 #include "ffthread.h"
+#include "stop_deadline.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -31,6 +32,9 @@ public:
     void close();
     void wakeAllThread();
     void requestAbort(); // No join; cancel header and packet-queue waits.
+    void requestDrainStop(std::chrono::milliseconds timeout = capture_stop::timeout());
+    void finishQueuedPackets(); // Seal producers, keep queued packets and write trailer.
+    bool drainTimedOut() const { return drainExpired.load(); }
     int lastError() const { return errorCode.load(); }
 
 protected:
@@ -39,6 +43,8 @@ protected:
 private:
     void sendCaptureProcessEvent(double seconds);
     void fail(int error);
+    void checkDrainDeadline();
+    template<class Queue> auto receivePacket(Queue *queue);
 
 private:
     FFAPacketQueue *aPktQueue = nullptr;
@@ -47,6 +53,8 @@ private:
     FFMuxer *muxer = nullptr;
 
     std::atomic<int> errorCode{0};
+    std::atomic<int64_t> drainDeadlineMs{0};
+    std::atomic<bool> drainExpired{false};
 
     double lastProcessTime = 0;
 

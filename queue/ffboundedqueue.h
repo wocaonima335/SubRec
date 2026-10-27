@@ -27,9 +27,10 @@ struct FFPacketTraits
 {
     static FFPacket *allocateFromSrc(FFPacket *src) { return src; }
 
-    static void releaseSrc(FFPacket * /*src*/)
+    static void releaseSrc(FFPacket *src)
     {
-        // no-op
+        // enqueue owns this moved packet even when EOF/close rejects it.
+        release(src);
     }
 
     static FFPacket *allocateNull()

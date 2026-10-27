@@ -57,3 +57,12 @@ if(MINGW)
 endif()
 add_test(NAME aac_pipeline_priming COMMAND aac_pipeline_priming_tests)
 set_tests_properties(aac_pipeline_priming PROPERTIES TIMEOUT 30)
+
+add_executable(stop_deadline_tests stop_deadline_tests.cpp
+    ../../thread/ffthread.cpp ../../queue/ffapacketqueue.cpp)
+target_compile_features(stop_deadline_tests PRIVATE cxx_std_17)
+target_include_directories(stop_deadline_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(stop_deadline_tests PRIVATE Qt6::Core
+    "${FFMPEG_ROOT}/lib/avcodec.lib" "${FFMPEG_ROOT}/lib/avutil.lib")
+add_test(NAME stop_deadline COMMAND stop_deadline_tests)
+set_tests_properties(stop_deadline PROPERTIES TIMEOUT 10)

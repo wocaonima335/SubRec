@@ -7,9 +7,9 @@
 
 namespace {
 void runPipeline(const std::filesystem::path &root, int videoStart, int reorder,
-                 bool delayedVideo) {
+                 bool delayedVideo, int stalled = 0) {
     const auto path = (root / ("pipeline-video-" + std::to_string(videoStart) +
-        "-reorder-" + std::to_string(reorder) + (delayedVideo ? "-delayed" : "") + ".mp4")).string();
+        "-reorder-" + std::to_string(reorder) + (delayedVideo ? "-delayed" : "") + "-stall-" + std::to_string(stalled) + ".mp4")).string();
     FFAPacketQueue audio;
     FFVPacketQueue video;
     audio.start(); video.start();
@@ -49,11 +49,15 @@ void runPipeline(const std::filesystem::path &root, int videoStart, int reorder,
     CHECK(audio.peekQueue()->packet.pts == -1024 && audio.peekQueue()->packet.dts == -1024);
     FFMuxerThread worker; worker.init(&audio, &video, &mux, &encoder, nullptr, nullptr);
     worker.start();
+    const int audioFrames = stalled ? 16 : 96;
     std::exception_ptr producerError;
     std::thread producer([&] {
         try {
-            for (int n = 2; n < 96; ++n) encodeFrame(n);
-            encoder.finish(ai);
+            for (int n = 2; n < audioFrames; ++n) encodeFrame(n);
+            if (stalled == 1 || stalled == 3 || stalled == 4) {
+                CHECK(encoder.encode(nullptr, ai, AV_NOPTS_VALUE, {1,48000}) == 0);
+                // Fake stalled source: all currently available packets, but no EOF.
+            } else encoder.finish(ai);
         } catch (...) {
             producerError = std::current_exception(); worker.requestAbort();
         }
@@ -65,17 +69,37 @@ void runPipeline(const std::filesystem::path &root, int videoStart, int reorder,
     // The old worker consumed one audio packet per 5 ms and discarded everything
     // beyond 24 packets. 400 ms exercises both that loss and queue backpressure.
     if (delayedVideo) std::this_thread::sleep_for(std::chrono::milliseconds(400));
-    for (int n = 0; n < 30; ++n) {
+    for (int n = 0; n < (stalled == 4 ? 0 : 30); ++n) {
         Packet p(av_packet_alloc()); CHECK(p && av_new_packet(p.get(), sizeof(h264)) == 0);
         std::memcpy(p->data, h264, sizeof(h264)); p->stream_index = vi;
         p->pts = videoStart+n; p->dts = p->pts-reorder; p->duration = 1; p->flags = AV_PKT_FLAG_KEY;
         video.enqueue(p.get());
     }
-    CHECK(video.sendFinish() == MediaQueueResult::Eof);
-    producer.join(); worker.wait();
+    if (stalled != 2 && stalled != 3 && stalled != 4)
+        CHECK(video.sendFinish() == MediaQueueResult::Eof);
+    producer.join();
+    if (stalled) {
+        // Silence during recording must not auto-finalize; arm only at Stop.
+        CHECK(!worker.waitFor(std::chrono::milliseconds(40)));
+        const auto start = std::chrono::steady_clock::now();
+        worker.requestDrainStop(std::chrono::milliseconds(120));
+        worker.requestDrainStop(std::chrono::seconds(5)); // later stages cannot extend the deadline
+        CHECK(worker.waitFor(std::chrono::seconds(2)));
+        const auto ms = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
+        CHECK(ms >= 100 && ms < 1000 && worker.drainTimedOut());
+        CHECK(audio.isFinished() && video.isFinished());
+        std::cout << "PASS: stalled=" << stalled << " stop/finalize ms=" << ms << '\n';
+    } else worker.wait();
     if (producerError) std::rethrow_exception(producerError);
     CHECK(worker.lastError() == 0); CHECK(mux.close() == 0);
-    checkRecording(path, videoStart, reorder);
+    if (stalled != 4) checkRecording(path, videoStart, reorder);
+    else {
+        std::ifstream file(path, std::ios::binary); CHECK(file.good());
+        Bytes bytes{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+        const auto track = child(bytes, child(bytes, {0,bytes.size(),""}, "moov"), "trak");
+        const auto elst = child(bytes, child(bytes, track, "edts"), "elst");
+        CHECK(bytes[elst.data] == 0 && number(bytes, elst.data+12, 4) == 1024);
+    }
     AVFormatContext *input = nullptr;
     CHECK(avformat_open_input(&input, path.c_str(), nullptr, nullptr) == 0);
     Packet p(av_packet_alloc()); CHECK(p);
@@ -89,7 +113,7 @@ void runPipeline(const std::filesystem::path &root, int videoStart, int reorder,
         av_packet_unref(p.get());
     }
     avformat_close_input(&input);
-    CHECK(audioCount == 97 && videoCount == 30);
+    CHECK(audioCount == audioFrames+1 && videoCount == (stalled == 4 ? 0 : 30));
     std::cout << "PASS: production AAC queue/mux thread: first PTS=-1024, elst=1024, audio start=0, "
               << "packets=" << audioCount << "/" << videoCount << ", video start=" << videoStart
               << "/30 reorder=" << reorder << "/30, delayed=" << delayedVideo << ", " << path << '\n';
@@ -104,5 +128,9 @@ int main() {
         runPipeline(root, 0, 2, false);
         runPipeline(root, 3, 0, false);
         runPipeline(root, 3, 2, true);
+        runPipeline(root, 3, 2, false, 1); // missing audio EOF
+        runPipeline(root, 0, 2, false, 2); // missing video EOF
+        runPipeline(root, 0, 0, false, 3); // neither sends EOF
+        runPipeline(root, 0, 0, false, 4); // no video packet, bootstrap wait
     } catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

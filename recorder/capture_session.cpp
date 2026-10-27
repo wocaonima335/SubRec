@@ -17,7 +17,12 @@ CaptureSession::CaptureSession(FFRecorder &recorder)
 
 CaptureSession::~CaptureSession()
 {
-    release();
+    if (!release()) {
+        // Last-resort destruction cannot detach workers borrowing Recorder state.
+        // Normal stop retains this session on timeout; process teardown must join
+        // any uncooperative native call before freeing its contexts.
+        abortPipeline();
+    }
 }
 
 bool CaptureSession::create()
@@ -69,6 +74,7 @@ bool CaptureSession::start(const CaptureConfig &config,
              << "outputFileName=" << m_config.outputFileName;
 
     qDebug() << "[CaptureSession] calling FFRecorder::startRecord";
+    m_videoClosed = m_audioClosed = m_muxerClosed = false;
     m_cleanupNeeded = true;
     m_recorder.startRecord(m_config);
     qDebug() << "[CaptureSession] FFRecorder::startRecord returned";
@@ -218,9 +224,9 @@ void CaptureSession::abortPipeline()
     m_starting.store(false, std::memory_order_release);
 }
 
-void CaptureSession::cleanup()
+bool CaptureSession::cleanup()
 {
-    if (!m_cleanupNeeded) return;
+    if (!m_cleanupNeeded) return true;
     // Called by the opener on failure OR by release after joining the opener.
     // These are serialized by join, so resources cannot be closed twice.
     if (m_recorder.isRecording()) {
@@ -229,18 +235,22 @@ void CaptureSession::cleanup()
         qDebug() << "[CaptureSession] FFRecorder::stopRecord returned";
     }
 
+    if (auto *worker = m_recorder.getMuxerThread()) worker->requestDrainStop();
     qDebug() << "[CaptureSession] closing video source";
-    closeVideoSource();
+    if (!m_videoClosed) m_videoClosed = closeVideoSource();
     qDebug() << "[CaptureSession] video source closed";
     qDebug() << "[CaptureSession] closing audio source";
-    closeAudioSource();
+    if (!m_audioClosed) m_audioClosed = closeAudioSource();
     qDebug() << "[CaptureSession] audio source closed";
     qDebug() << "[CaptureSession] finalizing muxer";
-    finalizeMuxer();
-    qDebug() << "[CaptureSession] muxer finalized";
+    if (!m_muxerClosed) m_muxerClosed = finalizeMuxer();
+    qDebug() << "[CaptureSession] cleanup joined video/audio/muxer="
+             << m_videoClosed << m_audioClosed << m_muxerClosed;
+    if (!m_videoClosed || !m_audioClosed || !m_muxerClosed) return false;
     m_cleanupNeeded = false;
     m_started.store(false, std::memory_order_release);
     m_starting.store(false, std::memory_order_release);
+    return true;
 }
 
 void CaptureSession::join()
@@ -251,15 +261,16 @@ void CaptureSession::join()
     }
 }
 
-void CaptureSession::release()
+bool CaptureSession::release()
 {
     requestStop();
     join();
-    cleanup();
+    if (!cleanup()) return false;
     m_started.store(false, std::memory_order_release);
     m_starting.store(false, std::memory_order_release);
     m_stopRequested.store(false, std::memory_order_release);
     m_created = false;
+    return true;
 }
 
 bool CaptureSession::isCreated() const
@@ -277,31 +288,37 @@ const CaptureConfig &CaptureSession::config() const
     return m_config;
 }
 
-void CaptureSession::closeVideoSource()
+bool CaptureSession::closeVideoSource()
 {
     auto closeVideoEvent = std::make_unique<FFCloseSourceEvent>(
         &m_recorder, m_config.video.kind == CaptureDeviceKind::Screen
                                         ? demuxerType::SCREEN : demuxerType::CAMERA);
     closeVideoEvent->work();
+    return closeVideoEvent->completed();
 }
 
-void CaptureSession::closeAudioSource()
+bool CaptureSession::closeAudioSource()
 {
     auto closeAudioEvent = std::make_unique<FFCloseSourceEvent>(
         &m_recorder, m_config.audio.kind == CaptureDeviceKind::SystemAudio
                                              ? demuxerType::AUDIO : demuxerType::MICROPHONE);
     closeAudioEvent->work();
+    return closeAudioEvent->completed();
 }
 
-void CaptureSession::finalizeMuxer()
+bool CaptureSession::finalizeMuxer()
 {
     auto *muxerThread = m_recorder.getMuxerThread();
     if (!muxerThread) {
-        return;
+        return true;
     }
 
     qDebug() << "[CaptureSession] muxer wait";
-    muxerThread->wait();
+    if (!capture_stop::drain(*muxerThread, [muxerThread] {
+            muxerThread->finishQueuedPackets();
+        }, [](const char *message) { qWarning() << "[CaptureSession] muxer" << message; }))
+        return false;
     qDebug() << "[CaptureSession] muxer close";
     muxerThread->close();
+    return true;
 }

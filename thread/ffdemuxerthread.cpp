@@ -160,6 +160,11 @@ void FFDemuxerThread::run()
     while (!m_stop) {
         stopFlag.store(false, std::memory_order_release);
         int ret = demuxer->demux();
+        if (ret == AVERROR(EAGAIN)) {
+            std::unique_lock<std::mutex> lock(mutex);
+            cond.wait_for(lock, std::chrono::milliseconds(5), [this] { return m_stop.load(); });
+            continue;
+        }
         if (ret != 0) {
             break;
         }

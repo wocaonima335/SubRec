@@ -24,7 +24,7 @@ public:
                std::function<void(const CaptureStartResult &)> onStarted);
     void requestStop();
     void join();
-    void release();
+    bool release(); // False: cancellation timed out; keep this session owned.
 
     bool isCreated() const;
     bool isStarted() const;
@@ -37,17 +37,18 @@ public:
         testOpenerOverride;
 
 private:
-    void cleanup(); // Only opener, or controller after join. Never concurrent.
+    bool cleanup(); // Only opener, or controller after join. Never concurrent.
     void abortPipeline(); // Wake every edge before waiting on any worker.
     friend class CaptureLifecycleTest;
-    void closeVideoSource();
-    void closeAudioSource();
-    void finalizeMuxer();
+    bool closeVideoSource();
+    bool closeAudioSource();
+    bool finalizeMuxer();
 
 private:
     FFRecorder &m_recorder;
     CaptureConfig m_config;
     bool m_created = false;
+    bool m_videoClosed = false, m_audioClosed = false, m_muxerClosed = false;
     bool m_cleanupNeeded = false; // Published by start, read after opener join.
     std::atomic<bool> m_started{false};
     std::atomic<bool> m_starting{false};
