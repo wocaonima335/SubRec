@@ -177,21 +177,20 @@ struct LoopbackCapture::Impl {
             { std::unique_lock<std::mutex> lock(mutex); cv.wait(lock, [&]{ return go || stop || abort; }); }
             if (!abort && !stop) {
                 startQpc = qpc100ns(); startUs = av_gettime_relative();
+                pipeline.setSessionStartUs(startUs);
                 check(stream->client->Start(), "Start"); stream->started = true; state = LoopbackState::Running;
                 qInfo() << "[WASAPI] started";
             }
             bool first = true;
-            SilencePolicy silence;
+            SilencePolicy silence(startUs);
             auto fill = [&](bool receivedPacket, bool bufferEmpty) {
                 if (!config.fillIdleWithSilence || !startQpc || abort || stop) return;
                 const auto target = silence.target(av_gettime_relative(), pipeline.samples(),
                     pipeline.pendingSamples(), receivedPacket, bufferEmpty);
                 if (target > pipeline.samples()) {
-                    auto before = pipeline.samples();
-                    pipeline.setCaptureTimeUs(startUs + before * 1000000 / kOutputSampleRate);
-                    if (!pipeline.silenceUntil(target)) abort = true;
+                    if (!pipeline.idleUntil(target)) abort = true;
                     std::lock_guard<std::mutex> lock(mutex);
-                    statistics.generatedSilenceFrames += pipeline.samples() - before;
+                    statistics.generatedSilenceFrames = pipeline.generatedSilenceSamples();
                 }
             };
             auto drain = [&](bool finalDrain) {
@@ -238,17 +237,11 @@ struct LoopbackCapture::Impl {
                                 const int64_t captureUs = (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
                                     ? av_gettime_relative() - int64_t(count) * 1000000 / info.sampleRate
                                     : startUs + (static_cast<int64_t>(qpc) - startQpc) / 10;
-                                // Only device timestamps may establish a padding boundary.
-                                // Arrival-time fallback remains usable for the real packet,
-                                // but cannot authorize synthetic audio beyond known data.
-                                const int64_t packetEnd = (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) ? -1 :
-                                    av_rescale_q(static_cast<int64_t>(qpc) - startQpc,
-                                                 {1, 10000000}, {1, kOutputSampleRate}) +
-                                    av_rescale_q(count, {1, info.sampleRate}, {1, kOutputSampleRate});
-                                silence.packet(packetEnd);
+                                silence.packet(); // Any real/SILENT packet resets idle evidence.
                                 if (!pipeline.packet(*frame, captureUs)) abort = true;
                                 std::lock_guard<std::mutex> lock(mutex);
                                 ++statistics.packets; statistics.deviceFrames += count;
+                                statistics.generatedSilenceFrames = pipeline.generatedSilenceSamples();
                                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT) statistics.silentPacketFrames += count;
                                 if (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) ++statistics.discontinuities;
                                 if (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) ++statistics.timestampErrors;
@@ -320,13 +313,13 @@ struct LoopbackCapture::Impl {
                 const int64_t stoppedAtUs = av_gettime_relative();
                 const auto drained = retireStream();
                 if (!abort && config.fillIdleWithSilence && startQpc)
-                    tailTarget = silence.target(stoppedAtUs, pipeline.samples(), 0,
+                    tailTarget = silence.target(stoppedAtUs, pipeline.samples(), pipeline.pendingSamples(),
                                                 drained.receivedPacket, drained.empty);
             }
-            const auto tailSilence = pipeline.stop(abort, tailTarget, startUs);
+            pipeline.stop(abort, tailTarget, startUs);
             {
                 std::lock_guard<std::mutex> lock(mutex);
-                statistics.generatedSilenceFrames += tailSilence;
+                statistics.generatedSilenceFrames = pipeline.generatedSilenceSamples();
                 statistics.outputFrames = pipeline.samples();
             }
             qInfo() << "[WASAPI] finished samples" << pipeline.samples()
