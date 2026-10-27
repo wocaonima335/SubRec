@@ -76,3 +76,54 @@ ASan/UBSan core tests passed with leak detection disabled because this sandbox
 runs under ptrace; LeakSanitizer could not run.
 Full Qt/Windows recording, driver latency, long-run clock drift, pause/resume,
 start/cancel/stop races and listening tests still require PC2.
+
+## Optional pre-mix debug dumps
+
+Set `SUBREC_AUDIO_MIX_DUMP_DIR` to a directory before starting a mixed recording:
+
+```powershell
+$env:SUBREC_AUDIO_MIX_DUMP_DIR = 'C:\Temp\SubRec-audio-dumps'
+```
+
+The variable works with normal scheduler mixing and AutoTest; no additional CLI
+flag is needed. Unset/empty means disabled. Single-source recording does not
+instantiate the mixer and does not create dumps. Windows Unicode paths are supported.
+
+Each session creates a new `mix-<capture-clock-start-us>-<sequence>` subdirectory,
+containing `system.f32le`, `microphone.f32le` and one `.json` sidecar for each.
+Existing sessions are never overwritten. These are **raw IEEE-754 float32,
+little-endian, interleaved L/R, 48000 Hz stereo** files: eight bytes per sample
+frame. They do not need a WAV/raw muxer or any change to the minimal FFmpeg build.
+
+The tap is after resampling, alignment, silence insertion and per-source gain,
+before `amix` and the limiter. Thus limiter attenuation is absent in the dumps.
+Initial silence, missing-input gaps and trailing silence are included. File sample
+frame N (byte offset `N * 8`) corresponds to recorded mixed PCM sample N before
+AAC encoding. Paused/discarded frames are omitted from **both** dumps, just as they
+are omitted from the encoder input.
+
+Both sidecars specify `start_pts: 0`, `time_base: [1,48000]`,
+`offset_from_mix_output_pts_zero_samples: 0`, sample rate, channel order, valid
+`sample_frames` and `payload_bytes`. `capture_clock_start_us` is the original
+session epoch on the capture clock. `capture_timeline_start_pts` and
+`capture_segments` map the compact recorded timeline back to the original
+capture timeline: each segment has `file_sample`, `capture_pts`, and `samples`.
+For example, `{file_sample: 240, capture_pts: 720, samples: 304}` means dump
+sample 240 corresponds to original capture sample 720 after a 480-sample pause.
+Both files share the same mapping, including when one source starts late.
+
+File I/O runs on a bounded background worker. Open/write/metadata failures or
+queue overflow disable only the dump and emit an `[AudioMixDump]` warning;
+recording keeps running. On failure, both raw files are truncated to their last
+successfully written common prefix when the filesystem permits it. Metadata
+starts with `complete: false` and is finalized when the mixer is destroyed.
+Use `complete: true` sessions for full-recording comparison; a crash or failing
+filesystem can leave incomplete files/sidecars. A filesystem failure can also
+prevent the final status update itself.
+
+`audio_timeline_mix` tests cover disabled mode, Unicode paths, exact interleaved
+samples, startup/gap/trailing silence, pause mapping, resampling before the tap,
+limiting after the tap, separate sessions, and an invalid destination without
+changing mixed output. On Linux, an isolated child with a file-size limit also
+injects a real short write and checks that recording output is unaffected and
+both dump files retain the same valid prefix.

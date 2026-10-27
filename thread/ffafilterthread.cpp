@@ -366,8 +366,9 @@ void FFAFilterThread::runMixed()
                         } else until = std::min(until, sample(pause.first));
                     }
                 }
-                auto frame = mixer.render(until, systemGain, microphoneGain);
-                if (encoderFlag && !discard) {
+                const bool retain = encoderFlag && !discard;
+                auto frame = mixer.render(until, systemGain, microphoneGain, retain);
+                if (retain) {
                     filter->forwardAudioFrame(frame.release(), mixStartUs, pauseTime);
                     ++forwardedFrameCount;
                 } else ++droppedFrameCount;

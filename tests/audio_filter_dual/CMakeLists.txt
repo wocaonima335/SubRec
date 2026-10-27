@@ -49,7 +49,7 @@ endif()
 
 # Hardware-independent production timeline/amix/limiter regression tests.
 add_executable(audio_timeline_mix_tests ../audio_timeline_mix/audio_timeline_mix_tests.cpp
-    ../../filter/audio_timeline_mixer.cpp)
+    ../../filter/audio_timeline_mixer.cpp ../../filter/audio_mix_dump.cpp)
 target_compile_features(audio_timeline_mix_tests PRIVATE cxx_std_17)
 target_include_directories(audio_timeline_mix_tests PRIVATE ../.. ${FFMPEG_INCLUDE_DIR})
 target_link_libraries(audio_timeline_mix_tests PRIVATE ${FFMPEG_LIBRARIES})

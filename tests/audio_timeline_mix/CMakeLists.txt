@@ -3,7 +3,7 @@ project(audio_timeline_mix_tests LANGUAGES CXX)
 enable_testing()
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecFFmpeg.cmake")
 subrec_require_ffmpeg_root()
-add_executable(audio_timeline_mix_tests audio_timeline_mix_tests.cpp ../../filter/audio_timeline_mixer.cpp)
+add_executable(audio_timeline_mix_tests audio_timeline_mix_tests.cpp ../../filter/audio_timeline_mixer.cpp ../../filter/audio_mix_dump.cpp)
 target_compile_features(audio_timeline_mix_tests PRIVATE cxx_std_17)
 target_include_directories(audio_timeline_mix_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(audio_timeline_mix_tests PRIVATE

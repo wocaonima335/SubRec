@@ -1,4 +1,5 @@
 #include "audio_timeline_mixer.h"
+#include "audio_mix_dump.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -30,6 +31,7 @@ AudioTimelineMixer::AudioTimelineMixer(int64_t startUs) : startUs_(startUs) {
         check(avfilter_link(sources_[1], 0, mix, 1));
         check(avfilter_link(mix, 0, sink_, 0));
         check(avfilter_graph_config(graph_, nullptr));
+        dump_ = AudioMixDump::fromEnvironment(startUs_);
     } catch (...) { avfilter_graph_free(&graph_); throw; }
 }
 AudioTimelineMixer::~AudioTimelineMixer() {
@@ -95,9 +97,10 @@ void AudioTimelineMixer::finish(unsigned source) {
         frame->nb_samples = n; append(source, std::move(frame));
     }
 }
-AudioTimelineMixer::Frame AudioTimelineMixer::render(int64_t target, double systemGain, double micGain) {
+AudioTimelineMixer::Frame AudioTimelineMixer::render(int64_t target, double systemGain, double micGain, bool retainedOutput) {
     if (target <= cursor_) return {};
     int count = static_cast<int>(std::min<int64_t>(480, target - cursor_));
+    Frame aligned[2];
     for (unsigned source = 0; source < 2; ++source) {
         auto frame = allocate(count, cursor_);
         av_samples_set_silence(frame->extended_data, 0, count, 2, AV_SAMPLE_FMT_FLTP);
@@ -134,10 +137,16 @@ AudioTimelineMixer::Frame AudioTimelineMixer::render(int64_t target, double syst
             }
         }
         stats_.silence[source] += count - filled;
-        check(av_buffersrc_add_frame_flags(sources_[source], frame.get(), 0));
+        aligned[source] = std::move(frame);
     }
+    // Retain the pre-amix buffers until output succeeds, so a failed graph step
+    // cannot append samples that were never returned to the encoder path.
+    for (unsigned source = 0; source < 2; ++source)
+        check(av_buffersrc_add_frame_flags(sources_[source], aligned[source].get(),
+            dump_ && retainedOutput ? AV_BUFFERSRC_FLAG_KEEP_REF : 0));
     Frame out(av_frame_alloc()); if (!out) throw std::bad_alloc();
     check(av_buffersink_get_frame(sink_, out.get()));
+    if (dump_ && retainedOutput) dump_->submit(*aligned[0], *aligned[1]);
     // Stereo-linked sample-peak limiter: immediate attack, 50 ms exponential
     // release, -0.45 dBFS ceiling. Attenuates both channels; never hard-clips peaks.
     auto *left = reinterpret_cast<float *>(out->extended_data[0]);

@@ -9,6 +9,8 @@ extern "C" {
 #include <libswresample/swresample.h>
 }
 
+class AudioMixDump;
+
 // Single worker owns this graph. Input PTS/time_base describes capture time on the
 // av_gettime_relative clock, NOT arrival at this queue. Output PTS starts at zero.
 class AudioTimelineMixer {
@@ -21,7 +23,9 @@ public:
     void push(unsigned source, const AVFrame &frame);
     void finish(unsigned source);
     // Target samples from session start. Caller waits 200 ms for late packets.
-    Frame render(int64_t target, double systemGain = 1, double micGain = 1);
+    // retainedOutput=false for paused/discarded frames: omit them from the debug
+    // dump so dump sample N matches the recorded mix sample N after pause removal.
+    Frame render(int64_t target, double systemGain = 1, double micGain = 1, bool retainedOutput = true);
     int64_t position() const { return cursor_; }
     int64_t end() const { return end_; }
     const Stats &stats() const { return stats_; }
@@ -41,4 +45,5 @@ private:
     int64_t startUs_, cursor_ = 0, end_ = 0;
     double limiterGain_ = 1;
     Stats stats_;
+    std::unique_ptr<AudioMixDump> dump_;
 };
