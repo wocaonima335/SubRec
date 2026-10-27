@@ -61,12 +61,13 @@ The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.s
 > 2. MinGW-w64 运行库来自构建工具链，工具链本身不随包提供（运行库部分的许可证允许）。
 > 3. 构建警告的逐条分类见 [`packaging/ffmpeg/BUILD_WARNINGS.md`](packaging/ffmpeg/BUILD_WARNINGS.md)。
 > 4. libvpl 与 OpenH264 的固定值是否为提交 id（而非 tag 对象）尚未单独确认；libvpl 的固定值已在真实构建中通过严格校验（`HEAD` 必须等于该值），OpenH264 仅用于尚未运行的可选变体。
+> 5. CI 用 `SUBREC_FFMPEG_TEST_COMPONENTS=0` 构建发布用 FFmpeg 的配置尚未真正运行过；首次 CI 构建可能暴露问题。运行后以 `sources/BUILD_CONFIG.txt`（`test_components=0` 与实际 configure 参数）为准，与本文不符时应更新本文。
 
 **该构建的配置 / Build configuration [文件，`sources/BUILD_CONFIG.txt` 与 `packaging/ffmpeg/README.md`]：**
 
 - `--enable-gpl --enable-libx264` ✅（整体 GPL-2.0-or-later）
 - `--enable-version3` ❌ **未使用**；`--enable-nonfree` ❌ **未使用**
-- `--disable-everything --disable-autodetect --disable-network`，仅启用 SubRec 用到的编码器（`aac`、`h264_nvenc`、`h264_amf`、`h264_qsv`、`libx264`、测试用的 `pcm_s16le`/`rawvideo`）、解码器（`rawvideo`/`mjpeg`/`h264` 及 PCM；另有仅供测试的 `wrapped_avframe` 和 `aac`，由 `SUBREC_FFMPEG_TEST_COMPONENTS` 控制，**脚本与 CI 默认开启**，只有设为 `0` 才不含，因此默认构建出的包**含有** `aac` 解码器）、`mp4` 封装器、`dshow`/`lavfi` 输入设备、`file` 协议及少数滤镜（含屏幕采集用的 `ddagrab`/`hwdownload`，均为 LGPL 代码；每项在 `packaging/ffmpeg/README.md` 中附代码出处）
+- `--disable-everything --disable-autodetect --disable-network`，仅启用 SubRec 用到的编码器（`aac`、`h264_nvenc`、`h264_amf`、`h264_qsv`、`libx264`；测试组件开启时另有 `pcm_s16le`/`rawvideo`）、解码器（`rawvideo`/`mjpeg`/`h264` 及 PCM；测试组件开启时另有仅供测试的 `wrapped_avframe` 和 `aac`）、`mp4` 封装器、`dshow` 输入设备（测试组件开启时另有 `lavfi`）、`file` 协议及少数滤镜（含屏幕采集用的 `ddagrab`/`hwdownload`，均为 LGPL 代码；每项在 `packaging/ffmpeg/README.md` 中附代码出处）。测试组件由 `SUBREC_FFMPEG_TEST_COMPONENTS` 控制：**脚本默认 `1`（本地与 PC2 的测试构建含有它们）；CI 的 `ffmpeg` 任务在 `windows-build.yml` 中显式设为 `0`，因此发布包不含 `aac` 解码器**，也不含 `wrapped_avframe`、`lavfi`、`sine`/`color` 滤镜、`wav`/`matroska`/`nut`/`mov` 解复用器和 `null`/`nut` 封装器。CI 用 `ffmpeg.exe -decoders` 校验包内 FFmpeg 没有 `aac` 解码器（有则构建失败）；`BUILD_CONFIG.txt` 中记录 `test_components=` 的值，CI 不检查该值本身。
 - `--enable-shared --disable-static`（共享库，动态链接；其它依赖静态链接）
 - 交叉编译 `x86_64-w64-mingw32`，`--extra-version=subrec-gpl`
 
@@ -83,7 +84,7 @@ The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.s
   1. 改用 **LGPL 构建**的 FFmpeg（`packaging/ffmpeg` 的 `lgpl` 变体：不启用 `--enable-gpl`，仅动态链接，保留用户替换 DLL 的能力，附 LGPL 文本与源码获取方式）；**软件 H.264 编码需另寻来源**（`libx264` 路径在 LGPL 构建里不可用）：依赖 NVENC/AMF/QSV，加上 Windows Media Foundation `h264_mf` 回退（需改 `encoder/ffvencoder.cpp:301-306` 并测试），或 OpenH264 变体（`lgpl-openh264`，另有专利问题）。这两个变体尚未运行过。
   2. 向 x264 LLC 取得 **x264 商业授权**。
   3. 开源版与商业版分别维护不同的 FFmpeg 构建。
-- 专利（非版权问题，需专业意见）：H.264 / AAC 等编码格式涉及专利池（如 Via LA 等）。LGPL/GPL 授权**不**授予专利许可。SubRec 产品本身只编码 AAC、不解码；但测试组件开启时（默认）FFmpeg DLL 也含原生 `aac` **解码器**，该解码器同样属于 AAC 专利池覆盖的范围。若发布包需要避免携带它，须以 `SUBREC_FFMPEG_TEST_COMPONENTS=0` 构建（同时会去掉 `wrapped_avframe` 解码器、`mov`/`nut`/`wav`/`matroska` 解复用器等测试组件，仓库内的相关测试将无法运行）。
+- 专利（非版权问题，需专业意见）：H.264 / AAC 等编码格式涉及专利池（如 Via LA 等）。LGPL/GPL 授权**不**授予专利许可。SubRec 产品本身只编码 AAC、不解码；测试组件开启时（脚本默认，本地与 PC2 的测试构建）FFmpeg DLL 也含原生 `aac` **解码器**，该解码器同样属于 AAC 专利池覆盖的范围。CI 的发布构建以 `SUBREC_FFMPEG_TEST_COMPONENTS=0` 构建，不含该解码器（同时去掉 `wrapped_avframe` 解码器、`lavfi`、`mov`/`nut`/`wav`/`matroska` 解复用器等测试组件，因此仓库内依赖它们的测试无法对发布构建运行，需用默认构建跑），并由 CI 校验 `aac` 解码器不存在。发布包仍含 `aac` **编码器**，AAC 编码相关的专利问题不因此消除。
 
 ## 2. Qt 6
 

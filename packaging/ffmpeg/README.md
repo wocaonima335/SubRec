@@ -9,6 +9,9 @@ scripts. Warnings of the first build: [`BUILD_WARNINGS.md`](BUILD_WARNINGS.md).
 **Changed since that build, not built yet:** the `ddagrab`, `hwdownload`, `hwupload`, `hwmap`
 and `scale_d3d11` filters (screen backend), the test-only `mov` demuxer and the test-only `aac`
 decoder; new warnings of the next run must be classified in `BUILD_WARNINGS.md`.
+**Also not built yet:** the CI release build with `SUBREC_FFMPEG_TEST_COMPONENTS=0` (see "Tests"
+below). The script default stays `1`; no `=0` build has been run so far, so the first CI run may
+still show problems in that configuration.
 
 Goal: a **SubRec-specific minimal FFmpeg built from pinned, known sources** (instead of a
 prebuilt FFmpeg with about 70 external libraries that could only be partly identified), so that
@@ -32,7 +35,7 @@ Scanned from the SubRec sources (tests listed separately). Paths are repo-relati
 | Audio encoder | native `aac` | `encoder/ffaencoder.cpp:240` |
 | Video decoder | `h264` (by name) or by `codec_id` of the DirectShow stream: `rawvideo` (screen-capture-recorder, YUY2/NV12 webcams), `mjpeg` (MJPG webcams) | `decoder/ffvdecoder.cpp:283-290`, `:315` |
 | Audio decoder | by `codec_id` of the DirectShow stream: PCM (`pcm_s16le`; `pcm_u8`/`pcm_s32le`/`pcm_f32le` enabled defensively) | `decoder/ffadecoder.cpp:147` |
-| Audio decoder (test only) | native `aac`, looked up by name to decode the encoder's output in the mix round-trip test; the product never decodes AAC. Part of the test components (`SUBREC_FFMPEG_TEST_COMPONENTS=1`) | `tests/audio_timeline_mix/audio_mix_aac_tests.cpp:50` |
+| Audio decoder (test only) | native `aac`, looked up by name to decode the encoder's output in the mix round-trip test; the product never decodes AAC. Part of the test components (`SUBREC_FFMPEG_TEST_COMPONENTS=1`, the script default); **not** in the CI release build (`=0`) | `tests/audio_timeline_mix/audio_mix_aac_tests.cpp:50` |
 | Input device | `dshow` (all inputs: screen via the screen-capture-recorder filter, camera, microphone, virtual-audio-capturer) | `capture/dshow_capture_backend.cpp:57,64,145,158,194-195`; `demuxer/demuxer.cpp:375-377`; options `:388-407`; default URLs `recorder/ffrecorder_p.h:35-38` |
 | Screen source (filter, no input device) | `ddagrab` (DXGI Desktop Duplication) + `hwdownload`, `format`, `scale` for the CPU path; selected by device id `ddagrab:N` / `SUBREC_CAPTURE_BACKEND` | `capture/ddagrab_screen_source.cpp:94,188-196`, hw frames `:140`, encoder probe `:251` |
 | Filters kept for later (unused) | `hwupload`, `hwmap`, `scale_d3d11` (GPU-side conversion, e.g. NV12 for QSV) | `packaging/ffmpeg/build-ffmpeg.sh` comment at the filter list |
@@ -52,17 +55,31 @@ Scanned from the SubRec sources (tests listed separately). Paths are repo-relati
 | Libraries linked | avcodec, avformat, avutil, swscale, swresample, avfilter, avdevice; CMake copies every `bin/*.dll` | `CMakeLists.txt:55-61,131` |
 | UI only | Cutting page file filter `*.mp4 *.avi *.mkv *.flv *.mov`: no FFmpeg code behind it yet | `qml/cuttingpage.qml:71` |
 
-Tests (optional, `SUBREC_FFMPEG_TEST_COMPONENTS=1`, default on): `lavfi` indev with `sine` and
+Tests (optional, `SUBREC_FFMPEG_TEST_COMPONENTS=1`, the script default, used by local and PC2
+test builds; the CI release build sets `0`, see below): `lavfi` indev with `sine` and
 `color` (`tests/input_startup/input_startup_tests.cpp:48-67`), `wav`/`matroska` demuxers
 (`:41,43`), `null`/`nut` muxers and `pcm_s16le`/`rawvideo` encoders
 (`tests/muxer_lifecycle/muxer_lifecycle_tests.cpp:17,27,52,116`), and the `mov` demuxer, which
 only `tools/pc2_verify.ps1` uses (reads a SubRec `.mp4` back with `ffmpeg.exe -c copy -f null`),
 and the native `aac` **decoder** (`tests/audio_timeline_mix/audio_mix_aac_tests.cpp:50`, decodes the
 `aac` encoder's packets to check the reconstructed peaks). The test components default to **on**
-(`build-ffmpeg.sh:29`), the CI workflow does not override that, so the packages it builds contain
-`wrapped_avframe` and `aac` decoders too. Only `SUBREC_FFMPEG_TEST_COMPONENTS=0` leaves them out;
-`need_cfg` checks the decoders listed in the script's `decoders` array, so it only requires
-`CONFIG_AAC_DECODER` when the test components are on.
+in the script (`build-ffmpeg.sh:29`), so local and PC2 test builds contain them. The CI workflow
+sets `SUBREC_FFMPEG_TEST_COMPONENTS: '0'` in the `env` of the `ffmpeg` job
+(`windows-build.yml`), which reaches `build-ffmpeg.sh`; the release package therefore has **no**
+`wrapped_avframe` and `aac` decoders, no `lavfi` indev, no `sine`/`color` filters, no
+`wav`/`matroska`/`nut`/`mov` demuxers (the base build has no demuxer at all), no `null`/`nut`
+muxers and no `pcm_s16le`/`rawvideo` encoders (the PCM *decoders* stay, they are in the base
+list). The repository tests that need these components (`input_startup`, `muxer_lifecycle`,
+`audio_mix_aac`, `tools/pc2_verify.ps1` read-back) cannot run against such a build; run them with
+a default (`=1`) build. `need_cfg` checks the components listed in the script's arrays, so it
+only requires them (e.g. `CONFIG_AAC_DECODER`) when the test components are on. The value used is
+recorded as `test_components=` in `share/subrec-ffmpeg/toolchain.txt`, which `collect-sources.sh`
+copies into `sources/BUILD_CONFIG.txt`.
+The CI job `build` checks the freshly built `ffmpeg.exe`: `ffmpeg.exe -decoders` must not list an
+`aac` decoder (regex `^\s*A\S*\s+aac\s`, so the `aac` *encoder* is not affected), and the `lavfi`
+encode smoke test only runs if `-devices` lists `lavfi`, otherwise it is skipped with a message.
+It does not check the `test_components=` value itself. A `=0` build has not been run yet (see
+the Status above and "Follow-ups").
 Found on PC2 (first test run): `muxer_lifecycle` reads `copied.nut` back with
 `avformat_open_input` (line 133), so it needs the `nut` **demuxer**; it reads nothing else back
 (the `.mp4` cases only write). The `lavfi` indev labels its video stream with the `wrapped_avframe` codec id, so
@@ -125,6 +142,12 @@ decoder were added;
 the authoritative line of a build is `share/subrec-ffmpeg/configure-args.txt` /
 `sources/BUILD_CONFIG.txt`.
 
+With `SUBREC_FFMPEG_TEST_COMPONENTS=0` (CI release build) the line is the one above without:
+`pcm_s16le,rawvideo` in `--enable-encoder`, `wrapped_avframe,aac` in `--enable-decoder`, `null,nut`
+in `--enable-muxer`, the whole `--enable-demuxer=...` option (the list is empty), `lavfi` in
+`--enable-indev`, and `sine,color` in `--enable-filter`. This is derived from the script's arrays,
+not from the output of a real `=0` run.
+
 **ddagrab self-check.** `ddagrab_filter_deps="d3d11va IDXGIOutput1 DXGI_OUTDUPL_FRAME_INFO"`
 and `scale_d3d11_filter_deps="d3d11va"` (n8.0.3 `configure`); `hwupload`/`hwdownload`/`hwmap`
 have no deps. The two DXGI names are `check_type` results of `windows.h dxgi1_2.h` that
@@ -155,8 +178,10 @@ libraries and never starts `ffmpeg.exe` (searched the sources for `QProcess`, `C
 `ShellExecute`, `system(`, `popen`, `_spawn`, `exec*`: no hit that runs it), and
 `cmake/SubRecFFmpeg.cmake` copies only `bin/*.dll`. Shipping it would add a second GPL
 executable and its attack surface for no function (0.46 MB). The CI workflow runs it from the
-build artifact only to check that the DLLs load and that the four video encoders and `aac` are
-present, and checks that the package does not contain it. If SubRec ever starts it, copy it into
+build artifact only to check that the DLLs load, that the four video encoders and the `aac`
+encoder are present, that the `aac` decoder is absent (release build, test components off) and,
+only when the build has the `lavfi` indev, that a `lavfi` encode smoke test works; it also checks
+that the package does not contain it. If SubRec ever starts it, copy it into
 the package and list it in `THIRD_PARTY_LICENSES.md`; no new source is needed since the source
 is already in `ffmpeg-<ref>.tar.xz`.
 
@@ -233,7 +258,7 @@ CRT mismatch with Qt's MinGW is acceptable. The toolchain is recorded in `BUILD_
   (libvpl is large because the whole repository is archived, not only the dispatcher.)
 - Build time was not recorded; the CI job has a 90 minute limit.
 
-## 6a. Test run on PC2 (first real machine test, `gpl` variant)
+## 6a. Test run on PC2 (first real machine test, `gpl` variant, test components on)
 
 - GPU NVIDIA GeForce RTX 5060 Ti, driver 32.0.16.1088.
 - `ffmpeg.exe -encoders` lists `libx264`, `h264_amf`, `h264_nvenc`, `h264_qsv`, `aac`;
@@ -249,6 +274,9 @@ CRT mismatch with Qt's MinGW is acceptable. The toolchain is recorded in `BUILD_
 
 - First CI run of `windows-build.yml` (Ubuntu 24.04 has an older mingw-w64 GCC/NASM/CMake than the
   Debian 13 host of the first build; the used versions are recorded in `BUILD_CONFIG.txt`).
+  This will also be the first build with `SUBREC_FFMPEG_TEST_COMPONENTS=0`: check that
+  `BUILD_CONFIG.txt` shows `test_components=0`, that the configure line has no test components,
+  and that the `-decoders` check and the skipped `lavfi` smoke test behave as intended.
 - Confirm that the libvpl and OpenH264 pins are commit ids (see `versions.env`), and run the
   `lgpl` / `lgpl-openh264` variants before relying on them.
 - Run `tools/pc2_verify.ps1` on PC2 after the rebuild (main + standalone ctests, ffmpeg.exe

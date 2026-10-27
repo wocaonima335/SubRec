@@ -107,6 +107,12 @@ and `ffmpeg.exe` is not shipped in the SubRec package (see `README.md`, "ffmpeg.
   Their warnings, if any, are **not** covered by the table above: the rebuilt log must be
   classified under "Policy for future builds". The #6 and #7 verdicts are unchanged by `aac`: it is
   neither an HEVC decoder nor a caller of `ff_vlc_init_multi_from_lengths()`.
+- The test components (`aac` decoder, `wrapped_avframe`, `mov`/`nut`/`wav`/`matroska` demuxers, `lavfi`,
+  ...) exist only with `SUBREC_FFMPEG_TEST_COMPONENTS=1`, the script default (local and PC2 test
+  builds). The CI release build sets `0` and does not compile them, so their warnings, if any,
+  appear only in test builds. No `=0` build has been run yet either: its log is not classified
+  here and must be checked under "Policy for future builds" like any other new build (for
+  example, a different set of enabled components can change which warnings appear).
 
 ## Policy for future builds
 Any new line containing `warning` that is not in the table above should be classified here
