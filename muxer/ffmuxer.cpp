@@ -111,12 +111,9 @@ int FFMuxer::mux(AVPacket *packet) {
     packet->dts = packet->pts;
   }
 
-  if (packet->pts != AV_NOPTS_VALUE && packet->pts < 0) {
-    packet->pts = 0;
-  }
-  if (packet->dts != AV_NOPTS_VALUE && packet->dts < 0) {
-    packet->dts = 0;
-  }
+  // Preserve encoder priming and video reorder timestamps. In particular, native
+  // AAC starts at -1024 samples; movenc needs that DTS to write the trimming elst.
+  // Clamping each stream independently also destroys their relative alignment.
   if (packet->duration < 0) {
     packet->duration = 0;
   }
@@ -182,7 +179,11 @@ int FFMuxer::writeHeader(std::chrono::milliseconds timeout) {
   const char *formatName = fmtCtx->oformat ? fmtCtx->oformat->name : nullptr;
   if (format == "mp4" || (formatName && std::strcmp(formatName, "mp4") == 0)) {
     av_dict_set(&options, "movflags", "+faststart", 0);
-    av_dict_set(&options, "avoid_negative_ts", "make_zero", 0);
+    // n8.0.3 mov_write_edts_tag derives media_time from start_dts/start_cts,
+    // not codecpar->initial_padding (already copied by addStream). Keep the
+    // session origin and let edit lists trim AAC priming / express video delay.
+    av_dict_set(&options, "avoid_negative_ts", "disabled", 0);
+    av_dict_set(&options, "use_editlist", "1", 0);
   }
   if (format == "rtsp") {
     av_dict_set(&options, "rtsp_transport", "tcp", 0);

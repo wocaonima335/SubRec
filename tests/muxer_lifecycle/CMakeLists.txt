@@ -17,3 +17,24 @@ endif()
 add_test(NAME muxer_lifecycle COMMAND muxer_lifecycle_tests)
 set_tests_properties(muxer_lifecycle PROPERTIES TIMEOUT 20)
 # Runtime DLLs are resolved using PATH; no install, deployment, or artifact deletion.
+
+add_executable(aac_priming_tests aac_priming_tests.cpp ../../muxer/ffmuxer.cpp)
+target_compile_features(aac_priming_tests PRIVATE cxx_std_17)
+target_include_directories(aac_priming_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(aac_priming_tests PRIVATE Qt6::Core)
+foreach(component IN ITEMS avformat avcodec avutil)
+    target_link_libraries(aac_priming_tests PRIVATE "${FFMPEG_ROOT}/lib/${component}.lib")
+endforeach()
+if(MINGW)
+    target_compile_options(aac_priming_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME aac_priming COMMAND aac_priming_tests)
+set_tests_properties(aac_priming PROPERTIES TIMEOUT 30)
+
+find_program(SUBREC_POWERSHELL NAMES pwsh powershell)
+if(SUBREC_POWERSHELL)
+    add_test(NAME mp4_edit_list_parser COMMAND "${SUBREC_POWERSHELL}"
+        -NoProfile -ExecutionPolicy Bypass -File "${CMAKE_CURRENT_SOURCE_DIR}/mp4_edit_list_tests.ps1"
+        -PrimingTest "$<TARGET_FILE:aac_priming_tests>")
+    set_tests_properties(mp4_edit_list_parser PROPERTIES TIMEOUT 60)
+endif()

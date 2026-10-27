@@ -43,6 +43,7 @@ param(
 )
 
 Set-StrictMode -Version 3
+. (Join-Path $PSScriptRoot 'mp4_edit_list.ps1')
 # Not 'Stop': Windows PowerShell 5.1 turns redirected stderr of native tools (ffmpeg, cmake)
 # into error records, which 'Stop' would make fatal. Failures are checked via exit codes.
 $ErrorActionPreference = 'Continue'
@@ -203,6 +204,14 @@ function Invoke-Recording([string]$Name, [hashtable]$Environment) {
         $duration = if ($text -match 'Duration: (\d\d:\d\d:\d\d\.\d\d)') { $Matches[1] } else { '?' }
         $durationOk = $duration -ne '?' -and [Math]::Abs(([TimeSpan]::Parse($duration)).TotalSeconds - $RecordMs / 1000.0) -lt 1.5
         Add-Result "readback $Name" (($rc -eq 0) -and $hasVideo -and $hasAudio -and $durationOk) "rc=$rc h264=$hasVideo aac=$hasAudio duration=$duration bytes=$((Get-Item $out).Length)"
+        # No ffprobe in the minimal build: inspect this audio track's edit list directly.
+        try {
+            $timing = Assert-Mp4AacPriming $out
+            $timing | Out-File (Join-Path $runDir "$Name-edit-list.log") -Encoding utf8
+            Add-Result "AAC priming $Name" $true $timing
+        } catch {
+            Add-Result "AAC priming $Name" $false $_.Exception.Message
+        }
     } else {
         Add-Result "readback $Name" $false "no file $out"
     }
