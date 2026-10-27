@@ -7,6 +7,8 @@
 
 #include "wasapi_loopback_capture.h"
 #include "wasapi_native.h"
+#include "wasapi_mmcss_scope.h"
+#include <avrt.h>
 #include "wasapi_audio_pipeline.h"
 #include "wasapi_silence_policy.h"
 #include <QDebug>
@@ -21,6 +23,19 @@ extern "C" {
 namespace capture::wasapi {
 using namespace native;
 namespace {
+struct MmcssApi {
+    using Handle = HANDLE;
+    using TaskIndex = DWORD;
+    Handle registerTask(const wchar_t *name, TaskIndex *index) noexcept {
+        return AvSetMmThreadCharacteristicsW(name, index);
+    }
+    bool revert(Handle handle) noexcept { return AvRevertMmThreadCharacteristics(handle) != FALSE; }
+    DWORD lastError() noexcept { return GetLastError(); }
+    void logError(const char *operation, DWORD error) noexcept {
+        qWarning() << "[WASAPI] MMCSS" << operation << "failed, Win32 error=" << error
+                   << "(nonfatal)";
+    }
+};
 ERole roleOf(EndpointRole role) {
     return role == EndpointRole::Console ? eConsole :
            role == EndpointRole::Multimedia ? eMultimedia : eCommunications;
@@ -137,6 +152,8 @@ struct LoopbackCapture::Impl {
     void run() {
         bool opened = false;
         try {
+            MmcssApi mmcssApi;
+            MmcssScope<MmcssApi> mmcss(mmcssApi);
             ComScope com;
             Event event;
             { std::lock_guard<std::mutex> lock(mutex); wake = event.handle; }

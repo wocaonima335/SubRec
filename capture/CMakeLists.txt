@@ -21,7 +21,7 @@ if(WIN32)
     # MinGW's ksmedia.h declares format GUIDs even with INITGUID; ksuser defines
     # KSDATAFORMAT_SUBTYPE_PCM/IEEE_FLOAT. STATIC library PRIVATE link dependencies
     # propagate to every consumer (including audio_filter_dual_tests) via LINK_ONLY.
-    target_link_libraries(capture_module PRIVATE ole32 uuid propsys ksuser)
+    target_link_libraries(capture_module PRIVATE ole32 uuid propsys ksuser avrt)
     # DXGI output enumeration for the ddagrab screen devices.
     target_link_libraries(capture_module PRIVATE dxgi)
 endif()
