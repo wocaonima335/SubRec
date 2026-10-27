@@ -1,4 +1,5 @@
 #include "muxer/ffmuxer.h"
+#include "encoder/audio_encoding_config.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -87,7 +88,7 @@ void run(const std::filesystem::path &root, int videoStart, int reorder, bool vi
     const std::string path = (root / name).string();
     Codec a(avcodec_alloc_context3(avcodec_find_encoder_by_name("aac")));
     CHECK(a && a->codec);
-    a->sample_rate = 48000; a->sample_fmt = AV_SAMPLE_FMT_FLTP; a->bit_rate = 64*1024;
+    a->sample_rate = 48000; a->sample_fmt = AV_SAMPLE_FMT_FLTP; a->bit_rate = audio_encoding::kAacBitRate;
     a->time_base = {1,48000}; av_channel_layout_default(&a->ch_layout, 2);
     a->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
     CHECK(avcodec_open2(a.get(), a->codec, nullptr) == 0);

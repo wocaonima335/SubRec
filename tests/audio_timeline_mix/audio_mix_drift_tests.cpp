@@ -66,8 +66,8 @@ void drift(double magnitude, int rate0, bool jitter) {
                 for (int ch = 0; ch < 2; ++ch) {
                     float value = reinterpret_cast<float *>(out->extended_data[ch])[i];
                     CHECK(std::isfinite(value));
-                    CHECK(value > .14 * AudioTimelineMixer::aacHeadroomGain);
-                    CHECK(value < .26 * AudioTimelineMixer::aacHeadroomGain);
+                    CHECK(value > .14);
+                    CHECK(value < .26);
                     if (havePrevious) maxJump = std::max(maxJump, double(std::abs(value-previous[ch])));
                     previous[ch] = value;
                 }
@@ -89,7 +89,7 @@ void drift(double magnitude, int rate0, bool jitter) {
     }
     CHECK(maxStep <= 50.000001);
     CHECK(maxError < 5000); // well below the hard-resync threshold
-    CHECK(maxJump < .004); // > largest natural tone slope, far below a click to silence
+    CHECK(maxJump < .01); // > largest natural tone slope, far below a click to silence
     std::cout << "max_step_ppm=" << maxStep << " max_adjacent_sample_jump=" << maxJump << '\n';
 }
 void jitterAndDiscontinuity() {

@@ -15,12 +15,9 @@ class AudioMixDump;
 // av_gettime_relative clock, NOT arrival at this queue. Output PTS starts at zero.
 class AudioTimelineMixer {
 public:
-    // Reserve headroom for lossy native AAC reconstruction at 64*1024 bps.
-    // 0.84 (-1.51 dBFS) * 0.4 (-7.96 dB) = 0.336 (-9.47 dBFS).
-    // Loud square-wave AAC regression needs substantially more than 1.5 dB.
-    // See docs/AUDIO_MIXING.md before raising either value.
-    static constexpr double limiterCeiling = 0.84;
-    static constexpr double aacHeadroomGain = 0.4;
+    // Sample-peak ceiling (-3 dBFS) for native AAC at audio_encoding::kAacBitRate
+    // (128*1024 bps). Codec reconstruction peaks are checked by audio_mix_aac_tests.
+    static constexpr double limiterCeiling = 0.7079;
     struct FrameDelete { void operator()(AVFrame *f) const { av_frame_free(&f); } };
     using Frame = std::unique_ptr<AVFrame, FrameDelete>;
     static constexpr int64_t resyncThresholdUs = 10000;
@@ -60,6 +57,7 @@ private:
     AVFilterGraph *graph_ = nullptr;
     AVFilterContext *sources_[2]{}, *sink_ = nullptr;
     int64_t startUs_, cursor_ = 0, end_ = 0;
+    const double releaseCoeff_;
     double limiterGain_ = 1;
     Stats stats_;
     std::unique_ptr<AudioMixDump> dump_;

@@ -17,8 +17,7 @@
 #endif
 #define CHECK(x) do { if (!(x)) throw std::runtime_error(std::string(#x) + " line " + std::to_string(__LINE__)); } while (false)
 namespace {
-constexpr double headroom = AudioTimelineMixer::aacHeadroomGain;
-constexpr double ceiling = AudioTimelineMixer::limiterCeiling * headroom;
+constexpr double ceiling = AudioTimelineMixer::limiterCeiling;
 constexpr int64_t epoch = 123456000000;
 AudioTimelineMixer::Frame pcm(int64_t offsetSamples, int samples, float left, float right,
                                int rate = 48000, int channels = 2) {
@@ -106,7 +105,7 @@ void debugDumpTimeline() {
     auto mic = readRaw(session / "microphone.f32le");
     CHECK(sys.size() == 2400 * 2 && mic.size() == sys.size() && mixed.size() == sys.size());
     for (size_t i = 0; i < sys.size(); ++i) {
-        CHECK(std::abs((sys[i] + mic[i]) * headroom - mixed[i]) < 1e-6);
+        CHECK(std::abs((sys[i] + mic[i]) - mixed[i]) < 1e-6);
         const int n = i / 2, ch = i % 2;
         CHECK(std::abs(sys[i] - (n < 1920 ? (ch ? .05f : .1f) : 0)) < 1e-6);
         CHECK(std::abs(mic[i] - (n >= 480 && n < 960 ? (ch ? .15f : .2f) : 0)) < 1e-6);
@@ -164,7 +163,7 @@ void debugDumpTimeline() {
         auto input = pcm(0, 960, .2f, .2f); mixer.push(0, *input);
         for (int n = 0; n < 2; ++n) {
             auto out = mixer.render(960); CHECK(out->pts == n * 480);
-            CHECK(std::abs(value(*out, 0, 0) - .2f * headroom) < 1e-6);
+            CHECK(std::abs(value(*out, 0, 0) - .2f) < 1e-6);
         }
     }
     CHECK(readText(invalid) == "keep");
@@ -189,7 +188,7 @@ void debugDumpWriteFailure() {
                 auto input = pcm(0, 960, .2f, .2f); mixer.push(0, *input);
                 for (int i = 0; i < 2; ++i) {
                     auto out = mixer.render(960); CHECK(out->pts == i * 480);
-                    CHECK(std::abs(value(*out, 0, 0) - .2f * headroom) < 1e-6);
+                    CHECK(std::abs(value(*out, 0, 0) - .2f) < 1e-6);
                 }
             }
             _exit(0);
@@ -219,8 +218,8 @@ void alignmentAndSilence() {
         CHECK(f->ch_layout.nb_channels == 2 && f->nb_samples == 480);
         for (int i = 0; i < f->nb_samples; ++i) {
             float expected = pts + i >= 960 && pts + i < 1920 ? .6f : .2f;
-            CHECK(std::abs(value(*f, 0, i) - expected * headroom) < 1e-5);
-            CHECK(std::abs(value(*f, 1, i) - expected * headroom) < 1e-5);
+            CHECK(std::abs(value(*f, 0, i) - expected) < 1e-5);
+            CHECK(std::abs(value(*f, 1, i) - expected) < 1e-5);
         }
     }
     CHECK(!mixer.render(4800));
@@ -231,6 +230,18 @@ void alignmentAndSilence() {
     CHECK(value(*idle, 0, 0) == 0);
 }
 void limiter() {
+    {
+        AudioTimelineMixer below(epoch);
+        auto input = pcm(0, 960, .35f, -.3f);
+        below.push(0, *input); below.push(1, *input); below.finish(0); below.finish(1);
+        while (auto out = below.render(below.end())) {
+            for (int j = 0; j < out->nb_samples; ++j) {
+                CHECK(std::abs(value(*out, 0, j) - .7f) < 1e-6);
+                CHECK(std::abs(value(*out, 1, j) + .6f) < 1e-6);
+            }
+        }
+        CHECK(below.stats().limited == 0); // no fixed attenuation below the ceiling
+    }
     AudioTimelineMixer mixer(epoch);
     auto f = pcm(0, 4800, .8f, .4f);
     mixer.push(0, *f); mixer.push(1, *f); mixer.finish(0); mixer.finish(1);
@@ -238,7 +249,7 @@ void limiter() {
         auto out = mixer.render(4800);
         for (int j = 0; j < out->nb_samples; ++j) {
             float l = value(*out,0,j), r = value(*out,1,j);
-            CHECK(std::isfinite(l) && std::abs(l) <= ceiling + 1e-6);
+            CHECK(std::isfinite(l) && std::abs(l - ceiling) < 1e-6);
             CHECK(std::abs(l - 2*r) < 1e-6); // linked gain preserves stereo image
         }
     }
@@ -269,7 +280,7 @@ void packedMicrophoneAndOverlap() {
     for (int i = 0; i < 1440; ++i) reinterpret_cast<int16_t *>(f->data[0])[i] = 8192;
     mixer.push(1, *f);
     auto out = mixer.render(480);
-    CHECK(value(*out,0,0) > .1f * headroom && value(*out,0,0) < .3f * headroom);
+    CHECK(value(*out,0,0) > .1f && value(*out,0,0) < .3f);
     CHECK(std::abs(value(*out,0,0) - value(*out,1,0)) < 1e-6);
     // A genuine 15 ms backward jump exceeds the jitter tolerance and overlaps
     // 720 samples. Small (e.g. 5 ms) PTS jitter now stays contiguous instead.
@@ -290,12 +301,12 @@ void clockDriftAndPacketSizes() {
         mixer.push(0, *f); samples += count;
         while (auto out = mixer.render(samples-9600))
             for (int i = 0; i < out->nb_samples; ++i)
-                CHECK(std::abs(value(*out,0,i)-.2f * headroom) < 1e-5);
+                CHECK(std::abs(value(*out,0,i)-.2f) < 1e-5);
     }
     mixer.finish(0);
     while (auto out = mixer.render(mixer.end()))
         for (int i = 0; i < out->nb_samples; ++i)
-            CHECK(std::abs(value(*out,0,i)-.2f * headroom) < 1e-5);
+            CHECK(std::abs(value(*out,0,i)-.2f) < 1e-5);
     CHECK(std::llabs(mixer.position() - samples) < 10);
     CHECK(mixer.stats().silence[0] == 0 && mixer.stats().trimmed[0] == 0);
     CHECK(mixer.stats().resyncs[0] == 0 && mixer.stats().frames[0] == 500);

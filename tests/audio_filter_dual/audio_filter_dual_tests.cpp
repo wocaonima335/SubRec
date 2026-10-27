@@ -282,8 +282,8 @@ void mixedWorkerDrainsBothSources(bool paused = false, bool injectFuture = false
     worker.start(); worker.wait();
     auto mixed = drain(output);
     CHECK(mixed.samples == kFrameSamples - (paused ? 480 : 0));
-    CHECK(near(mixed.lastLeft, (kSystemLevel + kMicrophoneLevel) * AudioTimelineMixer::aacHeadroomGain));
-    CHECK(near(mixed.lastRight, (kSystemLevel + kMicrophoneLevel) * AudioTimelineMixer::aacHeadroomGain));
+    CHECK(near(mixed.lastLeft, (kSystemLevel + kMicrophoneLevel)));
+    CHECK(near(mixed.lastRight, (kSystemLevel + kMicrophoneLevel)));
     CHECK(output.receive().result == MediaQueueResult::Eof);
     std::cout << "PASS: mixed worker consumes both sources and drains one output\n";
 }

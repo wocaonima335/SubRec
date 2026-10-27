@@ -1,4 +1,5 @@
 #include "ffaencoder.h"
+#include "audio_encoding_config.h"
 
 #include "queue/ffapacketqueue.h"
 
@@ -232,7 +233,7 @@ void FFAEncoder::initAudio(AVFrame *frame)
     std::lock_guard<std::mutex> lock(mutex);
 
     aPars = new FFAEncoderPars();
-    aPars->biteRate = 64 * 1024;
+    aPars->biteRate = audio_encoding::kAacBitRate;
     aPars->nbChannel = frame->ch_layout.nb_channels;
     aPars->sampleRate = frame->sample_rate;
     aPars->audioFmt = AV_SAMPLE_FMT_FLTP;

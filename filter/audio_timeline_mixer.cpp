@@ -14,7 +14,8 @@ namespace {
 constexpr int kCompensationDistance = 48000 * 10;
 void check(int code) { if (code < 0) { char text[AV_ERROR_MAX_STRING_SIZE]; av_strerror(code, text, sizeof(text)); throw std::runtime_error(text); } }
 }
-AudioTimelineMixer::AudioTimelineMixer(int64_t startUs) : startUs_(startUs) {
+AudioTimelineMixer::AudioTimelineMixer(int64_t startUs)
+    : startUs_(startUs), releaseCoeff_(std::exp(-1.0 / (0.050 * 48000))) {
     graph_ = avfilter_graph_alloc();
     if (!graph_) throw std::bad_alloc();
     try {
@@ -207,20 +208,19 @@ AudioTimelineMixer::Frame AudioTimelineMixer::render(int64_t target, double syst
     check(av_buffersink_get_frame(sink_, out.get()));
     if (dump_ && retainedOutput) dump_->submit(*aligned[0], *aligned[1]);
     // Stereo-linked sample-peak limiter: immediate attack, 50 ms exponential
-    // release. Additional post-limiter headroom covers AAC reconstruction overshoot.
+    // release and a -3 dBFS sample ceiling.
     // No buffering: sample count, PTS and the pre-amix dump timeline stay unchanged.
     auto *left = reinterpret_cast<float *>(out->extended_data[0]);
     auto *right = reinterpret_cast<float *>(out->extended_data[1]);
-    const double release = std::exp(-1.0 / (0.050 * 48000));
     for (int i = 0; i < out->nb_samples; ++i) {
         if (!std::isfinite(left[i])) left[i] = 0;
         if (!std::isfinite(right[i])) right[i] = 0;
         const double peak = std::max(std::abs(left[i]), std::abs(right[i]));
         const double needed = peak > limiterCeiling ? limiterCeiling / peak : 1;
-        limiterGain_ = std::min(needed, 1 - (1 - limiterGain_) * release);
+        limiterGain_ = std::min(needed, 1 - (1 - limiterGain_) * releaseCoeff_);
         if (limiterGain_ < 0.999999) ++stats_.limited;
-        left[i] *= limiterGain_ * aacHeadroomGain;
-        right[i] *= limiterGain_ * aacHeadroomGain;
+        left[i] *= limiterGain_;
+        right[i] *= limiterGain_;
     }
     out->time_base = {1,48000}; cursor_ += count;
     return out;
