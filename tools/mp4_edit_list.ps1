@@ -24,7 +24,7 @@ function Get-Mp4Boxes($Reader, [long]$Begin, [long]$End) {
     if ($Begin -lt 0 -or $End -gt $Reader.BaseStream.Length -or $End -lt $Begin) { throw 'Invalid MP4 bounds' }
     while ($Begin -lt $End) {
         if ($End - $Begin -lt 8) { throw 'Truncated MP4 box' }
-        [ulong]$size = Read-Mp4Number $Reader $Begin 4
+        [System.UInt64]$size = Read-Mp4Number $Reader $Begin 4
         $type = Read-Mp4Type $Reader ($Begin + 4)
         [long]$header = 8
         if ($size -eq 1) {
@@ -33,7 +33,7 @@ function Get-Mp4Boxes($Reader, [long]$Begin, [long]$End) {
             $header = 16
         }
         if ($size -eq 0) { $size = $End - $Begin }
-        if ($size -lt $header -or $size -gt [ulong]($End - $Begin)) { throw "Invalid MP4 box size: $type" }
+        if ($size -lt $header -or $size -gt [System.UInt64]($End - $Begin)) { throw "Invalid MP4 box size: $type" }
         [pscustomobject]@{ Type = $type; Data = $Begin + $header; End = $Begin + [long]$size }
         $Begin += [long]$size
     }

@@ -3,13 +3,42 @@ Set-StrictMode -Version 3
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../../tools/mp4_edit_list.ps1')
 
+function Get-PrimingOutputPath([string]$Line) {
+    if (-not $Line.StartsWith('PASS: elst ', [StringComparison]::Ordinal)) { return }
+    # Metadata contains commas; a Windows drive contains a colon. Only the last
+    # ', ' separates the unchanged C++ PASS line from its complete file path.
+    $separator = $Line.LastIndexOf(', ', [StringComparison]::Ordinal)
+    if ($separator -lt 0) { throw "Missing MP4 path separator: $Line" }
+    $path = $Line.Substring($separator + 2).Trim()
+    if (-not $path.EndsWith('.mp4', [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Invalid MP4 path in priming output: $Line"
+    }
+    return $path
+}
+
+# Parsing is independent of the host OS and does not require these paths to exist.
+foreach ($expectedPath in @('C:\Temp\aac-video-0-reorder-0.mp4',
+                            'C:\Users\PC 2\Temp\[capture]\aac-video-3-reorder-0.mp4',
+                            '\\PC2\recordings\aac-video-0-reorder-2.mp4',
+                            '/tmp/subrec-priming/aac-video-0-reorder-0.mp4')) {
+    $line = "PASS: elst media_time=1024, audio start=0, video start=0/30 reorder=0/30, $expectedPath  "
+    if ((Get-PrimingOutputPath $line) -cne $expectedPath) { throw "Priming path parsing failed: $expectedPath" }
+}
+if ($null -ne (Get-PrimingOutputPath 'Unrelated diagnostic, C:\Temp\ignored.mp4')) {
+    throw 'Non-priming output was accepted as a fixture path'
+}
+
 # Use the actual FFMuxer-generated AAC/H.264 files, including negative video DTS
 # and delayed video. These files are retained by the C++ test for inspection.
 $lines = @(& $PrimingTest)
 if ($LASTEXITCODE -ne 0) { throw 'AAC priming fixture generation failed' }
-$paths = @($lines | ForEach-Object { if ($_ -match ', (.+\.mp4)$') { $Matches[1] } })
+$paths = @($lines | ForEach-Object { Get-PrimingOutputPath ([string]$_) })
 if ($paths.Count -ne 3) { throw 'Expected three generated MP4 files' }
 foreach ($path in $paths) {
+    # LiteralPath also handles brackets in directory names without wildcard expansion.
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Generated MP4 file not found: $path"
+    }
     Assert-Mp4AacPriming $path
     $tracks = @(Get-Mp4EditLists $path)
     $video = @($tracks | Where-Object { $_.Handler -eq 'vide' })[0]
