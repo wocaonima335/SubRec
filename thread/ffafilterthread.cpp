@@ -381,7 +381,9 @@ void FFAFilterThread::runMixed()
                         << "trimmed_system=" << s.trimmed[0] << "trimmed_mic=" << s.trimmed[1]
                         << "future_dropped_system=" << s.futurePacketsDropped[0]
                         << "future_dropped_mic=" << s.futurePacketsDropped[1]
-                        << "limited_samples=" << s.limited;
+                        << "over_ceiling_samples=" << s.limited << "limiter_samples=" << s.limiterSamples
+                        << "over_ceiling_ratio=" << s.overCeilingRatio()
+                        << "max_gain_reduction_db=" << s.maxGainReductionDb;
                 filter->sendFinish();
                 return;
             }

@@ -241,6 +241,8 @@ void limiter() {
             }
         }
         CHECK(below.stats().limited == 0); // no fixed attenuation below the ceiling
+        CHECK(below.stats().limiterSamples == 960 && below.stats().overCeilingRatio() == 0);
+        CHECK(below.stats().maxGainReductionDb == 0);
     }
     AudioTimelineMixer mixer(epoch);
     auto f = pcm(0, 4800, .8f, .4f);
@@ -254,6 +256,44 @@ void limiter() {
         }
     }
     CHECK(mixer.stats().limited == 4800);
+}
+void limiterStatistics() {
+    AudioTimelineMixer mixer(epoch);
+    CHECK(mixer.stats().overCeilingRatio() == 0 && mixer.stats().maxGainReductionDb == 0);
+    // Constant source avoids resampler edge ringing. Source gain changes create
+    // exact limiter inputs: 480 frames at peak 1, 480 at 1.5, then 960 at .25.
+    auto input = pcm(0, 1920, .5f, -.25f);
+    mixer.push(0, *input); mixer.finish(0); mixer.finish(1);
+    CHECK(mixer.render(480, 2, 0));
+    CHECK(mixer.stats().limited == 480 && mixer.stats().limiterSamples == 480);
+    CHECK(mixer.stats().overCeilingRatio() == 1);
+    CHECK(std::abs(mixer.stats().maxGainReductionDb - 20*std::log10(1/ceiling)) < 1e-5);
+    CHECK(mixer.render(960, 3, 0));
+    // Both channels now exceed the ceiling, but each stereo sample counts once.
+    const double expectedDb = 20*std::log10(1.5/ceiling);
+    CHECK(mixer.stats().limited == 960 && mixer.stats().limiterSamples == 960);
+    CHECK(std::abs(mixer.stats().maxGainReductionDb - expectedDb) < 1e-5);
+    float previous = 0;
+    for (int end : {1440, 1920}) {
+        auto tail = mixer.render(end, .5, 0); CHECK(tail);
+        for (int i = 0; i < tail->nb_samples; ++i) {
+            const auto sample = value(*tail, 0, i);
+            CHECK(sample > previous && sample < .25f); // audible release still active
+            previous = sample;
+        }
+        CHECK(mixer.stats().limited == 960); // release cannot inflate the count
+    }
+    CHECK(mixer.stats().limiterSamples == 1920 && mixer.stats().overCeilingRatio() == .5);
+    CHECK(std::abs(mixer.stats().maxGainReductionDb - expectedDb) < 1e-5);
+    CHECK(!mixer.render(1920)); // no output, no change in denominator
+    CHECK(mixer.stats().limiterSamples == 1920);
+    CHECK(mixer.render(2400)); // silence contributes to denominator, not numerator
+    CHECK(mixer.stats().limited == 960 && mixer.stats().limiterSamples == 2400);
+    CHECK(mixer.stats().overCeilingRatio() == .4);
+    CHECK(std::abs(mixer.stats().maxGainReductionDb - expectedDb) < 1e-5);
+    std::cout << "limiter stats: over_ceiling=" << mixer.stats().limited << "/"
+              << mixer.stats().limiterSamples << " ratio=" << mixer.stats().overCeilingRatio()
+              << " max_gain_reduction_db=" << mixer.stats().maxGainReductionDb << '\n';
 }
 void resamplingAndDrain() {
     AudioTimelineMixer mixer(epoch);
@@ -371,7 +411,7 @@ int main() {
         debugDumpTimeline();
         debugDumpWriteFailure();
         futurePacketsAreIsolated();
-        alignmentAndSilence(); limiter(); resamplingAndDrain(); packedMicrophoneAndOverlap(); clockDriftAndPacketSizes();
+        alignmentAndSilence(); limiter(); limiterStatistics(); resamplingAndDrain(); packedMicrophoneAndOverlap(); clockDriftAndPacketSizes();
         std::cout << "PASS: timestamp alignment, silence, drift, limiter, conversion, future-packet isolation and raw/JSON debug dumps\n";
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }

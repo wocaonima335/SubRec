@@ -212,16 +212,22 @@ AudioTimelineMixer::Frame AudioTimelineMixer::render(int64_t target, double syst
     // No buffering: sample count, PTS and the pre-amix dump timeline stay unchanged.
     auto *left = reinterpret_cast<float *>(out->extended_data[0]);
     auto *right = reinterpret_cast<float *>(out->extended_data[1]);
+    double minimumGain = 1;
     for (int i = 0; i < out->nb_samples; ++i) {
         if (!std::isfinite(left[i])) left[i] = 0;
         if (!std::isfinite(right[i])) right[i] = 0;
         const double peak = std::max(std::abs(left[i]), std::abs(right[i]));
         const double needed = peak > limiterCeiling ? limiterCeiling / peak : 1;
         limiterGain_ = std::min(needed, 1 - (1 - limiterGain_) * releaseCoeff_);
-        if (limiterGain_ < 0.999999) ++stats_.limited;
+        if (peak > limiterCeiling) ++stats_.limited;
+        minimumGain = std::min(minimumGain, limiterGain_);
         left[i] *= limiterGain_;
         right[i] *= limiterGain_;
     }
+    stats_.limiterSamples += out->nb_samples;
+    // One logarithm per output block, not per sample in the hot loop.
+    if (minimumGain < 1)
+        stats_.maxGainReductionDb = std::max(stats_.maxGainReductionDb, -20 * std::log10(minimumGain));
     out->time_base = {1,48000}; cursor_ += count;
     return out;
 }

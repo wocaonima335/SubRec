@@ -22,7 +22,16 @@ public:
     using Frame = std::unique_ptr<AVFrame, FrameDelete>;
     static constexpr int64_t resyncThresholdUs = 10000;
     struct Stats {
-        uint64_t frames[2]{}, silence[2]{}, trimmed[2]{}, limited = 0, resyncs[2]{};
+        uint64_t frames[2]{}, silence[2]{}, trimmed[2]{}, resyncs[2]{};
+        // Stereo sample frames at the limiter input (after source gains/amix).
+        // Keep limited for existing callers, but count only frames where either
+        // channel exceeds the ceiling, never gain attenuation during release.
+        // Denominator includes all rendered frames, including silence/paused output.
+        uint64_t limited = 0, limiterSamples = 0;
+        double maxGainReductionDb = 0;
+        double overCeilingRatio() const {
+            return limiterSamples ? double(limited) / limiterSamples : 0;
+        }
         uint64_t futurePacketsDropped[2]{};
         double compensationPpm[2]{}, phaseErrorUs[2]{};
     };

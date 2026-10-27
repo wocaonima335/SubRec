@@ -178,7 +178,9 @@ Audio mix(const std::array<Audio, 2> &inputs, bool requireLimiting = false) {
         append(result, *mixed);
     }
     require(result[0].size() == duration, "resampler lost final samples");
-    if (requireLimiting) require(mixer.stats().limited > 0, "test did not exercise limiter");
+    if (requireLimiting) require(mixer.stats().limited > 0 && mixer.stats().overCeilingRatio() > 0 &&
+                                mixer.stats().maxGainReductionDb > 0,
+                                "test needs pre-limiter samples above ceiling, not just release attenuation");
     return result;
 }
 Audio loudMix(int scenario) {
