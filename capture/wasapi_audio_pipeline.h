@@ -13,6 +13,9 @@ public:
         drainConverter();
         inputFormat_ = std::make_unique<media::AudioFormat>(format);
         converter_ = std::make_unique<media::AudioConverter>(format);
+        // Reconnect on the existing session timeline: the next real timestamp
+        // establishes any gap or overlap, even if no idle poll occurs first.
+        if (sessionStartUs_ != AV_NOPTS_VALUE) alignNextReal_ = true;
     }
     void setSessionStartUs(int64_t time) {
         sessionStartUs_ = time;

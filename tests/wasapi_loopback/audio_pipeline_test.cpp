@@ -197,6 +197,69 @@ void repeatedIdleAndResume() {
     std::cout << "3 idle/resume cycles: samples=" << sink.samples
               << " generated=" << pipeline.generatedSilenceSamples() << '\n';
 }
+void initialConfigureWithoutSession() {
+    Sink sink; sink.checkCaptureOrder = true;
+    wasapi::AudioPipeline pipeline(sink);
+    AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+    pipeline.configure(media::AudioFormat(rate, AV_SAMPLE_FMT_FLT, stereo, {1,int(rate)}));
+    auto first = pcm(rate, atMs(10));
+    require(pipeline.packet(*first, epoch+50000));
+    pipeline.stop(false);
+    // Without a session origin, configure must not infer a startup gap.
+    require(sink.samples == atMs(10) && pipeline.generatedSilenceSamples() == 0);
+    require(sink.lastCaptureUs == epoch+50000 && sink.finished == 1);
+    for (float value : sink.left) require(value == .25f);
+}
+void reconnectImmediatePacket() {
+    for (int oldRate : {48000, 44100}) {
+        Sink sink; sink.checkCaptureOrder = true;
+        wasapi::AudioPipeline pipeline(sink); configure(pipeline, oldRate);
+        auto first = pcm(oldRate, oldRate/100);
+        require(pipeline.packet(*first, epoch));
+        AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+        // Reopen without resetting the session or entering idleUntil(). The
+        // old converter's real tail must be drained before the new gap is filled.
+        pipeline.configure(media::AudioFormat(rate, AV_SAMPLE_FMT_FLT, stereo, {1,int(rate)}));
+        require(sink.samples == atMs(10) && pipeline.generatedSilenceSamples() == 0);
+        auto resumed = pcm(rate, atMs(10), .5f);
+        require(pipeline.packet(*resumed, epoch+30000));
+        auto next = pcm(rate, atMs(10), .75f);
+        require(pipeline.packet(*next, epoch+40000));
+        pipeline.stop(false);
+        require(sink.samples == atMs(50) && sink.finished == 1);
+        require(pipeline.generatedSilenceSamples() == atMs(20));
+        require(sink.lastCaptureEndUs == epoch+50000);
+        for (int64_t i = 0; i < sink.samples; ++i) {
+            const float expected = i < atMs(10) ? .25f : i < atMs(30) ? 0 :
+                                   i < atMs(40) ? .5f : .75f;
+            require(std::abs(sink.left[i]-expected) < .001f);
+        }
+        std::cout << "reconnect " << oldRate << " -> " << rate << ": samples=" << sink.samples
+                  << " generated=" << pipeline.generatedSilenceSamples() << '\n';
+    }
+}
+void reconnectOverlappingPackets() {
+    Sink sink; sink.checkCaptureOrder = true;
+    wasapi::AudioPipeline pipeline(sink); configure(pipeline);
+    auto first = pcm(rate, atMs(10)); require(pipeline.packet(*first, epoch));
+    AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+    pipeline.configure(media::AudioFormat(rate, AV_SAMPLE_FMT_FLT, stereo, {1,int(rate)}));
+    auto stale = pcm(rate, atMs(5), -.75f);
+    require(pipeline.packet(*stale, epoch)); // discard entire [0,5) ms packet
+    require(sink.samples == atMs(10));
+    auto overlap = pcm(rate, atMs(10), .5f);
+    require(pipeline.packet(*overlap, epoch+5000)); // keep only [10,15) ms
+    require(sink.samples == atMs(15));
+    auto next = pcm(rate, atMs(10), .75f);
+    require(pipeline.packet(*next, epoch+15000));
+    pipeline.stop(false);
+    require(sink.samples == atMs(25) && pipeline.generatedSilenceSamples() == 0);
+    require(sink.lastCaptureEndUs == epoch+25000 && sink.finished == 1);
+    for (int64_t i = 0; i < sink.samples; ++i)
+        require(sink.left[i] == (i < atMs(10) ? .25f : i < atMs(15) ? .5f : .75f));
+    std::cout << "reconnect overlap: discarded " << atMs(10)
+              << " samples, output=" << sink.samples << '\n';
+}
 void terminalDrainAndPadding() {
     // Same final drain helper as production; Stop must not manufacture a new
     // idle interval. Test both unqualified and already qualified tail padding.
@@ -233,6 +296,7 @@ void terminalDrainAndPadding() {
 
 int main() {
     try {
+        initialConfigureWithoutSession(); reconnectImmediatePacket(); reconnectOverlappingPackets();
         terminalDrainAndPadding();
         neverReceivedAndStop(); guardedSilenceAndResume(); lateResume(); delayedDataDoesNotPad();
         delayedDeviceStart(); repeatedIdleAndResume();
