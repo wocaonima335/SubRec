@@ -105,7 +105,7 @@ void sinkCounters() {
     CHECK(stats.blockedNs >= 20000000 && stats.maxBlockedNs == stats.blockedNs && stats.rejectedSamples == 480);
     auto *f=frame(); CHECK(!sink.push(f)); av_frame_free(&f);
     CHECK(sink.diagnostics().blockedNs == stats.blockedNs && sink.diagnostics().rejectedSamples == 960);
-    std::cout << "PASS: WASAPI sink full-queue wait_ms=" << stats.blockedNs/1000000.0 << " rejected_samples=960\n";
+    std::cout << "PASS: delivery sink full-queue wait_ms=" << stats.blockedNs/1000000.0 << " rejected_samples=960\n";
 }
 void muxDropCounters() {
     FFAPacketQueue audio; FFVPacketQueue video;

@@ -42,7 +42,7 @@ endif()
 # Run the actual AAC encoder, bounded packet queues and mux worker; only the
 # unused recorder/UI hooks are replaced in this standalone Core-only target.
 add_executable(aac_pipeline_priming_tests aac_pipeline_priming_tests.cpp
-    ../../encoder/ffaencoder.cpp ../../queue/ffapacketqueue.cpp
+    ../../encoder/ffaencoder.cpp ../../queue/ffapacketqueue.cpp ../../queue/ffaframequeue.cpp
     ../../queue/ffvpacketqueue.cpp ../../thread/ffthread.cpp
     ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp)
 target_compile_features(aac_pipeline_priming_tests PRIVATE cxx_std_17)

@@ -12,6 +12,7 @@
 #include "wasapi_drain.h"
 #include <avrt.h>
 #include "wasapi_audio_pipeline.h"
+#include "wasapi_buffered_sink.h"
 #include "wasapi_silence_policy.h"
 #include "wasapi_packet_diagnostics.h"
 #include <QDebug>
@@ -78,7 +79,10 @@ struct LoopbackCapture::Impl {
     HANDLE wake = nullptr;
     CaptureStartResult result;
     MixFormat mix;
-    LoopbackStats statistics;
+    LoopbackStats statistics; // capture-thread owned
+    mutable std::mutex statsMutex;
+    LoopbackStats publishedStatistics;
+    bool finishedLogged = false; // control thread, after joining both workers
     PacketDiagnostics packetDiagnostics;
     std::atomic<int64_t> startUs{0};
     int64_t startQpc = 0;
@@ -155,7 +159,6 @@ struct LoopbackCapture::Impl {
     }
     void updateStatistics(const AudioPipeline &pipeline) {
         const auto sinkStats = sink->diagnostics();
-        std::lock_guard<std::mutex> lock(mutex);
         statistics.outputFrames = pipeline.samples();
         statistics.generatedSilenceFrames = pipeline.generatedSilenceSamples();
         statistics.trimmedSamples = pipeline.trimmedSamples();
@@ -165,6 +168,10 @@ struct LoopbackCapture::Impl {
         statistics.sinkBlockedMs = sinkStats.blockedNs / 1000000.0;
         statistics.sinkBlockedMaxMs = sinkStats.maxBlockedNs / 1000000.0;
         statistics.rejectedSamples = sinkStats.rejectedSamples;
+        // Observers cannot stall live device capture. A contended snapshot is
+        // simply skipped; joinFor publishes the final one on the control thread.
+        std::unique_lock<std::mutex> lock(statsMutex, std::try_to_lock);
+        if (lock.owns_lock()) publishedStatistics = statistics;
     }
     void run() {
         bool opened = false;
@@ -198,9 +205,7 @@ struct LoopbackCapture::Impl {
                 startQpc = qpc100ns(); startUs = av_gettime_relative();
                 pipeline.setSessionStartUs(startUs);
                 check(stream->client->Start(), "Start"); stream->started = true; state = LoopbackState::Running;
-                qInfo() << "[WASAPI] started";
             }
-            bool first = true;
             SilencePolicy silence(startUs);
             auto fill = [&](bool receivedPacket, bool bufferEmpty) {
                 if (!config.fillIdleWithSilence || !startQpc || abort || stop) return;
@@ -247,12 +252,9 @@ struct LoopbackCapture::Impl {
                                 } else memcpy(frame->data[0], data, size_t(count) * stream->format.p->nBlockAlign);
                                 if (!(flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)) {
                                     int64_t expected = (static_cast<int64_t>(qpc) - startQpc) * kOutputSampleRate / 10000000;
-                                    if (first || std::llabs(expected - pipeline.samples()) > SilencePolicy::kMinimumGapSamples)
-                                        qInfo() << "[WASAPI] packet clock delta samples" << expected - pipeline.samples() << "first" << first;
                                     if (std::llabs(expected - pipeline.samples()) > SilencePolicy::kMinimumGapSamples) {
-                                        std::lock_guard<std::mutex> lock(mutex); ++statistics.driftWarnings;
+                                        ++statistics.driftWarnings;
                                     }
-                                    first = false;
                                 }
                                 const int64_t captureUs = (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
                                     ? av_gettime_relative() - int64_t(count) * 1000000 / info.sampleRate
@@ -260,7 +262,6 @@ struct LoopbackCapture::Impl {
                                 silence.packet(); // Any real/SILENT packet resets idle evidence.
                                 if (!pipeline.packet(*frame, captureUs)) abort = true;
                                 updateStatistics(pipeline);
-                                std::lock_guard<std::mutex> lock(mutex);
                                 ++statistics.packets; statistics.deviceFrames += count;
                                 statistics.generatedSilenceFrames = pipeline.generatedSilenceSamples();
                                 if (flags & AUDCLNT_BUFFERFLAGS_SILENT) statistics.silentPacketFrames += count;
@@ -309,7 +310,7 @@ struct LoopbackCapture::Impl {
                         [&] {
                             stream = openStream(enumerator.p, event.handle, pipeline);
                             check(stream->client->Start(), "Restart"); stream->started = true;
-                            std::lock_guard<std::mutex> lock(mutex); ++statistics.reopenCount;
+                            ++statistics.reopenCount;
                         },
                         [&](int attempt, const auto &failure) {
                             stream.reset();
@@ -349,15 +350,27 @@ struct LoopbackCapture::Impl {
             if (!opened) publish(failure(E_FAIL, QStringLiteral("unexpected capture error"), CaptureErrorStage::InputOpen));
             else runtimeFailure(E_FAIL, QStringLiteral("unexpected capture error"));
         }
-        // The scope guard commits counters even on conversion/device exceptions.
-        const auto &s = statistics; // worker-only writes; public snapshots take mutex
+        // Also terminate the delivery worker if opening/configuration failed.
+        sink->finish();
+    }
+    void logFinished() {
+        if (finishedLogged) return;
+        finishedLogged = true;
+        const auto &s = statistics; // capture task has joined
+        const auto delivery = sink->diagnostics();
         qInfo() << "[WASAPI] finished samples=" << s.outputFrames
                 << "generated_silence_samples=" << s.generatedSilenceFrames
                 << "data_discontinuities=" << s.discontinuities
                 << "lost_samples_48k_estimate=" << s.estimatedLostSamples
                 << "unquantified_discontinuities=" << s.unquantifiedDiscontinuities
-                << "trimmed_samples_48k=" << s.trimmedSamples << "sink_rejected_samples_48k=" << s.rejectedSamples
-                << "enqueue_blocked_total_ms=" << s.sinkBlockedMs << "enqueue_blocked_max_ms=" << s.sinkBlockedMaxMs
+                << "trimmed_samples_48k=" << s.trimmedSamples << "sink_rejected_samples_48k=" << delivery.rejectedSamples
+                << "enqueue_blocked_total_ms=" << delivery.blockedNs / 1000000.0
+                << "enqueue_blocked_max_ms=" << delivery.maxBlockedNs / 1000000.0
+                << "downstream_dropped_samples_48k=" << delivery.downstreamDroppedSamples
+                << "downstream_dropped_frames=" << delivery.downstreamDroppedFrames
+                << "downstream_silence_samples_48k=" << delivery.downstreamSilenceSamples
+                << "delivery_blocked_total_ms=" << delivery.deliveryBlockedNs / 1000000.0
+                << "delivery_blocked_max_ms=" << delivery.deliveryMaxBlockedNs / 1000000.0
                 << "abort=" << bool(abort);
     }
     void runtimeFailure(HRESULT hr, const QString &operation) {
@@ -375,7 +388,9 @@ LoopbackCapture::~LoopbackCapture() { requestAbort(); join(); }
 CaptureStartResult LoopbackCapture::open(std::shared_ptr<AudioFrameSink> sink, std::chrono::milliseconds timeout) {
     if (!sink || worker_.started() || worker_.completion()->timedOut())
         return failure(E_INVALIDARG, QStringLiteral("open (single-use instance)"), CaptureErrorStage::Configuration);
-    d->sink = std::move(sink);
+    d->sink = std::make_shared<BufferedAudioSink>(std::move(sink),
+        BufferedAudioSink::kCapacityFrames, BufferedAudioSink::kCapacitySamples,
+        [] { qInfo() << "[WASAPI] started"; }); // delivery thread, preserves PC2 probe marker
     d->runtimeError = onRuntimeError;
     worker_.start([impl = d] { impl->run(); });
     if (!worker_.waitPrepared(timeout)) {
@@ -393,7 +408,16 @@ void LoopbackCapture::requestAbort() {
     if (d->sink) d->sink->cancel();
     d->signal();
 }
-bool LoopbackCapture::joinFor(std::chrono::milliseconds timeout) { return worker_.joinFor(timeout); }
+bool LoopbackCapture::joinFor(std::chrono::milliseconds timeout) {
+    const auto end = std::chrono::steady_clock::now() + timeout;
+    if (!worker_.joinFor(timeout)) return false;
+    const auto remaining = std::max(std::chrono::milliseconds(0),
+        std::chrono::duration_cast<std::chrono::milliseconds>(end - std::chrono::steady_clock::now()));
+    if (d->sink && !d->sink->joinFor(remaining)) return false;
+    { std::lock_guard<std::mutex> lock(d->statsMutex); d->publishedStatistics = d->statistics; }
+    if (d->sink) d->logFinished();
+    return true;
+}
 void LoopbackCapture::abandon() { requestAbort(); worker_.abandon(); }
 void LoopbackCapture::join() {
     if (!joinFor(std::chrono::milliseconds(500))) {
@@ -405,7 +429,20 @@ LoopbackState LoopbackCapture::state() const {
     return worker_.completion()->timedOut() ? LoopbackState::Failed : d->state.load();
 }
 MixFormat LoopbackCapture::mixFormat() const { std::lock_guard<std::mutex> lock(d->mutex); return d->mix; }
-LoopbackStats LoopbackCapture::stats() const { std::lock_guard<std::mutex> lock(d->mutex); return d->statistics; }
+LoopbackStats LoopbackCapture::stats() const {
+    LoopbackStats result;
+    { std::lock_guard<std::mutex> lock(d->statsMutex); result = d->publishedStatistics; }
+    if (d->sink) {
+        const auto s = d->sink->diagnostics();
+        result.downstreamDroppedSamples = s.downstreamDroppedSamples;
+        result.downstreamDroppedFrames = s.downstreamDroppedFrames;
+        result.downstreamSilenceSamples = s.downstreamSilenceSamples;
+        result.deliveryBlockedMs = s.deliveryBlockedNs / 1000000.0;
+        result.deliveryBlockedMaxMs = s.deliveryMaxBlockedNs / 1000000.0;
+        result.rejectedSamples = s.rejectedSamples;
+    }
+    return result;
+}
 int64_t LoopbackCapture::startQpcUs() const { return d->startUs; }
 std::vector<EndpointInfo> LoopbackCapture::enumerateEndpoints() {
     std::vector<EndpointInfo> result;

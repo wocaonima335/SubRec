@@ -96,3 +96,15 @@ foreach(target IN ITEMS wasapi_worker_lifetime_test wasapi_queue_sink_lifetime_t
         set_tests_properties(${target} PROPERTIES ENVIRONMENT "PATH=${_audio_filter_path}")
     endif()
 endforeach()
+
+# B2: capture must keep delivering while the muxer/downstream waits for video.
+add_executable(wasapi_buffered_sink_test ../wasapi_loopback/buffered_sink_test.cpp
+    ../../queue/ffaframequeue.cpp)
+target_compile_features(wasapi_buffered_sink_test PRIVATE cxx_std_17)
+target_include_directories(wasapi_buffered_sink_test PRIVATE ../.. ${FFMPEG_INCLUDE_DIR})
+target_link_libraries(wasapi_buffered_sink_test PRIVATE Threads::Threads Qt6::Core ${FFMPEG_LIBRARIES})
+add_test(NAME wasapi_buffered_sink COMMAND wasapi_buffered_sink_test)
+set_tests_properties(wasapi_buffered_sink PROPERTIES TIMEOUT 15 LABELS "audio;wasapi;backpressure")
+if(WIN32)
+    set_tests_properties(wasapi_buffered_sink PROPERTIES ENVIRONMENT "PATH=${_audio_filter_path}")
+endif()

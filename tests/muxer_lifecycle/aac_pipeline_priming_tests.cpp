@@ -4,13 +4,15 @@
 #include "queue/ffvpacketqueue.h"
 #include "thread/ffmuxerthread.h"
 #include "capture/test_video_start_delay.h"
+#include "capture/wasapi_buffered_sink.h"
+#include "capture/wasapi_queue_sink.h"
 #include <thread>
 
 namespace {
 void runPipeline(const std::filesystem::path &root, int videoStart, int reorder,
-                 bool delayedVideo, int stalled = 0) {
+                 bool delayedVideo, int stalled = 0, bool bufferedCapture = false) {
     const auto path = (root / ("pipeline-video-" + std::to_string(videoStart) +
-        "-reorder-" + std::to_string(reorder) + (delayedVideo ? "-delayed" : "") + "-stall-" + std::to_string(stalled) + ".mp4")).string();
+        "-reorder-" + std::to_string(reorder) + (bufferedCapture ? "-buffered" : "") + (delayedVideo ? "-delayed" : "") + "-stall-" + std::to_string(stalled) + ".mp4")).string();
     FFAPacketQueue audio;
     FFVPacketQueue video;
     audio.start(); video.start();
@@ -45,16 +47,37 @@ void runPipeline(const std::filesystem::path &root, int videoStart, int reorder,
                 .2f * std::sin(6.283185307179586 * 440 * (n*1024+i) / 48000);
         CHECK(encoder.encode(frame.get(), ai, frame->pts, {1,48000}) == 0);
     };
-    encodeFrame(0); encodeFrame(1);
-    CHECK(audio.peekQueue());
-    CHECK(audio.peekQueue()->packet.pts == -1024 && audio.peekQueue()->packet.dts == -1024);
+    if (!bufferedCapture) {
+        encodeFrame(0); encodeFrame(1);
+        CHECK(audio.peekQueue());
+        CHECK(audio.peekQueue()->packet.pts == -1024 && audio.peekQueue()->packet.dts == -1024);
+    }
+    FFAFrameQueue captureQueue;
+    auto delivery = std::make_shared<capture::wasapi::QueueAudioSink>(captureQueue, false);
+    std::unique_ptr<capture::wasapi::BufferedAudioSink> captureSink;
+    if (bufferedCapture) captureSink = std::make_unique<capture::wasapi::BufferedAudioSink>(delivery);
     FFMuxerThread worker; worker.init(&audio, &video, &mux, &encoder, nullptr, nullptr);
     worker.start();
-    const int audioFrames = stalled ? 16 : 96;
+    const int audioFrames = bufferedCapture ? 144 : stalled ? 16 : 96;
+    uint64_t maxPushNs = 0;
+    std::exception_ptr captureError;
+    std::thread captureProducer;
     std::exception_ptr producerError;
     std::thread producer([&] {
         try {
-            for (int n = 2; n < audioFrames; ++n) encodeFrame(n);
+            if (bufferedCapture) {
+                for (int n=0; n<audioFrames; ++n) {
+                    auto result = captureQueue.receive();
+                    std::unique_ptr<AVFrame,FrameDelete> pcm(result.item);
+                    CHECK(result.ok() && pcm->pts == n*1024 && pcm->nb_samples == 1024);
+                    // PCM reaches the actual encoder intact and in original order.
+                    for (int ch=0; ch<2; ++ch) for (int i=0; i<1024; ++i)
+                        CHECK(reinterpret_cast<float *>(pcm->data[ch])[i] ==
+                              float(.2 * std::sin(6.283185307179586 * 440 * (n*1024+i) / 48000)));
+                    CHECK(encoder.encode(pcm.get(), ai, pcm->pts, pcm->time_base) == 0);
+                }
+                CHECK(captureQueue.receive().result == MediaQueueResult::Eof);
+            } else for (int n = 2; n < audioFrames; ++n) encodeFrame(n);
             if (stalled == 1 || stalled == 3 || stalled == 4) {
                 CHECK(encoder.encode(nullptr, ai, AV_NOPTS_VALUE, {1,48000}) == 0);
                 // Fake stalled source: all currently available packets, but no EOF.
@@ -64,15 +87,42 @@ void runPipeline(const std::filesystem::path &root, int videoStart, int reorder,
         }
     });
     struct Cleanup {
-        FFMuxerThread &worker; std::thread &producer;
-        ~Cleanup() { worker.requestAbort(); if (producer.joinable()) producer.join(); worker.wait(); }
-    } cleanup{worker, producer};
+        FFMuxerThread &worker; std::thread &producer, &capture;
+        FFAFrameQueue &queue; std::unique_ptr<capture::wasapi::BufferedAudioSink> &sink;
+        ~Cleanup() {
+            worker.requestAbort(); if (sink) sink->cancel(); queue.close();
+            if (capture.joinable()) capture.join();
+            if (producer.joinable()) producer.join();
+            worker.wait(); if (sink) sink->joinFor(std::chrono::seconds(1));
+        }
+    } cleanup{worker, producer, captureProducer, captureQueue, captureSink};
+    if (bufferedCapture) captureProducer = std::thread([&] {
+        try {
+            const auto start = std::chrono::steady_clock::now();
+            for (int n=0; n<audioFrames; ++n) {
+                std::unique_ptr<AVFrame,FrameDelete> pcm(av_frame_alloc()); CHECK(pcm);
+                pcm->format=AV_SAMPLE_FMT_FLTP; pcm->sample_rate=48000; pcm->nb_samples=1024;
+                pcm->pts=n*1024; pcm->time_base={1,48000};
+                av_channel_layout_default(&pcm->ch_layout, 2); CHECK(av_frame_get_buffer(pcm.get(), 0) == 0);
+                for (int ch=0; ch<2; ++ch) for (int i=0; i<1024; ++i)
+                    reinterpret_cast<float *>(pcm->data[ch])[i] =
+                        float(.2 * std::sin(6.283185307179586 * 440 * (n*1024+i) / 48000));
+                const auto before=std::chrono::steady_clock::now();
+                CHECK(captureSink->push(pcm.get()));
+                const auto ns=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-before).count();
+                maxPushNs=std::max(maxPushNs, static_cast<uint64_t>(ns));
+                std::this_thread::sleep_until(start + std::chrono::microseconds((n+1)*1024LL*1000000/48000));
+            }
+            captureSink->finish();
+        } catch (...) { captureError=std::current_exception(); captureSink->cancel(); worker.requestAbort(); }
+    });
     // The old worker consumed one audio packet per 5 ms and discarded everything
     // beyond 24 packets. 400 ms exercises both that loss and queue backpressure.
-    capture::test::VideoStartDelay delay(std::chrono::milliseconds(delayedVideo ? 400 : 0));
+    const int delayMs = bufferedCapture ? 2300 : delayedVideo ? 400 : 0;
+    capture::test::VideoStartDelay delay{std::chrono::milliseconds(delayMs)};
     CHECK(delay.beforeFirstPacket([](auto duration) {
         std::this_thread::sleep_for(duration); return false;
-    }, [](auto ms) { CHECK(ms == 400); }));
+    }, [delayMs](auto ms) { CHECK(ms == delayMs); }));
     for (int n = 0; n < (stalled == 4 ? 0 : 30); ++n) {
         Packet p(av_packet_alloc()); CHECK(p && av_new_packet(p.get(), sizeof(h264)) == 0);
         std::memcpy(p->data, h264, sizeof(h264)); p->stream_index = vi;
@@ -81,7 +131,19 @@ void runPipeline(const std::filesystem::path &root, int videoStart, int reorder,
     }
     if (stalled != 2 && stalled != 3 && stalled != 4)
         CHECK(video.sendFinish() == MediaQueueResult::Eof);
+    if (captureProducer.joinable()) captureProducer.join();
+    if (captureError) std::rethrow_exception(captureError);
     producer.join();
+    if (bufferedCapture) {
+        CHECK(captureSink->joinFor(std::chrono::seconds(1)));
+        const auto stats = captureSink->diagnostics();
+        CHECK(maxPushNs < 1000000 && stats.blockedNs == 0 && stats.maxBlockedNs == 0);
+        CHECK(stats.downstreamDroppedSamples == 0 && stats.downstreamDroppedFrames == 0);
+        CHECK(stats.deliveryBlockedNs > 0);
+        std::cout << "PASS: capture -> buffered delivery -> FFAEncoder -> mux, video delay=2300 ms, "
+                  << "samples=" << audioFrames*1024 << " lost=0 capture_wait_ms=0 push_max_us=" << maxPushNs/1000.0
+                  << " delivery_wait_ms=" << stats.deliveryBlockedNs/1000000.0 << '\n';
+    }
     if (stalled) {
         // Silence during recording must not auto-finalize; arm only at Stop.
         CHECK(!worker.waitFor(std::chrono::milliseconds(40)));
@@ -144,6 +206,7 @@ int main() {
         runPipeline(root, 0, 2, false);
         runPipeline(root, 3, 0, false);
         runPipeline(root, 3, 2, true);
+        runPipeline(root, 69, 2, true, 0, true); // 2.3 s late video; real capture delivery path
         runPipeline(root, 3, 2, false, 1); // missing audio EOF
         runPipeline(root, 0, 2, false, 2); // missing video EOF
         runPipeline(root, 0, 0, false, 3); // neither sends EOF
