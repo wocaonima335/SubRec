@@ -1,3 +1,4 @@
+#include "logging/frame_log.h"
 #include "ffadecoder.h"
 
 #include "queue/ffaframequeue.h"
@@ -104,7 +105,7 @@ void FFADecoder::decode(AVPacket *packet)
 
                     if (frmQueue != nullptr)
                     {
-                        qDebug() << "[ADec] Calling processDecodedFrame and enqueue";
+                        qCDebug(subrec::logging::frameLog) << "[ADec] Calling processDecodedFrame and enqueue";
                         processDecodedFrame(swrFrame);
                         frmQueue->enqueue(swrFrame);
                     }
@@ -126,7 +127,7 @@ void FFADecoder::decode(AVPacket *packet)
                 }
                 else
                 {
-                    qDebug() << "[ADec] No resampler: frame pts=" << frame->pts
+                    qCDebug(subrec::logging::frameLog) << "[ADec] No resampler: frame pts=" << frame->pts
                              << "nb_samples=" << frame->nb_samples
                              << "format=" << frame->format;
                     processDecodedFrame(frame);
@@ -286,7 +287,7 @@ void FFADecoder::processDecodedFrame(AVFrame *frame)
 
     if (!sampler || !sampler->isActive())
     {
-        qDebug() << "Audio sampler is not active, skipping sample collection.";
+        qCDebug(subrec::logging::frameLog) << "Audio sampler is not active, skipping sample collection.";
         return; // 采样器未启动，跳过
     }
 

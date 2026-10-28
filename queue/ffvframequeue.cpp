@@ -1,3 +1,4 @@
+#include "logging/frame_log.h"
 #include "ffvframequeue.h"
 
 #define MAX_FRAME_SIZE 2
@@ -22,9 +23,9 @@ MediaQueueReadResult<AVFrame> FFVFrameQueue::receive()
 void FFVFrameQueue::enqueue(AVFrame *srcFrame)
 {
     // auto start = std::chrono::steady_clock::now();
-    qDebug() << "[FFVFrameQueue] enqueue enter";
+    qCDebug(subrec::logging::frameLog) << "[FFVFrameQueue] enqueue enter";
     impl->enqueueFromSrc(srcFrame);
-    qDebug() << "[FFVFrameQueue] enqueue leave";
+    qCDebug(subrec::logging::frameLog) << "[FFVFrameQueue] enqueue leave";
     // auto end = std::chrono::steady_clock::now();
 
     m_enqueueCount.fetch_add(1, std::memory_order_relaxed);

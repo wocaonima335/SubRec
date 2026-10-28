@@ -1,3 +1,4 @@
+#include "logging/frame_log.h"
 #include "ffmuxer.h"
 #include <libavutil/timestamp.h>
 #include <cerrno>
@@ -85,7 +86,7 @@ int FFMuxer::mux(AVPacket *packet) {
   av_ts_make_string(dts_buf, packet->dts);
   av_ts_make_string(duration_buf, packet->duration);
 
-  qDebug().noquote() << "[Mux Input]" << streamType
+  qCDebug(subrec::logging::frameLog).noquote() << "[Mux Input]" << streamType
                      << "pkt stream_index=" << streamIndex << "pts=" << pts_buf
                      << "dts=" << dts_buf << "duration=" << duration_buf
                      << "size=" << packet->size;
@@ -137,7 +138,7 @@ int FFMuxer::mux(AVPacket *packet) {
     av_ts_make_string(pts_buf, packet->pts);
     av_ts_make_string(dts_buf, packet->dts);
 
-    qDebug().noquote()
+    qCDebug(subrec::logging::frameLog).noquote()
         << "[Mux Write]" << streamType
         << "pkt stream_index=" << packet->stream_index << "pts=" << pts_buf
         << "(" << QString::number(av_q2d(dstTimeBase) * packet->pts, 'f', 6)

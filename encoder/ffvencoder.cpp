@@ -1,3 +1,4 @@
+#include "logging/frame_log.h"
 #include "ffvencoder.h"
 #include "queue/ffvpacketqueue.h"
 
@@ -174,16 +175,16 @@ int FFVEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
 
     static qint64 s_lastInputMd5LogMs = 0;
     frame->pts = pts; // 灏嗚绠楀ソ鐨?PTS 鍐欏埌 AVFrame 涓婏紝浜ょ粰缂栫爜鍣?
-    qDebug() << "[FFVEncoder]:encode pts :" << pts;
+    qCDebug(subrec::logging::frameLog) << "[FFVEncoder]:encode pts :" << pts;
     const qint64 nowMs = av_gettime_relative() / 1000;
     if (nowMs - s_lastInputMd5LogMs >= 500) {
         s_lastInputMd5LogMs = nowMs;
-        qDebug().noquote() << "[EncoderInputMd5]" << "pts=" << pts << "md5=" << framePlaneMd5(frame);
+        qCDebug(subrec::logging::frameLog).noquote() << "[EncoderInputMd5]" << "pts=" << pts << "md5=" << framePlaneMd5(frame);
     }
-    qDebug() << "[VEnc] before send_frame";
+    qCDebug(subrec::logging::frameLog) << "[VEnc] before send_frame";
 
     int ret = avcodec_send_frame(codecCtx, frame);
-    qDebug() << "[VEnc] after send_frame ret=" << ret;
+    qCDebug(subrec::logging::frameLog) << "[VEnc] after send_frame ret=" << ret;
     if (ret < 0)
     {
         printError(ret);
@@ -199,7 +200,7 @@ int FFVEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
     while (true)
     {
         ret = avcodec_receive_packet(codecCtx, pkt);
-        qDebug() << "[VEnc] receive_packet ret=" << ret;
+        qCDebug(subrec::logging::frameLog) << "[VEnc] receive_packet ret=" << ret;
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
         {
             break;

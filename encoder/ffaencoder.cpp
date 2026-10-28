@@ -1,3 +1,4 @@
+#include "logging/frame_log.h"
 #include "ffaencoder.h"
 #include "audio_encoding_config.h"
 
@@ -91,7 +92,7 @@ int FFAEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
         return 0;
     }
 
-    qDebug() << "[AEnc] encode enter: in_nb_samples=" << frame->nb_samples
+    qCDebug(subrec::logging::frameLog) << "[AEnc] encode enter: in_nb_samples=" << frame->nb_samples
              << " ch=" << codecCtx->ch_layout.nb_channels << " frame_size=" << codecCtx->frame_size
              << " pending=" << pendingFrame.samples << " stream=" << streamIndex;
 
@@ -142,7 +143,7 @@ int FFAEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
 
         {
             const char *sfmt = av_get_sample_fmt_name((AVSampleFormat) sub_frame->format);
-            qDebug() << "[AEnc] send_frame: nb_samples=" << sub_frame->nb_samples
+            qCDebug(subrec::logging::frameLog) << "[AEnc] send_frame: nb_samples=" << sub_frame->nb_samples
                      << " pts=" << sub_frame->pts << " fmt=" << (sfmt ? sfmt : "unknown");
         }
         int ret_send = avcodec_send_frame(codecCtx, sub_frame);

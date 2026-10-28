@@ -1,3 +1,4 @@
+#include "logging/frame_log.h"
 #include "demuxer.h"
 extern "C" {
 #include <libavutil/time.h>
@@ -204,7 +205,7 @@ int Demuxer::demux()
             av_packet_free(&packet);
         }
     } else if (vStream && packet->stream_index == vStream->index) {
-        qDebug() << "[DemuxHash] type=" << type
+        qCDebug(subrec::logging::frameLog) << "[DemuxHash] type=" << type
                  << " stream=" << packet->stream_index
                  << " pts=" << packet->pts
                  << " dts=" << packet->dts
@@ -214,7 +215,7 @@ int Demuxer::demux()
         const int packetLogIndex =
             g_videoPacketMd5LogCount.fetch_add(1, std::memory_order_relaxed) + 1;
         if (packetLogIndex <= 60) {
-            qDebug().noquote()
+            qCDebug(subrec::logging::frameLog).noquote()
                 << "[DemuxPacketMd5]"
                 << "index=" << packetLogIndex
                 << "pts=" << packet->pts

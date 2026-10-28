@@ -1,3 +1,4 @@
+#include "logging/frame_log.h"
 #include "ffvfilterthread.h"
 
 #include "filter/ffvfilter.h"
@@ -149,7 +150,7 @@ void FFVFilterThread::run()
 
         if ((!hasScreen && !hascamera) || !hasEncoder) {
             std::unique_lock<std::mutex> lock(mutex);
-            qDebug() << "[FFVFilterThread] idle, waiting (camera=" << hascamera
+            qCDebug(subrec::logging::frameLog) << "[FFVFilterThread] idle, waiting (camera=" << hascamera
                      << ", screen=" << hasScreen << ", encoder=" << hasEncoder
                      << ", pause=" << hasPause << ")";
             cond.wait_for(lock, std::chrono::milliseconds(100));
@@ -165,7 +166,7 @@ void FFVFilterThread::run()
             localQueue = frmQueue;
             localFilter = filter;
         }
-        qDebug() << "[FFVFilterThread] ready to dequeue frame (encoder=1, pause="
+        qCDebug(subrec::logging::frameLog) << "[FFVFilterThread] ready to dequeue frame (encoder=1, pause="
                  << hasPause << ")";
         auto received = localQueue ? localQueue->receive()
                                    : MediaQueueReadResult<AVFrame>{
@@ -187,7 +188,7 @@ void FFVFilterThread::run()
         AVFrame *encodeFrame = received.item;
         auto end = av_gettime_relative();
         int64_t duration = (end - start) * 10;
-        qDebug() << "[FFVFilterThread] dequeue done, frame=" << encodeFrame
+        qCDebug(subrec::logging::frameLog) << "[FFVFilterThread] dequeue done, frame=" << encodeFrame
                  << ", wait_us=" << (end - start);
 
         if (hasPause) {
@@ -196,18 +197,18 @@ void FFVFilterThread::run()
         }
 
         overplayPts = av_gettime_relative() * 10 + duration - pauseTime * 10;
-        qDebug() << "[FFVFilterThread] computed pts (100ns units)=" << overplayPts
+        qCDebug(subrec::logging::frameLog) << "[FFVFilterThread] computed pts (100ns units)=" << overplayPts
                  << ", pauseTime(100ns)=" << (pauseTime.load() * 10);
 
         encodeFrame->pts = overplayPts;
-        qDebug() << "[FFVFilterThread] set frame->pts and forwarding to encoder queue";
+        qCDebug(subrec::logging::frameLog) << "[FFVFilterThread] set frame->pts and forwarding to encoder queue";
         if (localFilter) {
             localFilter->sendEncodeFrame(encodeFrame);
             AVFrameTraits::release(encodeFrame);
         } else {
             AVFrameTraits::release(encodeFrame);
         }
-        qDebug() << "[FFVFilterThread] forwarded frame to encoderFrameQueue via "
+        qCDebug(subrec::logging::frameLog) << "[FFVFilterThread] forwarded frame to encoderFrameQueue via "
                     "FFVFilter::sendEncodeFrame";
     }
 }

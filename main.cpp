@@ -1,4 +1,5 @@
 ﻿#include "thread/failure_cleanup_deadline.h"
+#include "logging/frame_log.h"
 #include "opengl/ffglitem.h"
 #include "recorder/capture_scheduler.h"
 #include "recorder/ffrecorder.h"
@@ -533,7 +534,9 @@ public slots:
 int main(int argc, char *argv[])
 {
   qInstallMessageHandler(qtLogHandler);
+  const bool debugLog = subrec::logging::configure(argc, argv);
   QGuiApplication app(argc, argv);
+  subrec::logging::reportLevel(debugLog);
   int exitCode = 0;
   const bool autoTestMode =
       !qEnvironmentVariable("SUBREC_AUTOTEST_SCENARIO").trimmed().isEmpty();

@@ -1,3 +1,4 @@
+#include "logging/frame_log.h"
 #include "ffvdecoder.h"
 #include "queue/ffvframequeue.h"
 #include "resampler/ffvresampler.h"
@@ -126,11 +127,11 @@ void FFVDecoder::decode(AVPacket *packet)
         return;
     }
 
-    qDebug() << "[VDec] decode enter, packet=" << packet
+    qCDebug(subrec::logging::frameLog) << "[VDec] decode enter, packet=" << packet
              << " stop=" << m_stop.load(std::memory_order_acquire);
 
     int ret = avcodec_send_packet(codecCtx, packet);
-    qDebug() << "[VDec] send_packet ret=" << ret;
+    qCDebug(subrec::logging::frameLog) << "[VDec] send_packet ret=" << ret;
 
     if (ret < 0 && ret != AVERROR(EAGAIN))
     {
@@ -148,9 +149,9 @@ void FFVDecoder::decode(AVPacket *packet)
             break;
         }
 
-        qDebug() << "[VDec] before receive_frame";
+        qCDebug(subrec::logging::frameLog) << "[VDec] before receive_frame";
         ret = avcodec_receive_frame(codecCtx, frame);
-        qDebug() << "[VDec] receive_frame ret=" << ret;
+        qCDebug(subrec::logging::frameLog) << "[VDec] receive_frame ret=" << ret;
 
         if (ret < 0)
         {
@@ -184,7 +185,7 @@ void FFVDecoder::decode(AVPacket *packet)
                     initResampler();
                 }
                 // 初始化视频参数后打印一次
-                qDebug() << "[VDec] initVideoPars: w=" << frame->width << " h=" << frame->height
+                qCDebug(subrec::logging::frameLog) << "[VDec] initVideoPars: w=" << frame->width << " h=" << frame->height
                          << " in_pixfmt=" << codecCtx->pix_fmt
                          << " out_pixfmt=" << swsvPars->pixFmtEnum
                          << " fr=" << codecCtx->framerate.num << "/" << codecCtx->framerate.den;
@@ -192,16 +193,16 @@ void FFVDecoder::decode(AVPacket *packet)
 
             if (resampler)
             {
-                qDebug() << "[VDec] before resample";
+                qCDebug(subrec::logging::frameLog) << "[VDec] before resample";
                 AVFrame *swsFrame = nullptr;
                 resampler->resample(frame, &swsFrame);
-                qDebug() << "[VDec] after resample";
-                qDebug() << "[VDecHash] raw=0x" << QString::number(frameFingerprint(frame), 16)
+                qCDebug(subrec::logging::frameLog) << "[VDec] after resample";
+                qCDebug(subrec::logging::frameLog) << "[VDecHash] raw=0x" << QString::number(frameFingerprint(frame), 16)
                          << " yuv=0x" << QString::number(frameFingerprint(swsFrame), 16)
                          << " pts=" << frame->pts;
                 const int md5LogIndex = g_vdecFullMd5LogCount.fetch_add(1, std::memory_order_relaxed) + 1;
                 if (md5LogIndex <= 60) {
-                    qDebug().noquote()
+                    qCDebug(subrec::logging::frameLog).noquote()
                         << "[VDecFullMd5]"
                         << "index=" << md5LogIndex
                         << "rawPts=" << frame->pts
@@ -222,17 +223,17 @@ void FFVDecoder::decode(AVPacket *packet)
                 {
                     // 解码队列
                     AVFrame *decoderFrame = av_frame_clone(swsFrame);
-                    qDebug() << "video frame pts: " << decoderFrame->pts;
+                    qCDebug(subrec::logging::frameLog) << "video frame pts: " << decoderFrame->pts;
                     if (frmQueue != nullptr)
                     {
-                        qDebug() << "[VDec] before frmQueue enqueue";
+                        qCDebug(subrec::logging::frameLog) << "[VDec] before frmQueue enqueue";
                         frmQueue->enqueue(decoderFrame);
-                        qDebug() << "[VDec] after frmQueue enqueue";
+                        qCDebug(subrec::logging::frameLog) << "[VDec] after frmQueue enqueue";
                     }
-                    qDebug() << "[VDec] before release decoderFrame/swsFrame";
+                    qCDebug(subrec::logging::frameLog) << "[VDec] before release decoderFrame/swsFrame";
                     AVFrameTraits::release(decoderFrame);
                     AVFrameTraits::release(swsFrame);
-                    qDebug() << "[VDec] after release decoderFrame/swsFrame";
+                    qCDebug(subrec::logging::frameLog) << "[VDec] after release decoderFrame/swsFrame";
                 }
             }
             else
@@ -244,26 +245,26 @@ void FFVDecoder::decode(AVPacket *packet)
                 }
                 else
                 {
-                    qDebug() << "[VDec][nosws] frame pts=" << frame->pts;
+                    qCDebug(subrec::logging::frameLog) << "[VDec][nosws] frame pts=" << frame->pts;
 
                     if (frmQueue)
                     {
                         AVFrame *decoderFrame = av_frame_clone(frame);
-                        qDebug() << "[VDec][nosws] before frmQueue enqueue";
+                        qCDebug(subrec::logging::frameLog) << "[VDec][nosws] before frmQueue enqueue";
                         frmQueue->enqueue(decoderFrame);
-                        qDebug() << "[VDec][nosws] after frmQueue enqueue";
+                        qCDebug(subrec::logging::frameLog) << "[VDec][nosws] after frmQueue enqueue";
                         av_frame_free(&decoderFrame);
-                        qDebug() << "VIDEO decoder run !";
+                        qCDebug(subrec::logging::frameLog) << "VIDEO decoder run !";
                     }
 
                     av_frame_unref(frame);
-                    qDebug() << "decoder eunqueue!";
+                    qCDebug(subrec::logging::frameLog) << "decoder eunqueue!";
                 }
             }
         }
     }
     av_frame_free(&frame);
-    qDebug() << "[VDec] decode leave";
+    qCDebug(subrec::logging::frameLog) << "[VDec] decode leave";
 }
 
 void FFVDecoder::init(AVStream *stream_, FFVFrameQueue *frmQueue_)

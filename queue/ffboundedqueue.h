@@ -1,6 +1,8 @@
 #ifndef FFBOUNDEDQUEUE_H
 #define FFBOUNDEDQUEUE_H
 
+#include "logging/frame_log.h"
+
 #include "ffpacket.h"
 #include "media_queue_common.h"
 
@@ -193,11 +195,11 @@ template<typename T, typename Traits>
 MediaQueueResult FFBoundedQueue<T, Traits>::enqueueFromSrc(T *src, const std::atomic<bool> *cancelled, uint64_t *blockedNs)
 {
     if constexpr (std::is_same_v<T, AVFrame>) {
-        qDebug() << "[FFBoundedQueue<AVFrame>] enqueue before lock";
+        qCDebug(subrec::logging::frameLog) << "[FFBoundedQueue<AVFrame>] enqueue before lock";
     }
     std::unique_lock<std::mutex> lock(mutex);
     if constexpr (std::is_same_v<T, AVFrame>) {
-        qDebug() << "[FFBoundedQueue<AVFrame>] enqueue after lock";
+        qCDebug(subrec::logging::frameLog) << "[FFBoundedQueue<AVFrame>] enqueue after lock";
     }
 
     const auto generation = diagnosticsGeneration_;
@@ -246,7 +248,7 @@ MediaQueueResult FFBoundedQueue<T, Traits>::enqueueFromSrc(T *src, const std::at
     }
     q.push(dest);
     if constexpr (std::is_same_v<T, AVFrame>) {
-        qDebug() << "[FFBoundedQueue<AVFrame>] enqueue after push";
+        qCDebug(subrec::logging::frameLog) << "[FFBoundedQueue<AVFrame>] enqueue after push";
     }
     cond.notify_one();
     return MediaQueueResult::Ok;

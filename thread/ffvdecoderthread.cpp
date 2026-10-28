@@ -1,3 +1,4 @@
+#include "logging/frame_log.h"
 #include "ffvdecoderthread.h"
 
 #include "decoder/ffvdecoder.h"
@@ -105,7 +106,7 @@ void FFVDecoderThread::run()
             const int packetLogIndex =
                 g_vdecPacketMd5LogCount.fetch_add(1, std::memory_order_relaxed) + 1;
             if (packetLogIndex <= 60) {
-                qDebug().noquote()
+                qCDebug(subrec::logging::frameLog).noquote()
                     << "[VDecPacketMd5]"
                     << "index=" << packetLogIndex
                     << "pts=" << pkt->packet.pts

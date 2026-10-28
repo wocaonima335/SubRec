@@ -1,3 +1,4 @@
+#include "logging/frame_log.h"
 #include "ffglrenderer.h"
 
 #include <algorithm>
@@ -184,7 +185,7 @@ void FFGLRenderer::maybeLogRenderedOutput()
     const QByteArray outputHash =
         QCryptographicHash::hash(rgba, QCryptographicHash::Md5).toHex();
 
-    qDebug().noquote()
+    qCDebug(subrec::logging::frameLog).noquote()
         << "[PreviewRenderHash]"
         << "version=" << m_previewVersion
         << "fbo=" << QString("%1x%2").arg(m_fboSize.width()).arg(m_fboSize.height())

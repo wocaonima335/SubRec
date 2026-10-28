@@ -1,3 +1,4 @@
+#include "logging/frame_log.h"
 #include "ffglitem.h"
 #include "ffglrenderer.h"
 
@@ -316,7 +317,7 @@ void PreviewBridge::maybeLogLocked(DebugStage stage, quint64 version, int width,
     }
     *lastLogMs = nowMs;
 
-    qDebug().noquote()
+    qCDebug(subrec::logging::frameLog).noquote()
         << "[PreviewDebug]"
         << "stage=" << debugStageName(stage)
         << "version=" << version
@@ -340,7 +341,7 @@ void PreviewBridge::maybeLogLocked(DebugStage stage, quint64 version, int width,
         md5.addData(m_latestFrame.y);
         md5.addData(m_latestFrame.u);
         md5.addData(m_latestFrame.v);
-        qDebug().noquote()
+        qCDebug(subrec::logging::frameLog).noquote()
             << "[PreviewInputMd5]"
             << "version=" << version
             << "md5=" << md5.result().toHex();
