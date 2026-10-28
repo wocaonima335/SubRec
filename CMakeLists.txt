@@ -90,6 +90,7 @@ option(SUBREC_BUILD_LIFECYCLE_TESTS "Build the in-tree test harnesses (capture_l
 if(SUBREC_BUILD_LIFECYCLE_TESTS AND WIN32)
     enable_testing()
     add_subdirectory(tests/capture_lifecycle)
+    add_subdirectory(tests/startup_failure)
     add_subdirectory(tests/audio_filter_dual)
 endif()
 

@@ -5,6 +5,7 @@
 #include "recorder/ffrecorder.h"
 #include "thread/ffmuxerthread.h"
 #include "thread/wincomscope.h"
+#include "thread/failure_cleanup_deadline.h"
 
 #include <QDebug>
 #include <memory>
@@ -18,9 +19,8 @@ CaptureSession::CaptureSession(FFRecorder &recorder)
 CaptureSession::~CaptureSession()
 {
     if (!release()) {
-        // Last-resort destruction cannot detach workers borrowing Recorder state.
-        // Normal stop retains this session on timeout; process teardown must join
-        // any uncooperative native call before freeing its contexts.
+        // A retained, borrowed worker cannot safely outlive Recorder destruction.
+        // Final cancellation is bounded too; an uninterruptible driver is fatal.
         abortPipeline();
     }
 }
@@ -75,6 +75,7 @@ bool CaptureSession::start(const CaptureConfig &config,
 
     qDebug() << "[CaptureSession] calling FFRecorder::startRecord";
     m_videoClosed = m_audioClosed = m_muxerClosed = false;
+    m_startFailed = false;
     m_cleanupNeeded = true;
     m_recorder.startRecord(m_config);
     qDebug() << "[CaptureSession] FFRecorder::startRecord returned";
@@ -103,6 +104,13 @@ bool CaptureSession::start(const CaptureConfig &config,
                  << "cancelled=" << cancelled;
         if (!result.ok || cancelled) {
             qWarning() << "[CaptureSession] aborting partial capture setup";
+            m_startFailed = true;
+            // Publish failure before waiting on native devices. The queued scheduler
+            // callback exposes Failed/setCaptureError even if a driver is stuck.
+            if (!cancelled && onStarted) {
+                onStarted(result);
+                onStarted = {};
+            }
             abortPipeline();
         }
 
@@ -133,6 +141,10 @@ void CaptureSession::requestStop()
 void CaptureSession::abortPipeline()
 {
     if (!m_cleanupNeeded) return;
+    capture_stop::Deadline deadline;
+    // Also bounds native close(), not just std::thread waits. Failed preparation
+    // never returns to normal recording with device readers still alive.
+    capture_stop::FailureCleanupDeadline watchdog;
     auto *pipeline = m_recorder.getContext();
     m_recorder.stopRecord();
 
@@ -156,7 +168,6 @@ void CaptureSession::abortPipeline()
 #ifdef _WIN32
     if (pipeline->systemAudioCapture) {
         pipeline->systemAudioCapture->requestAbort();
-        pipeline->systemAudioCapture->join();
     }
 #endif
     if (pipeline->screenGrabThread) pipeline->screenGrabThread->requestAbort();
@@ -179,46 +190,72 @@ void CaptureSession::abortPipeline()
     stopFilter(pipeline->vFilterThread);
     if (pipeline->muxerThread) pipeline->muxerThread->wakeAllThread();
 
-    // Join all users of decoder/encoder contexts before closing any context.
-    const auto waitWorker = [](auto *worker) { if (worker) worker->wait(); };
-    for (size_t i = 0; i < A_DECODER_SIZE; ++i) {
-        waitWorker(pipeline->aDemuxerThread[i]);
-        waitWorker(pipeline->aDecoderThread[i]);
-    }
-    for (size_t i = 0; i < V_DECODER_SIZE; ++i) {
-        waitWorker(pipeline->vDemuxerThread[i]);
-        waitWorker(pipeline->vDecoderThread[i]);
-    }
-    waitWorker(pipeline->aFilterThread);
-    waitWorker(pipeline->vFilterThread);
-    waitWorker(pipeline->aEncoderThread);
-    waitWorker(pipeline->vEncoderThread);
-    waitWorker(pipeline->muxerThread);
-    waitWorker(pipeline->screenGrabThread);
-
+    // Wait against ONE deadline, after all producers and consumers were cancelled.
+    // Close the audio contexts before waiting for video: avformat_close_input stops
+    // DirectShow's own device callbacks, even after its reader thread has exited.
+    const auto waitWorker = [&deadline](auto *worker) {
+        return !worker || worker->waitFor(deadline.remaining());
+    };
     const auto closeWorker = [](auto *worker) { if (worker) worker->close(); };
+    bool audioJoined = true;
+#ifdef _WIN32
+    if (pipeline->systemAudioCapture &&
+        !pipeline->systemAudioCapture->joinFor(deadline.remaining())) {
+        qWarning() << "[CaptureSession] WASAPI failed to stop before the startup cleanup deadline";
+        capture_stop::failedCleanupExit();
+    }
+#endif
     for (size_t i = 0; i < A_DECODER_SIZE; ++i) {
-        closeWorker(pipeline->aDemuxerThread[i]);
-        closeWorker(pipeline->aDecoderThread[i]);
+        audioJoined = waitWorker(pipeline->aDemuxerThread[i]) && audioJoined;
+        audioJoined = waitWorker(pipeline->aDecoderThread[i]) && audioJoined;
     }
+    audioJoined = waitWorker(pipeline->aFilterThread) && audioJoined;
+    audioJoined = waitWorker(pipeline->aEncoderThread) && audioJoined;
+    if (audioJoined) {
+        for (size_t i = 0; i < A_DECODER_SIZE; ++i) {
+            closeWorker(pipeline->aDemuxerThread[i]);
+            closeWorker(pipeline->aDecoderThread[i]);
+        }
+        closeWorker(pipeline->aEncoderThread);
+        if (pipeline->aFilterThread) {
+            pipeline->aFilterThread->stopEncoder();
+            pipeline->aFilterThread->closeAudioSource(AUDIO);
+            pipeline->aFilterThread->closeAudioSource(MICROPHONE);
+        }
+    }
+    bool videoJoined = true;
     for (size_t i = 0; i < V_DECODER_SIZE; ++i) {
-        closeWorker(pipeline->vDemuxerThread[i]);
-        closeWorker(pipeline->vDecoderThread[i]);
+        videoJoined = waitWorker(pipeline->vDemuxerThread[i]) && videoJoined;
+        videoJoined = waitWorker(pipeline->vDecoderThread[i]) && videoJoined;
     }
-    closeWorker(pipeline->aEncoderThread);
-    closeWorker(pipeline->vEncoderThread);
-    closeWorker(pipeline->muxerThread);
+    videoJoined = waitWorker(pipeline->vFilterThread) && videoJoined;
+    videoJoined = waitWorker(pipeline->vEncoderThread) && videoJoined;
+    const bool muxerJoined = waitWorker(pipeline->muxerThread);
+    if (pipeline->screenGrabThread && !pipeline->screenGrabThread->waitFor(
+            deadline.remaining())) {
+        qWarning() << "[CaptureSession] native screen open did not return before the cleanup deadline";
+        capture_stop::failedCleanupExit();
+    }
     closeWorker(pipeline->screenGrabThread);
-    if (pipeline->aFilterThread) {
-        pipeline->aFilterThread->stopEncoder();
-        pipeline->aFilterThread->closeAudioSource(AUDIO);
-        pipeline->aFilterThread->closeAudioSource(MICROPHONE);
+    if (videoJoined) {
+        for (size_t i = 0; i < V_DECODER_SIZE; ++i) {
+            closeWorker(pipeline->vDemuxerThread[i]);
+            closeWorker(pipeline->vDecoderThread[i]);
+        }
+        closeWorker(pipeline->vEncoderThread);
+        if (pipeline->vFilterThread) {
+            pipeline->vFilterThread->stopEncoder();
+            pipeline->vFilterThread->closeVideoSource(SCREEN);
+            pipeline->vFilterThread->closeVideoSource(CAMERA);
+        }
     }
-    if (pipeline->vFilterThread) {
-        pipeline->vFilterThread->stopEncoder();
-        pipeline->vFilterThread->closeVideoSource(SCREEN);
-        pipeline->vFilterThread->closeVideoSource(CAMERA);
+    if (muxerJoined) closeWorker(pipeline->muxerThread);
+    if (!audioJoined || !videoJoined || !muxerJoined) {
+        qWarning() << "[CaptureSession] failed startup abort deadline exceeded"
+                   << "audio=" << audioJoined << "video=" << videoJoined << "muxer=" << muxerJoined;
+        capture_stop::failedCleanupExit();
     }
+    qInfo() << "[CaptureSession] failed startup cleanup complete; audio devices closed";
     m_cleanupNeeded = false;
     m_started.store(false, std::memory_order_release);
     m_starting.store(false, std::memory_order_release);
@@ -227,6 +264,7 @@ void CaptureSession::abortPipeline()
 bool CaptureSession::cleanup()
 {
     if (!m_cleanupNeeded) return true;
+    if (m_startFailed) { abortPipeline(); return true; }
     // Called by the opener on failure OR by release after joining the opener.
     // These are serialized by join, so resources cannot be closed twice.
     if (m_recorder.isRecording()) {

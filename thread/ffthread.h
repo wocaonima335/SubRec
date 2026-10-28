@@ -14,9 +14,9 @@ public:
 
     virtual void run() = 0;
     virtual ~FFThread();
-    void stop();
-    void wait();
-    bool waitFor(std::chrono::milliseconds timeout);
+    virtual void stop();
+    virtual void wait();
+    virtual bool waitFor(std::chrono::milliseconds timeout);
     void start();
 
 protected:

@@ -90,38 +90,21 @@ bool FFOpenSourceEvent::openAndStart(const std::function<bool()> &shouldStart)
 CaptureStartResult FFOpenSourceEvent::openAndStartResult(const std::function<bool()> &shouldStart)
 {
   startupResult = CaptureStartResult::success();
-  preparedScreen = false;
   usingScreenGrab = false;
-  const auto unwind = [this] {
-    if (preparedScreen && usingScreenGrab && screenGrabThread) {
-      screenGrabThread->requestAbort();
-      screenGrabThread->wait();
-      screenGrabThread->close();
-      preparedScreen = false;
-    }
-    if (preparedScreen) {
-      // Joining can wait for a non-interruptible third-party driver open.
-      vDemuxerThread[videoIndex]->requestAbort();
-      vDemuxerThread[videoIndex]->wait();
-      vDemuxerThread[videoIndex]->close();
-      preparedScreen = false;
-    }
-    // Session owns abort/join/close of all other pipeline resources.
-    return startupResult;
-  };
-  if (!checkContinue(audioInput, shouldStart)) return unwind();
-  if (!initAudio(shouldStart)) return unwind();
-  if (!checkContinue(videoInput, shouldStart)) return unwind();
-  if (!initVideo(shouldStart)) return unwind();
-  if (!checkContinue(videoInput, shouldStart)) return unwind();
+  // The session cancels ALL sources before joining any worker. In particular,
+  // never wait here on a stalled video driver while the microphone is running.
+  if (!checkContinue(audioInput, shouldStart)) return startupResult;
+  if (!initAudio(shouldStart)) return startupResult;
+  if (!checkContinue(videoInput, shouldStart)) return startupResult;
+  if (!initVideo(shouldStart)) return startupResult;
+  if (!checkContinue(videoInput, shouldStart)) return startupResult;
   const int64_t t0 = av_gettime_relative();
   aFilterThread->configureMix(microphoneMixInput.has_value(), t0);
   aEncoderThread->setStartTimeUs(t0);
   vEncoderThread->setStartTimeUs(t0);
   startAudio();
-  if (!checkContinue(videoInput, shouldStart)) return unwind();
+  if (!checkContinue(videoInput, shouldStart)) return startupResult;
   startVideo();
-  preparedScreen = false;
   if (!checkContinue(videoInput, shouldStart)) return startupResult;
   return CaptureStartResult::success();
 }
@@ -330,7 +313,12 @@ bool FFOpenSourceEvent::initVideo(const std::function<bool()> &shouldStart)
       && videoInput.backend == CaptureBackend::DesktopDuplication) {
     qDebug() << "[initVideo] Step 19: Opening ddagrab screen source...";
     if (!openScreenGrab(shouldStart)) {
-      if (!videoFallback || !checkContinue(videoInput, shouldStart)) return false;
+      // A startup timeout is a session failure, not a reason to start a second
+      // device while the first native open may still be in progress.
+      if ((startupResult.error && startupResult.error->ffmpegError == AVERROR(ETIMEDOUT))
+          || !videoFallback || !checkContinue(videoInput, shouldStart)) return false;
+      screenGrabThread->close();
+      usingScreenGrab = false;
       switchToVideoFallback();
     }
   }
@@ -348,17 +336,12 @@ bool FFOpenSourceEvent::initVideo(const std::function<bool()> &shouldStart)
 
   if (threadOwnedScreenOpen) {
     qDebug() << "[initVideo] Step 20.1: Preparing screen demuxer on demux thread...";
-    preparedScreen = true;
     if (!vDemuxerThread[videoIndex]->prepareOpenAndWait(5000, shouldStart)) {
       qDebug() << "[initVideo] Step 20.1 failed: screen demuxer prepare open failed";
       vDemuxerThread[videoIndex]->requestAbort();
-      vDemuxerThread[videoIndex]->wait();
-      if (!checkContinue(videoInput, shouldStart)) return false;
-      startupResult = vDemuxer[videoIndex]->openResult(videoInput);
-      if (startupResult.ok)
-        return fail(videoInput, CaptureErrorStage::InputOpen, AVERROR(ETIMEDOUT),
-                    QStringLiteral("Timed out waiting for the screen input to prepare."));
-      return false;
+      // Do not call openResult again: it takes the demuxer mutex held by open.
+      return fail(videoInput, CaptureErrorStage::InputOpen, AVERROR(ETIMEDOUT),
+                  QStringLiteral("The screen input failed or timed out while preparing."));
     }
   }
 
@@ -507,8 +490,7 @@ bool FFOpenSourceEvent::openScreenGrab(const std::function<bool()> &shouldStart)
   screenGrabThread->close();
   vFrmQueue[videoIndex]->start();
 
-  preparedScreen = true;
-  usingScreenGrab = true; // unwind() aborts the grab thread while this is set
+  usingScreenGrab = true; // Session owns abort/join if preparation fails.
   startupResult = screenGrabThread->prepareOpenAndWait(
       videoInput, vFrmQueue[videoIndex], recoderContext, 10000, shouldStart);
   if (startupResult.ok) {
@@ -518,11 +500,7 @@ bool FFOpenSourceEvent::openScreenGrab(const std::function<bool()> &shouldStart)
   qWarning().noquote() << "[initVideo] ddagrab screen failed:"
                        << (startupResult.error ? startupResult.error->userMessage : QString());
   screenGrabThread->requestAbort();
-  screenGrabThread->wait();
-  screenGrabThread->close();
-  preparedScreen = false;
-  usingScreenGrab = false;
-  return false;
+  return false; // CaptureSession owns bounded cancellation of the whole pipeline.
 }
 
 void FFOpenSourceEvent::switchToVideoFallback()

@@ -1,5 +1,8 @@
 #include "capture/test_video_start_delay.h"
 #include "ffscreengrabthread.h"
+#include "capture/ddagrab_screen_source.h"
+#include "thread/stop_deadline.h"
+#include <cstdlib>
 
 #include "queue/ffvframequeue.h"
 
@@ -15,12 +18,34 @@ extern "C" {
 #include <libavutil/frame.h>
 }
 
-FFScreenGrabThread::FFScreenGrabThread() = default;
+struct FFScreenGrabThread::State {
+    DdagrabScreenSource m_source;
+    InputRequest m_request;
+    std::shared_ptr<FFVFrameQueue::State> m_queue;
+    QObject *m_recorder = nullptr; // Revoked under m_mutex before recorder destruction.
+    mutable std::mutex m_mutex;
+    std::condition_variable m_cond;
+    std::atomic<bool> m_stop{false};
+    bool m_openDone = false, m_resumeRequested = false, m_active = false;
+    bool m_abortRequested = false;
+    CaptureStartResult m_openResult;
+    bool m_gpuFrames = false;
+    int m_width = 0, m_height = 0;
+    QString m_description;
+    void run();
+    void grabLoop();
+    bool reopenAfterLoss();
+    void reportLoss(const QString &reason);
+};
+
+FFScreenGrabThread::FFScreenGrabThread() : state_(std::make_shared<State>()) {}
 
 FFScreenGrabThread::~FFScreenGrabThread()
 {
     requestAbort();
-    wait();
+    // Normal session teardown has already waited against its shared deadline.
+    // Never wait again on a driver that has been abandoned.
+    abandon();
 }
 
 CaptureStartResult FFScreenGrabThread::prepareOpenAndWait(const InputRequest &request,
@@ -29,65 +54,85 @@ CaptureStartResult FFScreenGrabThread::prepareOpenAndWait(const InputRequest &re
                                                           int timeoutMs,
                                                           const std::function<bool()> &shouldOpen)
 {
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_request = request;
-        m_queue = queue;
-        m_recorder = recorder;
-        m_openGuard = shouldOpen;
-        m_openDone = false;
-        m_resumeRequested = false;
-        m_abortRequested = false;
-        m_active = false;
-        m_openResult = CaptureStartResult::success();
-    }
+    requestAbort();
+    abandon();
+    auto state = std::make_shared<State>();
+    state_ = state;
+    state->m_request = request;
+    state->m_queue = queue ? queue->sharedState() : nullptr;
+    state->m_recorder = recorder;
+    // Evaluate the session-borrowing guard HERE; never keep it in a detached task.
+    state->m_stop.store(shouldOpen && !shouldOpen());
+    lifetime_ = std::make_unique<capture::wasapi::WorkerLifetime>();
+    lifetime_->start([state] { state->run(); });
 
-    start();
+    std::unique_lock<std::mutex> lock(state->m_mutex);
+    const bool done = state->m_cond.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                                            [&] { return state->m_openDone; });
+    if (done) return state->m_openResult;
+    lock.unlock();
+    requestAbort();
+    qWarning() << "[FFScreenGrabThread] open timed out after" << timeoutMs << "ms";
+    CaptureError error;
+    error.stage = CaptureErrorStage::InputOpen;
+    error.role = CaptureDeviceKind::Screen;
+    error.backend = CaptureBackend::DesktopDuplication;
+    error.deviceId = request.deviceId;
+    error.deviceName = request.displayName;
+    error.ffmpegError = AVERROR(ETIMEDOUT);
+    error.userMessage = QStringLiteral("Timed out waiting for Desktop Duplication to start.");
+    error.remediation = QStringLiteral("Retry, or set SUBREC_CAPTURE_BACKEND=dshow.");
+    return CaptureStartResult::failure(std::move(error));
+}
 
-    std::unique_lock<std::mutex> lock(m_mutex);
-    const bool done = m_cond.wait_for(lock, std::chrono::milliseconds(timeoutMs),
-                                      [this] { return m_openDone; });
-    if (!done) {
-        qWarning() << "[FFScreenGrabThread] open timed out after" << timeoutMs << "ms";
-        CaptureError error;
-        error.stage = CaptureErrorStage::InputOpen;
-        error.role = CaptureDeviceKind::Screen;
-        error.backend = CaptureBackend::DesktopDuplication;
-        error.deviceId = request.deviceId;
-        error.deviceName = request.displayName;
-        error.ffmpegError = AVERROR(ETIMEDOUT);
-        error.userMessage = QStringLiteral("Timed out waiting for Desktop Duplication to start.");
-        error.remediation = QStringLiteral("Retry, or set SUBREC_CAPTURE_BACKEND=dshow.");
-        return CaptureStartResult::failure(std::move(error));
+bool FFScreenGrabThread::waitFor(std::chrono::milliseconds timeout)
+{
+    return !lifetime_ || lifetime_->joinFor(timeout);
+}
+
+void FFScreenGrabThread::wait()
+{
+    if (!waitFor(capture_stop::timeout())) {
+        qWarning() << "[FFScreenGrabThread] stop deadline exceeded; revoking session access";
+        requestAbort();
+        abandon();
     }
-    return m_openResult;
+}
+
+void FFScreenGrabThread::abandon()
+{
+    if (lifetime_) {
+        lifetime_->abandon();
+        lifetime_.reset();
+    }
 }
 
 void FFScreenGrabThread::resume()
 {
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_resumeRequested = true;
+        std::lock_guard<std::mutex> lock(state_->m_mutex);
+        state_->m_resumeRequested = true;
     }
-    m_cond.notify_all();
+    state_->m_cond.notify_all();
 }
 
 void FFScreenGrabThread::requestDrainStop()
 {
-    m_stop.store(true, std::memory_order_release);
-    m_cond.notify_all();
+    state_->m_stop.store(true, std::memory_order_release);
+    state_->m_cond.notify_all();
 }
 
 void FFScreenGrabThread::requestAbort()
 {
-    FFVFrameQueue *queue = nullptr;
+    std::shared_ptr<FFVFrameQueue::State> queue;
     {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        m_abortRequested = true;
-        queue = m_queue;
+        std::lock_guard<std::mutex> lock(state_->m_mutex);
+        state_->m_abortRequested = true;
+        state_->m_recorder = nullptr;
+        queue = state_->m_queue;
     }
-    m_stop.store(true, std::memory_order_release);
-    m_cond.notify_all();
+    state_->m_stop.store(true, std::memory_order_release);
+    state_->m_cond.notify_all();
     // Unblocks an enqueue() waiting for space.
     if (queue) {
         queue->close(MediaQueueCloseReason::RequestedStop);
@@ -101,57 +146,54 @@ void FFScreenGrabThread::wakeAllThread()
 
 void FFScreenGrabThread::close()
 {
-    // Only after wait(): the source is owned by the (finished) grab thread.
-    m_source.close();
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_active = false;
-    m_queue = nullptr;
-    m_recorder = nullptr;
-    m_openGuard = nullptr;
+    // Native graph destruction is always on its owner thread, including timeout.
+    requestAbort();
+    abandon();
+    state_ = std::make_shared<State>();
 }
 
 bool FFScreenGrabThread::isActive() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_active;
+    std::lock_guard<std::mutex> lock(state_->m_mutex);
+    return state_->m_active;
 }
 
 bool FFScreenGrabThread::gpuFrames() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_gpuFrames;
+    std::lock_guard<std::mutex> lock(state_->m_mutex);
+    return state_->m_gpuFrames;
 }
 
 int FFScreenGrabThread::width() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_width;
+    std::lock_guard<std::mutex> lock(state_->m_mutex);
+    return state_->m_width;
 }
 
 int FFScreenGrabThread::height() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_height;
+    std::lock_guard<std::mutex> lock(state_->m_mutex);
+    return state_->m_height;
 }
 
 QString FFScreenGrabThread::describe() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_description;
+    std::lock_guard<std::mutex> lock(state_->m_mutex);
+    return state_->m_description;
 }
 
-void FFScreenGrabThread::run()
+void FFScreenGrabThread::State::run()
 {
     InputRequest request;
-    std::function<bool()> shouldOpen;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         request = m_request;
-        shouldOpen = m_openGuard;
     }
 
+    // This guard runs even if open/read throws. DXGI is closed on its owner thread.
+    struct CloseSource { DdagrabScreenSource &source; ~CloseSource() { source.close(); } } closeSource{m_source};
     CaptureStartResult result = CaptureStartResult::success();
-    if (shouldOpen && !shouldOpen()) {
+    if (m_stop.load(std::memory_order_acquire)) {
         CaptureError error;
         error.stage = CaptureErrorStage::Configuration;
         error.role = CaptureDeviceKind::Screen;
@@ -160,7 +202,21 @@ void FFScreenGrabThread::run()
         error.userMessage = QStringLiteral("Capture start was cancelled.");
         result = CaptureStartResult::failure(std::move(error));
     } else {
-        result = m_source.open(request);
+        const char *hook = std::getenv("SUBREC_TEST_VIDEO_OPEN_TIMEOUT");
+        if (hook && std::string(hook) == "1") {
+            qWarning() << "[TestHook] SUBREC_TEST_VIDEO_OPEN_TIMEOUT enabled";
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_cond.wait(lock, [this] { return m_stop.load(); });
+            CaptureError error;
+            error.stage = CaptureErrorStage::InputOpen;
+            error.role = CaptureDeviceKind::Screen;
+            error.backend = CaptureBackend::DesktopDuplication;
+            error.ffmpegError = AVERROR(ETIMEDOUT);
+            error.userMessage = QStringLiteral("Injected video startup timeout.");
+            result = CaptureStartResult::failure(std::move(error));
+        } else {
+            result = m_source.open(request);
+        }
     }
 
     {
@@ -174,10 +230,7 @@ void FFScreenGrabThread::run()
         m_description = m_source.describe();
     }
     m_cond.notify_all();
-    if (!result.ok) {
-        m_source.close();
-        return;
-    }
+    if (!result.ok) return; // CloseSource releases the graph on this thread.
 
     {
         std::unique_lock<std::mutex> lock(m_mutex);
@@ -190,7 +243,7 @@ void FFScreenGrabThread::run()
     }
 
     bool aborted = false;
-    FFVFrameQueue *queue = nullptr;
+    std::shared_ptr<FFVFrameQueue::State> queue;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         aborted = m_abortRequested;
@@ -204,14 +257,14 @@ void FFScreenGrabThread::run()
     qDebug() << "[FFScreenGrabThread] leave, aborted=" << aborted;
 }
 
-void FFScreenGrabThread::grabLoop()
+void FFScreenGrabThread::State::grabLoop()
 {
     AVFrame *frame = av_frame_alloc();
     if (!frame) {
         reportLoss(QStringLiteral("out of memory"));
         return;
     }
-    FFVFrameQueue *queue = nullptr;
+    std::shared_ptr<FFVFrameQueue::State> queue;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         queue = m_queue;
@@ -235,7 +288,7 @@ void FFScreenGrabThread::grabLoop()
             continue;
         }
         if (ret >= 0) {
-            queue->enqueue(frame); // moves the reference; blocks while the queue is full
+            queue->enqueueFromSrc(frame); // moves the reference; blocks while the queue is full
             ++frames;
             if (frames == 1 || frames % 300 == 0) {
                 qDebug() << "[FFScreenGrabThread] frames=" << frames;
@@ -256,7 +309,7 @@ void FFScreenGrabThread::grabLoop()
     qInfo() << "[FFScreenGrabThread] grab loop finished, frames=" << frames;
 }
 
-bool FFScreenGrabThread::reopenAfterLoss()
+bool FFScreenGrabThread::State::reopenAfterLoss()
 {
     bool gpuFrames = false;
     int width = 0;
@@ -296,16 +349,11 @@ bool FFScreenGrabThread::reopenAfterLoss()
     return false;
 }
 
-void FFScreenGrabThread::reportLoss(const QString &reason)
+void FFScreenGrabThread::State::reportLoss(const QString &reason)
 {
-    QObject *recorder = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(m_mutex);
-        recorder = m_recorder;
-    }
-    if (!recorder || m_stop.load(std::memory_order_acquire)) {
-        return;
-    }
+    std::lock_guard<std::mutex> lock(m_mutex);
+    QObject *recorder = m_recorder;
+    if (!recorder || m_stop.load(std::memory_order_acquire)) return;
     QMetaObject::invokeMethod(recorder, "setCaptureError", Qt::QueuedConnection,
                               Q_ARG(QString, QStringLiteral("Screen capture stopped: %1").arg(reason)),
                               Q_ARG(QString, QStringLiteral("Stop the recording (the file is kept up to "

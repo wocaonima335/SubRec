@@ -37,7 +37,6 @@ private:
     CaptureStartResult startupResult;
     InputRequest videoInput;
     InputRequest audioInput;
-    bool preparedScreen = false;
     // Screen comes from FFScreenGrabThread (ddagrab) instead of demuxer + decoder.
     bool usingScreenGrab = false;
     std::optional<InputRequest> videoFallback;

@@ -3,12 +3,18 @@
 
 #include "ffboundedqueue.h"
 #include <iostream>
+#include <memory>
 
 class FFVFrameQueue
 {
 public:
     explicit FFVFrameQueue();
     ~FFVFrameQueue();
+    FFVFrameQueue(const FFVFrameQueue &) = delete;
+    FFVFrameQueue &operator=(const FFVFrameQueue &) = delete;
+    // A cancelled native screen open retains storage, never the recorder wrapper.
+    using State = FFBoundedQueue<AVFrame, AVFrameTraits>;
+    std::shared_ptr<State> sharedState() const { return impl; }
 
     MediaQueueReadResult<AVFrame> receive();
     void enqueue(AVFrame *srcFrame);
@@ -35,7 +41,7 @@ public:
 
 private:
     AVFrame *peekQueue();
-    FFBoundedQueue<AVFrame, AVFrameTraits> *impl;
+    std::shared_ptr<State> impl;
 
     mutable std::atomic<size_t> m_enqueueCount{0};
     mutable std::atomic<size_t> m_dequeueCount{0};

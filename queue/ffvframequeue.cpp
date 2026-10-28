@@ -3,7 +3,7 @@
 #define MAX_FRAME_SIZE 2
 
 FFVFrameQueue::FFVFrameQueue()
-    : impl(new FFBoundedQueue<AVFrame, AVFrameTraits>(30))
+    : impl(std::make_shared<State>(30))
 {
     m_lastStatsTime = std::chrono::steady_clock::now();
 }
@@ -11,7 +11,7 @@ FFVFrameQueue::FFVFrameQueue()
 FFVFrameQueue::~FFVFrameQueue()
 {
     close();
-    delete impl;
+
 }
 
 MediaQueueReadResult<AVFrame> FFVFrameQueue::receive()

@@ -4,7 +4,7 @@
 #include "ffthread.h"
 
 #include "capture/capture_types.h"
-#include "capture/ddagrab_screen_source.h"
+#include "capture/wasapi_worker_lifetime.h"
 
 #include <condition_variable>
 #include <functional>
@@ -48,31 +48,18 @@ public:
     int height() const;
     QString describe() const;
 
-protected:
-    void run() override;
+    void stop() override { requestAbort(); }
+    void wait() override;
+    bool waitFor(std::chrono::milliseconds timeout) override;
 
 private:
-    void grabLoop();
-    bool reopenAfterLoss();
-    void reportLoss(const QString &reason);
-
-    DdagrabScreenSource m_source;
-    InputRequest m_request;
-    FFVFrameQueue *m_queue = nullptr;
-    QObject *m_recorder = nullptr;
-    std::function<bool()> m_openGuard;
-
-    mutable std::mutex m_mutex;
-    std::condition_variable m_cond;
-    bool m_openDone = false;
-    bool m_resumeRequested = false;
-    bool m_active = false;
-    bool m_abortRequested = false;
-    CaptureStartResult m_openResult;
-    bool m_gpuFrames = false;
-    int m_width = 0;
-    int m_height = 0;
-    QString m_description;
+    // Only cancelled workers may detach: their state and queue storage are owned.
+    void abandon();
+    using FFThread::start; // Only prepareOpenAndWait may launch this worker.
+    void run() override {} // This adapter uses WorkerLifetime, not FFThread::start().
+    struct State;
+    std::shared_ptr<State> state_;
+    std::unique_ptr<capture::wasapi::WorkerLifetime> lifetime_;
 };
 
 #endif // FFSCREENGRABTHREAD_H

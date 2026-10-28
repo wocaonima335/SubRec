@@ -49,6 +49,7 @@ private:
     CaptureConfig m_config;
     bool m_created = false;
     bool m_videoClosed = false, m_audioClosed = false, m_muxerClosed = false;
+    bool m_startFailed = false;
     bool m_cleanupNeeded = false; // Published by start, read after opener join.
     std::atomic<bool> m_started{false};
     std::atomic<bool> m_starting{false};

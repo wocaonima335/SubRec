@@ -10,11 +10,13 @@
 #include <QPointer>
 #include <QFileInfo>
 #include <QUuid>
+#include <QTemporaryDir>
 
 extern "C" {
 #include <libavformat/avformat.h>
 }
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -59,9 +61,9 @@ CaptureStartResult failure(const QString &message = QStringLiteral("probe failur
 // Never dispatch events here: posted == 1 means the real startup callback is
 // queued, not yet delivered. The timeout diagnoses missing worker progress;
 // only CTest can bound a deadlock in stop/join/destruction on this thread.
-bool waitFor(const std::function<bool()> &ready)
+bool waitFor(const std::function<bool()> &ready, std::chrono::milliseconds limit = 5s)
 {
-    const auto deadline = std::chrono::steady_clock::now() + 5s;
+    const auto deadline = std::chrono::steady_clock::now() + limit;
     while (!ready()) {
         if (std::chrono::steady_clock::now() >= deadline) return false;
         std::this_thread::sleep_for(1ms);
@@ -134,6 +136,27 @@ public:
             config->audioInput = {CaptureBackend::DirectShow, CaptureDeviceKind::SystemAudio,
                                   QStringLiteral("probe-audio"), QStringLiteral("No device audio"),
                                   QStringLiteral("audio=never-open"), missingFormat};
+            return CaptureStartResult::success();
+        };
+    }
+
+    static void installRealVideoTimeout(CaptureScheduler &scheduler,
+                                        const QString &directory, const QString &audioFile)
+    {
+        scheduler.m_testOpenerHook = {};
+        scheduler.m_testConfigHook = [directory, audioFile](CaptureConfig *config) {
+            config->outputPath = directory;
+            config->outputFileName = QStringLiteral("must-not-exist.mp4");
+            config->video = {CaptureBackend::DesktopDuplication, CaptureDeviceKind::Screen,
+                             QStringLiteral("injected-screen")};
+            config->audio = {CaptureBackend::DirectShow, CaptureDeviceKind::Microphone,
+                             QStringLiteral("test-file")};
+            config->videoInput = {CaptureBackend::DesktopDuplication, CaptureDeviceKind::Screen,
+                                  QStringLiteral("injected-screen"), QStringLiteral("Injected screen"),
+                                  QStringLiteral("output_idx=0"), QString()};
+            config->audioInput = {CaptureBackend::DirectShow, CaptureDeviceKind::Microphone,
+                                  QStringLiteral("test-file"), QStringLiteral("Test file"),
+                                  audioFile, QStringLiteral("nut")};
             return CaptureStartResult::success();
         };
     }
@@ -503,7 +526,8 @@ bool realSessionInputFormatFailureTwice()
             return s.state() == CaptureSchedulerState::Failed;
         }));
         CHECK(s.lastError() == QStringLiteral("Unable to prepare the selected capture input."));
-        CHECK(!f.recorder.isRecording()); // Abort completed before Failed delivery.
+        // Failed is published before bounded cleanup, so the UI/AutoTest can
+        // report an unresponsive native driver. stop() below joins that cleanup.
         auto *session = CaptureLifecycleTest::session(s);
         CHECK(session != nullptr);
         CHECK(!session->isStarted());
@@ -520,6 +544,86 @@ bool realSessionInputFormatFailureTwice()
     }
     return true;
 }
+// Full production Session -> OpenSourceEvent -> ScreenGrab timeout -> scheduler
+// notification -> abort path. A generated NUT input replaces the audio device;
+// no desktop or microphone is opened, even on PC3.
+bool realVideoTimeoutClosesOpenedAudio()
+{
+    QTemporaryDir directory;
+    CHECK(directory.isValid());
+    const QString input = directory.path() + QStringLiteral("/input.nut");
+    AVFormatContext *output = nullptr;
+    CHECK(avformat_alloc_output_context2(&output, nullptr, "nut", input.toStdString().c_str()) >= 0);
+    struct OutputGuard {
+        AVFormatContext *ctx;
+        ~OutputGuard() { if (ctx) { if (ctx->pb) avio_closep(&ctx->pb); avformat_free_context(ctx); } }
+    } outputGuard{output};
+    AVStream *stream = avformat_new_stream(output, nullptr);
+    CHECK(stream);
+    stream->time_base = AVRational{1, 48000};
+    stream->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
+    stream->codecpar->codec_id = AV_CODEC_ID_PCM_S16LE;
+    stream->codecpar->format = AV_SAMPLE_FMT_S16;
+    stream->codecpar->sample_rate = 48000;
+    stream->codecpar->bits_per_coded_sample = 16;
+    stream->codecpar->block_align = 4;
+    av_channel_layout_default(&stream->codecpar->ch_layout, 2);
+    CHECK(avio_open(&output->pb, input.toStdString().c_str(), AVIO_FLAG_WRITE) >= 0);
+    CHECK(avformat_write_header(output, nullptr) >= 0);
+    AVPacket *packet = av_packet_alloc();
+    CHECK(packet);
+    struct PacketGuard { AVPacket *pkt; ~PacketGuard() { av_packet_free(&pkt); } } packetGuard{packet};
+    CHECK(av_new_packet(packet, 4800 * 4) >= 0);
+    std::fill(packet->data, packet->data + packet->size, 0);
+    packet->pts = packet->dts = 0;
+    packet->duration = 4800;
+    packet->stream_index = stream->index;
+    CHECK(av_write_frame(output, packet) >= 0);
+    CHECK(av_write_trailer(output) >= 0);
+    CHECK(avio_closep(&output->pb) >= 0);
+
+    struct EnvironmentGuard {
+        QByteArray oldHook = qgetenv("SUBREC_TEST_VIDEO_OPEN_TIMEOUT");
+        QByteArray oldLimit = qgetenv("SUBREC_STOP_TIMEOUT_MS");
+        EnvironmentGuard() {
+            qputenv("SUBREC_TEST_VIDEO_OPEN_TIMEOUT", "1");
+            qputenv("SUBREC_STOP_TIMEOUT_MS", "500");
+        }
+        ~EnvironmentGuard() {
+            qputenv("SUBREC_TEST_VIDEO_OPEN_TIMEOUT", oldHook);
+            qputenv("SUBREC_STOP_TIMEOUT_MS", oldLimit);
+        }
+    } environment;
+    Fixture f;
+    auto &scheduler = *f.scheduler;
+    CaptureLifecycleTest::installRealVideoTimeout(scheduler, directory.path(), input);
+    CHECK(scheduler.start());
+    CHECK(waitFor([&] {
+        deliver(nullptr);
+        return scheduler.state() == CaptureSchedulerState::Failed;
+    }, 15s));
+    CHECK(scheduler.lastError().contains(QStringLiteral("Timed out waiting for Desktop Duplication")));
+    const auto stopBegin = std::chrono::steady_clock::now();
+    scheduler.stop();
+    const auto stopMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - stopBegin).count();
+    CHECK(stopMs < 1000);
+    CHECK(!f.recorder.isRecording());
+    CHECK(!QFileInfo::exists(directory.path() + QStringLiteral("/must-not-exist.mp4")));
+    auto *pipeline = f.recorder.getContext();
+    for (size_t i = 0; i < FFRecordContextType::A_DECODER_SIZE; ++i) {
+        CHECK(!pipeline->aDemuxer[i]->isOpen());
+        CHECK(pipeline->aDemuxerThread[i]->waitFor(0ms));
+        CHECK(pipeline->aDecoderThread[i]->waitFor(0ms));
+    }
+    CHECK(pipeline->aFilterThread->waitFor(0ms));
+    CHECK(pipeline->aEncoderThread->waitFor(0ms));
+    CHECK(pipeline->screenGrabThread->waitFor(0ms));
+    std::printf("video startup timeout: stop_ms=%lld, all audio closed, no output file\n",
+                static_cast<long long>(stopMs));
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -537,6 +641,7 @@ int main(int argc, char **argv)
         {"destructor_joins_blocked_opener", destructorJoinsBlockedOpener},
         {"destructor_discards_posted_callbacks", destructorDiscardsPostedCallbacks},
         {"real_session_input_format_failure_twice", realSessionInputFormatFailureTwice},
+        {"real_video_timeout_closes_opened_audio", realVideoTimeoutClosesOpenedAudio},
     };
     int failures = 0;
     {

@@ -15,6 +15,20 @@ inline std::chrono::milliseconds timeout() {
     }
     return std::chrono::milliseconds(5000);
 }
+// One budget for a failed startup, shared by every worker (not N * timeout).
+class Deadline {
+public:
+    explicit Deadline(std::chrono::milliseconds limit = timeout())
+        : end_(std::chrono::steady_clock::now() + limit) {}
+    std::chrono::milliseconds remaining() const {
+        const auto now = std::chrono::steady_clock::now();
+        return now >= end_ ? std::chrono::milliseconds(0)
+            : std::chrono::duration_cast<std::chrono::milliseconds>(end_ - now);
+    }
+private:
+    std::chrono::steady_clock::time_point end_;
+};
+
 // False means the worker still owns its borrowed objects. The caller MUST keep
 // those objects alive and must not close/reinitialize them or detach the worker.
 template<class Worker, class Cancel, class Log>

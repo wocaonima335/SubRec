@@ -1,4 +1,5 @@
-﻿#include "opengl/ffglitem.h"
+﻿#include "thread/failure_cleanup_deadline.h"
+#include "opengl/ffglitem.h"
 #include "recorder/capture_scheduler.h"
 #include "recorder/ffrecorder.h"
 
@@ -434,11 +435,9 @@ void runAutoScenario(QObject *root)
       if (quitIssued->exchange(true, std::memory_order_acq_rel))
         return;
       qInfo() << "[AutoTest] exit code" << code;
+      const auto grace = capture_stop::timeout() + std::chrono::milliseconds(1500);
+      capture_stop::armAutoTestExitWatchdog(code, grace);
       QCoreApplication::exit(code);
-      QTimer::singleShot(1500, [code] {
-        qWarning() << "[AutoTest] quit timeout, force exit";
-        ::_Exit(code);
-      });
     };
     // Polls every 100 ms until done() or timeoutMs, then calls onDone or onTimeout.
     auto pollUntil = [](std::function<bool()> done, int timeoutMs,
