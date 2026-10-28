@@ -32,7 +32,7 @@ class BufferedAudioSink final : public AudioFrameSink {
     struct State {
         std::shared_ptr<AudioFrameSink> downstream;
         std::function<void()> onFirstFrame;
-        std::vector<Slot> slots;
+        std::vector<Slot> ring_;
         Gap pendingGap; // producer-only until EOF publication
         const uint64_t maxSamples;
         alignas(64) std::atomic<uint64_t> written{0};
@@ -45,11 +45,11 @@ class BufferedAudioSink final : public AudioFrameSink {
         State(std::shared_ptr<AudioFrameSink> sink, size_t capacity, uint64_t limit, std::function<void()> firstFrame)
             : downstream(std::move(sink)), onFirstFrame(std::move(firstFrame)), maxSamples(limit) {
             if (!downstream || !capacity || !limit) throw std::invalid_argument("audio buffer capacity");
-            slots.reserve(capacity);
+            ring_.reserve(capacity);
             for (size_t i = 0; i < capacity; ++i) {
                 Frame f(av_frame_alloc());
                 if (!f) throw std::bad_alloc();
-                slots.push_back({std::move(f), {}});
+                ring_.push_back({std::move(f), {}});
             }
         }
         bool deliverGap(const Gap &gap) {
@@ -101,7 +101,7 @@ class BufferedAudioSink final : public AudioFrameSink {
                         onFirstFrame = {};
                         notify(); // e.g. startup logging, never on capture
                     }
-                    auto &slot = slots[r % slots.size()];
+                    auto &slot = ring_[r % ring_.size()];
                     const auto gap = slot.gap;
                     av_frame_move_ref(frame.get(), slot.frame.get());
                     const auto samples = frame->nb_samples;
@@ -145,7 +145,7 @@ public:
         }
         const auto w = s.written.load(std::memory_order_relaxed);
         const auto pending = s.acceptedSamples.load(std::memory_order_relaxed) - s.retiredSamples.load();
-        if (w - s.read.load(std::memory_order_acquire) == s.slots.size() ||
+        if (w - s.read.load(std::memory_order_acquire) == s.ring_.size() ||
             samples > s.maxSamples || pending > s.maxSamples - samples) {
             s.overflowSamples += samples; ++s.overflowFrames;
             if (!s.pendingGap.samples) {
@@ -158,7 +158,7 @@ public:
             // Leave ownership to caller, avoiding release/destruction in this handoff.
             return true;
         }
-        auto &slot = s.slots[w % s.slots.size()];
+        auto &slot = s.ring_[w % s.ring_.size()];
         slot.gap = s.pendingGap; s.pendingGap = {};
         av_frame_move_ref(slot.frame.get(), frame);
         s.acceptedSamples += samples; ++s.acceptedFrames;
