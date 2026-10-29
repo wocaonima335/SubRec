@@ -1,4 +1,5 @@
 #pragma once
+#include "test_hook_gate.h"
 #include <chrono>
 #include <cstdlib>
 
@@ -14,7 +15,7 @@ public:
             ? std::chrono::milliseconds(ms) : std::chrono::milliseconds(0);
     }
     explicit VideoStartDelay(std::chrono::milliseconds delay =
-        parse(std::getenv("SUBREC_TEST_VIDEO_START_DELAY_MS"))) : delay_(delay) {}
+        parse(hookEnvironment("SUBREC_TEST_VIDEO_START_DELAY_MS"))) : delay_(delay) {}
     // wait returns true on cancellation. Use the source's existing CV/stop flag.
     template<class Wait, class Log> bool beforeFirstPacket(Wait wait, Log log) {
         if (used_ || delay_.count() == 0) return true;

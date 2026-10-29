@@ -36,35 +36,49 @@ No new QML controls are added; the scheduler API and autotest expose this mode.
   calibration cannot measure the microphone driver's hidden fixed buffering latency;
   physical loopback/impulse measurement on PC2 is still needed for exact offset.
 * The mix worker converts each actual input layout/rate/format with swresample to
-  48 kHz stereo FLTP, accounting for resampler delay. Every packet is positioned on
-  the shared session timeline; it does not replace device PTS with sample counts.
+  48 kHz stereo FLTP, accounting for resampler delay. In
+  `filter/audio_timeline_mixer.cpp`, consecutive packets within **10 ms** of the
+  predicted `nextUs` advance continuously from converted samples and resampler
+  delay. Device PTS is an observation of clock error, not a new position for every
+  packet. Format changes or deviations exceeding 10 ms flush/reinitialize the
+  resampler and reposition on the device timestamp.
+* Long-term drift uses a per-source PI controller: it averages one second of PTS
+  errors, uses proportional gain 0.2 and integral gain 0.01, and calls
+  `swr_set_compensation(delta, 480000)`. Delta is the total sample adjustment over
+  **10 seconds** of output, refreshed about once per source second. The adjustment
+  slews by at most approximately **50 ppm per second**, with a desired correction
+  clamped to ±1000 ppm; 50 ppm is not an absolute rate limit. This allows gradual
+  tracking of clocks differing by 50–200 ppm without packet-boundary jumps.
 * A 200 ms wait window accommodates scheduling and the 50 ms DirectShow buffer.
   Missing intervals, late startup and an ended input produce silence. Late/overlapping
-  samples are trimmed rather than shifting future audio; rate drift therefore does
-  not accumulate as an unbounded inter-source offset. This first implementation
-  corrects with silence/trim, not gradual resampling compensation; timestamp jitter
-  or large overruns may produce audible transitions.
+  samples are trimmed. Large discontinuities still require silence/trim and can
+  produce audible transitions. Packets more than two seconds ahead of the output
+  cursor are dropped and counted before changing timeline state.
 * Both `abuffer` sources get aligned PTS in 1/48000 time base. `amix normalize=0`
-  sums the selected gains. A stereo-linked sample-peak limiter then applies common
-  gain with instantaneous attack, 50 ms exponential release and a **0.84 ceiling**
-  (-1.51 dBFS), followed by **0.4 AAC headroom gain** (-7.96 dB). The encoder input
-  is therefore bounded to **0.336 (-9.47 dBFS)**. Both channels receive the same
-  gain; there is no hard clipping, extra buffering, sample insertion or PTS shift.
-  These constants live in `AudioTimelineMixer`; the worker logs both gains and
-  the resulting PCM ceiling. `limited_samples` counts limiter activity before
-  the fixed headroom gain, not clipped AAC samples.
-* The substantial headroom is intentional for the current native AAC encoder at
-  **65536 bps, 48 kHz stereo FLTP**, with default codec options. Reducing the
-  ceiling to 0.84 alone was insufficient: even 0.84 * 0.5 produced a +0.77 dBFS
-  decoded peak on the square-wave regression. Mixed recordings are quieter;
-  per-source volume controls still apply before limiting. Single-source recordings
-  bypass this mixer and retain their existing behavior.
-* This is a sample-peak limiter with empirically tested codec headroom, not a
-  certified true-peak limiter. The regression also evaluates 8x bandlimited
-  reconstruction with swresample, including filter tails. This estimates intersample
-  peaks; it is not a BS.1770-conformance measurement or a mathematical bound for
-  every possible waveform/codec. Re-run it when changing gains or AAC settings,
-  and recheck the actual PC2 MP4 decode before reducing the headroom.
+  sums the sources after their per-source gains (default 1.0 each). A stereo-linked
+  sample-peak limiter then applies common gain with instantaneous attack, 50 ms
+  exponential release and a **0.7079 ceiling** (approximately **−3 dBFS**).
+  There is **no additional AAC headroom multiplier**. The release coefficient is
+  precomputed in the constructor. There is no lookahead, extra buffering, sample
+  insertion or PTS shift in the limiter. See `filter/audio_timeline_mixer.h/.cpp`.
+* `[AudioMix] finished` in `thread/ffafilterthread.cpp` reports
+  `over_ceiling_samples` and `over_ceiling_ratio`: stereo sample frames whose
+  **pre-limiter** peak exceeds the ceiling. Release-only attenuation does not
+  count. `max_gain_reduction_db` measures the maximum applied gain attenuation.
+  These are not counts of clipped AAC samples.
+* Native AAC uses **128 × 1024 = 131072 bps**, 48 kHz stereo FLTP and default
+  codec options (`encoder/audio_encoding_config.h`, `encoder/ffaencoder.cpp`).
+  The mixed PCM is bounded to 0.7079 (within floating-point rounding), but AAC
+  encoding/decoding can overshoot that peak. This is a sample-peak limiter, not a
+  certified true-peak limiter or a universal guarantee against decoded overshoot.
+  Single-source recordings bypass this mixer and retain their existing behavior.
+* The codec regression estimates intersample peaks with 8x bandlimited
+  reconstruction using swresample, including filter tails. This is not a BS.1770
+  conformance measurement. Sine, synthetic music and supplied WAV material must
+  have decoded sample peak **< −0.5 dBFS** and reconstructed peak **< 1.0**.
+  Extreme square/transient/high-frequency fixtures allow sample peaks up to
+  **+6 dBFS** because native AAC can overshoot sharp waveforms; their 8x peaks are
+  report-only. See the exact assertions and RMS floors below.
 * On pause, inputs continue draining and output within the capture-time pause
   interval is discarded. Frames crossing a pause boundary are split, so the
   200 ms mix wait window does not move the pause point. On normal stop, both inputs reach EOF
@@ -74,15 +88,17 @@ The existing FFmpeg build already contains `amix` and `aresample` (as well as th
 buffer source/sink). No additional production filters are needed; `alimiter` is
 replaced by the limiter above. **Rebuild FFmpeg with `SUBREC_FFMPEG_TEST_COMPONENTS=1` for
 AAC verification**: `packaging/ffmpeg/build-ffmpeg.sh` now adds the `aac` decoder
-alongside `wrapped_avframe` in that branch (`--enable-decoder=...,aac`). The supplied
-Windows build has the AAC encoder but lacks the AAC decoder. Recording can use
-that existing build; the new test fails with an explicit rebuild message when the
-decoder is missing, rather than silently skipping peak verification.
+alongside `wrapped_avframe` in that branch (`--enable-decoder=...,aac`).
+The CI release build uses `SUBREC_FFMPEG_TEST_COMPONENTS=0`, so it has the AAC
+encoder but no AAC decoder. `audio_mix_aac` is labelled
+`needs_ffmpeg_test_components` and excluded from release-FFmpeg CI runs; direct
+execution without the decoder fails with an explicit rebuild message.
 
 ## Verification
 
 `tests/audio_timeline_mix` is a standalone CMake/CTest project (same FFMPEG_ROOT as
-other native tests). It is also registered by the main audio_filter_dual test build.
+other native tests). The top-level test build adds this directory directly,
+without duplicate registration by `audio_filter_dual`.
 It exercises nonzero clock epochs, late startup, gaps, EOF, late packets, drift,
 44.1 kHz mono resampling/drain, packed S16 microphone input and stereo-linked
 no-clipping behavior. `audio_filter_dual` additionally exercises the production
@@ -92,38 +108,38 @@ filter worker with both queues and a pause interval crossing frame boundaries.
 --output-on-failure`). It sends two 0.99-amplitude sources through the production
 mixer, then the native `aac` encoder with the exact `FFAEncoder::initAudio`
 settings, and decodes the resulting packets using the encoder's codec parameters.
-It covers 440/997 Hz sine, square waves, gated tones with impulses, and high-frequency
-sources with differing phases. It flushes both codecs, measures priming/padding too,
-and asserts decoded sample peak **< 1.0**, 8x reconstructed peak **< 1.0**, and
-RMS **> 0.01**. A short last input frame exercises final codec draining. No muxer,
-AAC parser, device or Qt runtime is required by this standalone test.
+It covers 440/997 Hz sine, square waves, gated tones with impulses, high-frequency
+sources with differing phases, and built-in music-like material (harmonics,
+envelopes and noise, crest factor around 12–15 dB). Optional
+`SUBREC_AUDIO_MIX_AAC_SYSTEM` / `SUBREC_AUDIO_MIX_AAC_MIC` paths supply 48 kHz WAV
+material; unset paths print SKIP for the WAV portion while synthetic music still
+runs. WAV fixtures are read by the test's own parser, not a WAV muxer.
 
-Measured using native Linux FFmpeg **n8.0.3**, 65536 bps, default AAC settings:
+All scenarios require finite decoded samples and an RMS floor. Synthetic floors
+are measured baselines minus 1.5 dB; WAV uses the mixed PCM RMS adjusted for codec
+padding minus 1.5 dB. Sine/music/WAV enforce decoded sample peak < −0.5 dBFS and
+8x peak < 1.0. Square/transient/high-frequency cases enforce PCM peak
+<= 0.7079 + 1e-6 and decoded sample peak <= +6 dBFS, while reporting 8x peaks.
+The +6 dBFS guard catches extreme amplification beyond the accepted native AAC
+overshoot; it does not certify those pathological fixtures as unclipped playback.
+Exact baselines and the named extreme-peak limit are in
+`tests/audio_timeline_mix/audio_mix_aac_tests.cpp`.
 
-| Input (both sources near full scale) | Old 0.95 ceiling: decoded peak dBFS | New decoded peak dBFS | New 8x reconstructed peak (linear) |
-| --- | ---: | ---: | ---: |
-| 440/997 Hz sine | +3.81 | -4.91 | 0.569 |
-| Square waves | +7.77 | -1.34 | 0.859 |
-| Gated sine / impulses | +4.52 | -4.50 | 0.596 |
-| High frequencies / differing phases | +5.50 | -3.52 | 0.684 |
-
-The original limiter fails this regression; the updated mixer passes it and the
-existing timeline/dump tests. Both standalone test executables compile and link
-with MinGW against the supplied Windows FFmpeg. Windows/Qt recording and the
-PC2-specific AAC decode still need to be verified on PC2 after the decoder rebuild.
+Both codecs are flushed, and priming/padding is included in peak measurements.
+A short last input frame exercises final draining. No muxer, AAC parser, device
+or Qt runtime is required by this standalone test. Re-run the tests and check
+actual recorded MP4 decoding when changing gains or encoder settings; historical
+measurements from the old 65536 bps / 0.336 PCM ceiling are not current acceptance
+results.
 
 `tools/pc2_verify.ps1 -MicDevice '<device name>' ...` additionally records while
 playing its generated tone with both sources enabled. The log must contain
 `[AudioMix] finished system_frames= ... mic_frames= ...` with nonzero counts.
 The summary also reports generated silence, trimmed samples and limiter activity.
 
-Validation on Linux: MinGW compile/link against the supplied Windows FFmpeg build;
-core, WASAPI pipeline and mixed-worker tests executed against a temporary native
-build of the same n8.0.3 sources (worker Qt logging/UI calls use temporary stubs).
-ASan/UBSan core tests passed with leak detection disabled because this sandbox
-runs under ptrace; LeakSanitizer could not run.
-Full Qt/Windows recording, driver latency, long-run clock drift, pause/resume,
-start/cancel/stop races and listening tests still require PC2.
+Hardware-independent tests do not replace Windows/Qt recording checks. Driver
+latency, physical clock drift, pause/resume, startup/stop races and listening
+tests still need verification with the actual PC2/PC3 devices.
 
 ## Optional pre-mix debug dumps
 
@@ -144,8 +160,8 @@ little-endian, interleaved L/R, 48000 Hz stereo** files: eight bytes per sample
 frame. They do not need a WAV/raw muxer or any change to the minimal FFmpeg build.
 
 The tap is after resampling, alignment, silence insertion and per-source gain,
-before `amix`, the limiter and AAC headroom gain. Neither attenuation is present
-in the dumps; multiply by the headroom gain as well when comparing amplitudes.
+before `amix` and the limiter. Limiter attenuation is not present in the dumps;
+there is no separate AAC headroom gain to apply when comparing amplitudes.
 Initial silence, missing-input gaps and trailing silence are included. File sample
 frame N (byte offset `N * 8`) corresponds to recorded mixed PCM sample N before
 AAC encoding. Paused/discarded frames are omitted from **both** dumps, just as they
@@ -176,3 +192,18 @@ limiting after the tap, separate sessions, and an invalid destination without
 changing mixed output. On Linux, an isolated child with a file-size limit also
 injects a real short write and checks that recording output is unaffected and
 both dump files retain the same valid prefix.
+
+## Video startup test hooks
+
+`SUBREC_TEST_VIDEO_START_DELAY_MS=1..60000` delays the first video packet/frame;
+`SUBREC_TEST_VIDEO_OPEN_TIMEOUT=1` simulates a ddagrab open timeout. In application
+builds they take effect only when `SUBREC_AUTOTEST_SCENARIO` is nonempty after
+trimming (AutoTest mode). Setting either hook alone during normal GUI recording
+has no effect. Active hooks retain their `[TestHook]` log messages.
+
+`capture/test_hook_gate.h` centralizes this gate. Standalone fake-device tests
+can explicitly compile with `SUBREC_ENABLE_TEST_HOOKS=1`; the application modules
+never receive that definition merely because `SUBREC_BUILD_LIFECYCLE_TESTS=ON`.
+`tests/startup_failure` uses the test definition; the real-module
+`capture_lifecycle_tests` fixture temporarily sets an AutoTest scenario.
+`tests/test_hooks` checks production gating and the explicit test-build opt-in.

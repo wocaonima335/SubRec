@@ -583,13 +583,17 @@ bool realVideoTimeoutClosesOpenedAudio()
     CHECK(avio_closep(&output->pb) >= 0);
 
     struct EnvironmentGuard {
+        QByteArray oldScenario = qgetenv("SUBREC_AUTOTEST_SCENARIO");
         QByteArray oldHook = qgetenv("SUBREC_TEST_VIDEO_OPEN_TIMEOUT");
         QByteArray oldLimit = qgetenv("SUBREC_STOP_TIMEOUT_MS");
         EnvironmentGuard() {
+            // Linked application modules retain the runtime AutoTest gate.
+            qputenv("SUBREC_AUTOTEST_SCENARIO", "record_seconds");
             qputenv("SUBREC_TEST_VIDEO_OPEN_TIMEOUT", "1");
             qputenv("SUBREC_STOP_TIMEOUT_MS", "500");
         }
         ~EnvironmentGuard() {
+            qputenv("SUBREC_AUTOTEST_SCENARIO", oldScenario);
             qputenv("SUBREC_TEST_VIDEO_OPEN_TIMEOUT", oldHook);
             qputenv("SUBREC_STOP_TIMEOUT_MS", oldLimit);
         }

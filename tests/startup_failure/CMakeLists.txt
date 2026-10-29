@@ -15,7 +15,8 @@ target_include_directories(startup_failure_tests PRIVATE fakes ../.. "${FFMPEG_R
 target_link_libraries(startup_failure_tests PRIVATE Qt6::Core Threads::Threads
     "${FFMPEG_ROOT}/lib/avutil.lib")
 # Exercise the same keyword macros as QtCore on PC3, including standalone builds.
-target_compile_definitions(startup_failure_tests PRIVATE slots= signals=public emit=)
+target_compile_definitions(startup_failure_tests PRIVATE slots= signals=public emit=
+    SUBREC_ENABLE_TEST_HOOKS=1)
 add_test(NAME video_startup_failure COMMAND startup_failure_tests)
 add_test(NAME screen_normal_drain COMMAND startup_failure_tests --normal-drain)
 set_tests_properties(video_startup_failure screen_normal_drain PROPERTIES TIMEOUT 10)

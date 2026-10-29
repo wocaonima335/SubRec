@@ -209,8 +209,7 @@ void FFScreenGrabThread::State::run()
         error.userMessage = QStringLiteral("Capture start was cancelled.");
         result = CaptureStartResult::failure(std::move(error));
     } else {
-        const char *hook = std::getenv("SUBREC_TEST_VIDEO_OPEN_TIMEOUT");
-        if (hook && std::string(hook) == "1") {
+        if (capture::test::videoOpenTimeoutRequested()) {
             qWarning() << "[TestHook] SUBREC_TEST_VIDEO_OPEN_TIMEOUT enabled";
             std::unique_lock<std::mutex> lock(m_mutex);
             m_cond.wait(lock, [this] { return m_stop.load(); });
