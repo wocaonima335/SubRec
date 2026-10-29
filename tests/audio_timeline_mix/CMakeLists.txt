@@ -16,6 +16,7 @@ if(WIN32)
         ${runtime_dlls} $<TARGET_FILE_DIR:audio_timeline_mix_tests>)
 endif()
 add_test(NAME audio_timeline_mix COMMAND audio_timeline_mix_tests)
+set_property(TEST audio_timeline_mix APPEND PROPERTY LABELS audio mix synthetic)
 set_tests_properties(audio_timeline_mix PROPERTIES TIMEOUT 30)
 
 # AAC round-trip uses the same production mixer and native encoder settings.

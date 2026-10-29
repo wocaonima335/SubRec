@@ -59,7 +59,7 @@ cmake --build build/windows-mingw-release --target appSubRec
 build/windows-mingw-release/appSubRec.exe
 ```
 
-可选：`-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` 关闭 Windows 下默认开启的生命周期测试目标。
+可选：`-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` 关闭 Windows 下默认开启的全部 CTest 测试。按 CI 的方式在本地运行测试：构建 `subrec_tests` 目标后执行 `ctest --test-dir <build> -L "^ci$" -LE "^(device|needs_ffmpeg_test_components|needs_powershell)$" --output-on-failure`。
 
 > 关于 FFmpeg 的许可：发布包中的 FFmpeg 是 **GPL-2.0-or-later** 构建（`--enable-gpl --enable-libx264`；无 version3、无 nonfree；与 SubRec 的 GPL-3.0 兼容）。本仓库不分发它；但发布包（zip 及将来的安装包）会包含它，因此发布包的 **`sources/` 目录附带对应源码**：`ffmpeg-n8.0.3.tar.xz`、`x264-b35605ace3dd.tar.xz`、`libvpl-v2.16.0.tar.xz`、`nv-codec-headers-n12.2.72.0.tar.xz`、`amf-headers-v1.5.3.tar.xz`、`subrec-ffmpeg-build-scripts.tar.xz`（构建脚本）、`BUILD_CONFIG.txt`（configure 参数、工具链版本、DLL 哈希）和 `SHA256SUMS`（合计约 18 MB）。发布包不含 x265，也**不含 `ffmpeg.exe`**（SubRec 从不启动它）。构建时的警告分类见 [`packaging/ffmpeg/BUILD_WARNINGS.md`](packaging/ffmpeg/BUILD_WARNINGS.md)；详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
 
@@ -139,7 +139,7 @@ cmake --build build/windows-mingw-release --target appSubRec
 build/windows-mingw-release/appSubRec.exe
 ```
 
-Optional: `-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` disables the lifecycle test target that is ON by default on Windows.
+Optional: `-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` disables all CTest tests, which are ON by default on Windows. To run the tests locally the way CI does, build the `subrec_tests` target and run `ctest --test-dir <build> -L "^ci$" -LE "^(device|needs_ffmpeg_test_components|needs_powershell)$" --output-on-failure`.
 
 > FFmpeg licensing note: the FFmpeg in the release packages is a **GPL-2.0-or-later** build (`--enable-gpl --enable-libx264`; no version3, no nonfree; compatible with SubRec's GPL-3.0). This repository does not distribute it, but the release packages (zip, and any future installer) do include it, so every package carries the corresponding source in its **`sources/` directory**: `ffmpeg-n8.0.3.tar.xz`, `x264-b35605ace3dd.tar.xz`, `libvpl-v2.16.0.tar.xz`, `nv-codec-headers-n12.2.72.0.tar.xz`, `amf-headers-v1.5.3.tar.xz`, `subrec-ffmpeg-build-scripts.tar.xz` (the build scripts), `BUILD_CONFIG.txt` (configure arguments, toolchain versions, DLL hashes) and `SHA256SUMS` (about 18 MB in total). The packages contain no x265 and **no `ffmpeg.exe`** (SubRec never starts it). Build warnings are classified in [`packaging/ffmpeg/BUILD_WARNINGS.md`](packaging/ffmpeg/BUILD_WARNINGS.md). See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 

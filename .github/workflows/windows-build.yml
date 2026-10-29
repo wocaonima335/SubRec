@@ -1,7 +1,10 @@
 # SubRec (字录) Windows build.
 #
-# Status: the application build and packaging workflow has run successfully on GitHub.
-# Device-independent CTest coverage runs separately from the release application build.
+# Status: the application build and packaging steps have run successfully on GitHub.
+# The build job also configures a separate test build dir (build/ci-tests) and runs the
+# device-independent CTest set (label exactly "ci") right after the release app build,
+# in the same job. A failing test fails the job and blocks the later Deploy, packaging
+# and tag release steps.
 #
 # Two jobs:
 #   ffmpeg (ubuntu-24.04)  builds SubRec's minimal FFmpeg n8.0.3 (+ x264, libvpl, nv-codec-headers,
@@ -185,8 +188,8 @@ jobs:
         # Release FFmpeg omits AAC decoding, lavfi and file fixture components.
         # PowerShell parser tests remain available to PC2's full test build.
         run: >
-          ctest --test-dir build/ci-tests -L ci
-          -LE "device|needs_ffmpeg_test_components|needs_powershell"
+          ctest --test-dir build/ci-tests -L "^ci$"
+          -LE "^(device|needs_ffmpeg_test_components|needs_powershell)$"
           --output-on-failure --timeout 180 --no-tests=error
 
       - name: Deploy (windeployqt)
