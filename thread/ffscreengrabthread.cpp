@@ -147,7 +147,14 @@ void FFScreenGrabThread::wakeAllThread()
 void FFScreenGrabThread::close()
 {
     // Native graph destruction is always on its owner thread, including timeout.
-    requestAbort();
+    if (!waitFor(std::chrono::milliseconds(0))) {
+        requestAbort();
+    } else {
+        // The finished producer has sent EOF. Keep its queued tail for the
+        // downstream filter; abort would clear it and replace EOF with Closed.
+        std::lock_guard<std::mutex> lock(state_->m_mutex);
+        state_->m_recorder = nullptr;
+    }
     abandon();
     state_ = std::make_shared<State>();
 }

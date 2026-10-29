@@ -133,6 +133,47 @@ static void destroyedScreenWhileOpening() {
     REQUIRE(guardCalls == 1);
     std::puts("PASS screen-owner-destruction: native open reclaimed, no borrowed access");
 }
+static void normalScreenDrain() {
+    failImmediately = false;
+    nativeSuccess = true;
+    releaseDriver();
+    setEnv("SUBREC_TEST_VIDEO_OPEN_TIMEOUT", "");
+    for (const int frameCount : {0, 1, 30}) {
+        FFVFrameQueue queue;
+        queue.start();
+        {
+            FFScreenGrabThread screen;
+            REQUIRE(screen.prepareOpenAndWait(InputRequest{}, &queue, nullptr, 1000, {}).ok);
+            // Hold the prepared producer before resume and model its buffered tail.
+            // No consumer runs until after close(), including at the queue's capacity.
+            for (int i = 0; i < frameCount; ++i) {
+                AVFrame *frame = av_frame_alloc();
+                REQUIRE(frame);
+                frame->pts = i;
+                queue.enqueue(frame);
+                av_frame_free(&frame);
+            }
+            screen.requestDrainStop();
+            REQUIRE(screen.waitFor(1s)); // Real worker sends EOF before completing.
+            screen.close();
+            REQUIRE(!screen.isActive());
+            screen.close(); // Repeated close/destruction must also preserve the tail.
+        }
+        REQUIRE(!queue.isClosed());
+        for (int i = 0; i < frameCount; ++i) {
+            auto result = queue.receive();
+            REQUIRE(result.result == MediaQueueResult::Ok && result.item);
+            const auto pts = result.item->pts;
+            av_frame_free(&result.item);
+            REQUIRE(pts == i);
+        }
+        const auto end = queue.receive();
+        REQUIRE(end.result == MediaQueueResult::Eof && !end.item);
+        awaitReclaimed();
+        std::printf("PASS screen-normal-drain: frames=%d ordered, EOF (not Closed), live_sources=0\n",
+                    frameCount);
+    }
+}
 int main(int argc, char **argv) {
     if (argc == 2 && std::string(argv[1]) == "--autotest-exit") {
         capture_stop::armAutoTestExitWatchdog(3, 40ms);
@@ -157,6 +198,10 @@ int main(int argc, char **argv) {
     }
 
     try {
+        if (argc == 2 && std::string(argv[1]) == "--normal-drain") {
+            normalScreenDrain();
+            return 0;
+        }
         runFailure(true, false);
         runFailure(false, false);
         runFailure(false, true);
