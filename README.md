@@ -32,7 +32,7 @@
 - 屏幕采集有两个后端（设置页“Screen backend”或环境变量 `SUBREC_CAPTURE_BACKEND=auto|ddagrab|dshow`）：
   - **Desktop Duplication（FFmpeg `ddagrab` 滤镜，默认 auto 时优先）**：无需第三方组件；NVIDIA/AMD 上 D3D11 帧直接交给 `h264_nvenc`/`h264_amf`，其它情况下载到内存转 yuv420p。**尚未在真机上验证**（见 `tools/pc2_verify.ps1`）。只能采集默认显卡上的显示器；GPU 直通模式下预览窗口不更新；遇到 UAC/锁屏/分辨率变化时视频流结束（文件保留）。
   - **DirectShow（dshow）+ `screen-capture-recorder`**：需用户自行安装该第三方组件；ddagrab 打不开时自动回退到它（若已安装）。
-- 原生 WASAPI loopback 已在 `capture/wasapi_*` 实现，是默认系统声音后端；`SUBREC_SYSTEM_AUDIO_BACKEND=auto` 优先 WASAPI，`wasapi` 强制使用它，`dshow` 使用需自行安装的 `virtual-audio-capturer`（本仓库不包含）。麦克风与摄像头走 DirectShow；WGC 未实现。
+- 原生 WASAPI loopback 已在 `capture/wasapi_*` 实现，是默认系统声音后端；`SUBREC_SYSTEM_AUDIO_BACKEND` 为 `auto`（默认）或 `wasapi` 时行为相同：优先 WASAPI；没有 WASAPI 设备或打开失败时，若已自行安装 `virtual-audio-capturer`（DirectShow，本仓库不包含）则回退到它（混音模式不回退）；`dshow` 直接使用 `virtual-audio-capturer`。麦克风与摄像头走 DirectShow；WGC 未实现。
 - “设置”“滤镜”等部分界面尚未完成（见 Issues）。
 - 目前没有视频剪辑功能；“视频”页只是已录制文件的列表。
 - 代码注释以中文为主。
@@ -112,7 +112,7 @@ SubRec (字录) is a Windows screen recorder built with **Qt 6 Quick (QML) and F
 - Screen capture has two backends (settings page "Screen backend", or `SUBREC_CAPTURE_BACKEND=auto|ddagrab|dshow`):
   - **Desktop Duplication (FFmpeg's `ddagrab` filter, preferred by `auto`)**: no third-party component; on NVIDIA/AMD the D3D11 frames go straight to `h264_nvenc`/`h264_amf`, otherwise they are downloaded and converted to yuv420p. **Not yet verified on real hardware** (see `tools/pc2_verify.ps1`). Only displays on the default GPU; the preview does not update in GPU passthrough mode; a UAC prompt, lock screen or resolution change ends the video stream (the file is kept).
   - **DirectShow (dshow) + `screen-capture-recorder`**: the third-party filter must be installed by you; used automatically if ddagrab cannot open (when installed).
-- Native WASAPI loopback is implemented in `capture/wasapi_*` and is the default system audio backend. `SUBREC_SYSTEM_AUDIO_BACKEND=auto` prefers WASAPI, `wasapi` forces it, and `dshow` uses the separately installed `virtual-audio-capturer` (not bundled). Microphone and camera use DirectShow; WGC is not implemented.
+- Native WASAPI loopback is implemented in `capture/wasapi_*` and is the default system audio backend. `SUBREC_SYSTEM_AUDIO_BACKEND=auto` (default) and `wasapi` behave the same: WASAPI is preferred, and if no WASAPI device is available or it fails to open, capture falls back to the separately installed `virtual-audio-capturer` (DirectShow, not bundled) when present (no fallback in mixed mode). `dshow` uses `virtual-audio-capturer` directly. Microphone and camera use DirectShow; WGC is not implemented.
 - Some UI pages (settings, filters) are incomplete (see the issue tracker).
 - There is no video editing; the "video" page is only a list of recorded files.
 - Code comments are mostly in Chinese.
