@@ -121,6 +121,8 @@ try {
     $psi.FileName = $exePath
     $psi.WorkingDirectory = $buildPath
     $psi.UseShellExecute = $false
+    # Hash checks below require the subrec.frames debug logs.
+    $psi.Environment["SUBREC_DEBUG_LOG"] = "1"
     $psi.Environment["SUBREC_AUTOTEST_SCENARIO"] = "phase4_long_record_dynamic_screen"
     $psi.Environment["SUBREC_AUTOTEST_QUIT_MS"] = [string](($RecordDurationSec + 2) * 1000)
 
