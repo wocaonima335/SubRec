@@ -43,3 +43,6 @@ foreach(mode IN ITEMS stuck-audio stuck-video autotest-exit)
         set_tests_properties(startup_${mode} PROPERTIES ENVIRONMENT "PATH=${_startup_path}")
     endif()
 endforeach()
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
+subrec_configure_tests()

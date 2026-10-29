@@ -1,0 +1,32 @@
+include_guard(GLOBAL)
+
+# Called in each test directory, for both standalone and application builds.
+# Current harnesses use synthetic inputs/fake devices. A real-device test must
+# explicitly carry the device label, which excludes it from the ci set.
+function(subrec_configure_tests)
+    get_property(tests DIRECTORY PROPERTY TESTS)
+    foreach(test IN LISTS tests)
+        get_property(labels TEST ${test} PROPERTY LABELS)
+        if(NOT "device" IN_LIST labels)
+            set_property(TEST ${test} APPEND PROPERTY LABELS ci)
+        endif()
+        if(WIN32)
+            get_filename_component(compiler_bin "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            set(runtime_path "${FFMPEG_ROOT}/bin;${compiler_bin};$ENV{PATH}")
+            if(TARGET Qt6::Core)
+                get_target_property(qt_type Qt6::Core TYPE)
+                if(NOT qt_type STREQUAL "INTERFACE_LIBRARY")
+                    set(runtime_path "$<TARGET_FILE_DIR:Qt6::Core>;${runtime_path}")
+                endif()
+            endif()
+            string(REPLACE ";" "\\;" runtime_path "${runtime_path}")
+            # Other test environment entries (including hook opt-ins) survive.
+            get_property(environment TEST ${test} PROPERTY ENVIRONMENT)
+            list(FILTER environment EXCLUDE REGEX "^PATH=")
+            list(APPEND environment "PATH=${runtime_path}")
+            set_tests_properties(${test} PROPERTIES ENVIRONMENT "${environment}")
+        endif()
+    endforeach()
+    get_property(targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    set_property(GLOBAL APPEND PROPERTY SUBREC_TEST_TARGETS ${targets})
+endfunction()

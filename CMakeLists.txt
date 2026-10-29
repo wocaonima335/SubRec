@@ -86,13 +86,21 @@ add_subdirectory(recorder)
 add_subdirectory(encoder)
 add_subdirectory(opengl)
 
-option(SUBREC_BUILD_LIFECYCLE_TESTS "Build the in-tree test harnesses (capture_lifecycle, audio_filter_dual)" ON)
+option(SUBREC_BUILD_LIFECYCLE_TESTS "Build all in-tree CTest harnesses" ON)
 if(SUBREC_BUILD_LIFECYCLE_TESTS AND WIN32)
     enable_testing()
     add_subdirectory(tests/capture_lifecycle)
     add_subdirectory(tests/startup_failure)
     add_subdirectory(tests/logging)
     add_subdirectory(tests/audio_filter_dual)
+    add_subdirectory(tests/muxer_lifecycle)
+    add_subdirectory(tests/input_startup)
+    add_subdirectory(tests/audio_timeline_mix)
+    add_subdirectory(tests/wasapi_loopback)
+    add_subdirectory(tests/media_conversion)
+    # native_capture_probe is an interactive hardware probe, not a CTest suite.
+    get_property(subrec_test_targets GLOBAL PROPERTY SUBREC_TEST_TARGETS)
+    add_custom_target(subrec_tests DEPENDS ${subrec_test_targets})
 endif()
 
 # 主可执行文件

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
-project(input_startup_tests LANGUAGES CXX)
-enable_testing()
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(input_startup_tests LANGUAGES CXX)
+    enable_testing()
+endif()
 set(CMAKE_CXX_STANDARD 17)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick Multimedia Widgets)
 get_filename_component(ROOT "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
@@ -27,3 +29,8 @@ endif()
 add_test(NAME input_startup COMMAND input_startup_tests)
 set_tests_properties(input_startup PROPERTIES TIMEOUT 30)
 # Run with Qt, FFmpeg and compiler runtime directories on PATH. No deployment.
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
+subrec_configure_tests()
+# Uses lavfi sine/color plus WAV/Matroska demuxers; all inputs are synthetic.
+set_property(TEST input_startup APPEND PROPERTY LABELS needs_ffmpeg_test_components)

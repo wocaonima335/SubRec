@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
-project(muxer_lifecycle_tests LANGUAGES CXX)
-enable_testing()
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(muxer_lifecycle_tests LANGUAGES CXX)
+    enable_testing()
+endif()
 find_package(Qt6 REQUIRED COMPONENTS Core)
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecFFmpeg.cmake")
 subrec_require_ffmpeg_root()
@@ -76,3 +78,11 @@ target_link_libraries(capture_diagnostics_tests PRIVATE Qt6::Core
     "${FFMPEG_ROOT}/lib/avformat.lib" "${FFMPEG_ROOT}/lib/avcodec.lib" "${FFMPEG_ROOT}/lib/avutil.lib")
 add_test(NAME capture_diagnostics COMMAND capture_diagnostics_tests)
 set_tests_properties(capture_diagnostics PROPERTIES TIMEOUT 10)
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
+subrec_configure_tests()
+# NUT/null/PCM encoders and MOV demuxing are absent in release FFmpeg.
+set_property(TEST muxer_lifecycle aac_priming aac_pipeline_priming APPEND PROPERTY LABELS needs_ffmpeg_test_components)
+if(SUBREC_POWERSHELL)
+    set_property(TEST mp4_edit_list_parser APPEND PROPERTY LABELS needs_powershell needs_ffmpeg_test_components)
+endif()

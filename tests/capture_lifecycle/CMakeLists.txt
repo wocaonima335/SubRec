@@ -45,3 +45,8 @@ if(WIN32)
         ENVIRONMENT "PATH=${_lifecycle_path}"
     )
 endif()
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
+subrec_configure_tests()
+# The real-session failure fixture uses generated NUT audio, never a device.
+set_property(TEST capture_lifecycle_tests APPEND PROPERTY LABELS needs_ffmpeg_test_components)

@@ -1,9 +1,7 @@
 # SubRec (字录) Windows build.
 #
-# Status: written for the new repository <OWNER>/SubRec; the `ffmpeg` job's script
-# (packaging/ffmpeg/build-ffmpeg.sh) has been run successfully once on Debian 13 (GCC 14);
-# this workflow itself has NOT been run yet. Verify on a first push / workflow_dispatch and
-# adjust (Qt arch, MinGW tool name, Ubuntu toolchain versions).
+# Status: the application build and packaging workflow has run successfully on GitHub.
+# Device-independent CTest coverage runs separately from the release application build.
 #
 # Two jobs:
 #   ffmpeg (ubuntu-24.04)  builds SubRec's minimal FFmpeg n8.0.3 (+ x264, libvpl, nv-codec-headers,
@@ -169,6 +167,27 @@ jobs:
 
       - name: Build
         run: cmake --build build/ci --target appSubRec --parallel
+
+      - name: Configure tests
+        shell: pwsh
+        run: >
+          cmake -S . -B build/ci-tests -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+          -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
+          -DSUBREC_BUILD_LIFECYCLE_TESTS=ON
+
+      - name: Build tests
+        run: cmake --build build/ci-tests --target subrec_tests --parallel
+
+      - name: Run device-independent tests
+        timeout-minutes: 10
+        # Release FFmpeg omits AAC decoding, lavfi and file fixture components.
+        # PowerShell parser tests remain available to PC2's full test build.
+        run: >
+          ctest --test-dir build/ci-tests -L ci
+          -LE "device|needs_ffmpeg_test_components|needs_powershell"
+          --output-on-failure --timeout 180 --no-tests=error
 
       - name: Deploy (windeployqt)
         shell: pwsh

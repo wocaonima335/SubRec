@@ -56,3 +56,6 @@ foreach(target IN LISTS log_test_targets)
         endif()
     endforeach()
 endforeach()
+
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
+subrec_configure_tests()
