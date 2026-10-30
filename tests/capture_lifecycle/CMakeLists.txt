@@ -46,6 +46,9 @@ if(WIN32)
     )
 endif()
 
+add_test(NAME scheduler_audio_modes COMMAND capture_lifecycle_tests --audio-modes)
+set_tests_properties(scheduler_audio_modes PROPERTIES TIMEOUT 20 LABELS "audio;scheduler")
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()
 # The real-session failure fixture uses generated NUT audio, never a device.

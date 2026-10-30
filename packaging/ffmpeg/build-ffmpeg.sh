@@ -154,7 +154,7 @@ indevs=(dshow)
 protocols=(file)
 # buffer/buffersink/abuffer/abuffersink are always built into libavfilter (not configurable).
 # scale/aresample/format/aformat are inserted automatically by AVFILTER_AUTO_CONVERT_ALL.
-filters=(volume amix aresample aformat scale format anull null)
+filters=(volume amix aresample aformat scale format anull null split fps)
 # Screen capture backend "ddagrab" (capture/ddagrab_screen_source.cpp): DXGI Desktop Duplication
 # as a libavfilter source. It outputs AV_PIX_FMT_D3D11 frames (sw_format bgra), which go to
 # h264_nvenc/h264_amf directly via hw_frames_ctx, or through "hwdownload,format=bgra,scale,

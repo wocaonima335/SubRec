@@ -194,10 +194,25 @@ ApplicationWindow {
 
     property alias optionsArea: optionsAreaLoader
 
+    Text {
+        id: audioModeHint
+        anchors.top: optionsArea.bottom
+        anchors.left: parent.left
+        anchors.leftMargin: 12
+        anchors.right: parent.right
+        height: visible ? 18 : 0
+        visible: !recorder.audioMixingAvailable || recorder.audioMode === "none"
+        text: recorder.audioMode === "none" ? "无声视频（不包含音轨）"
+              : "同时录制需要 WASAPI 系统音频；DirectShow 仅支持单一音频源"
+        color: "#E8B86A"
+        font.pixelSize: 11
+        elide: Text.ElideRight
+    }
+
     // 屏幕信息标题
     ScreenTitle {
         id: screenTitle
-        anchors.top: optionsArea.bottom
+        anchors.top: audioModeHint.bottom
         anchors.topMargin: 4
         anchors.left: parent.left
         anchors.right: parent.right

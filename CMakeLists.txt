@@ -100,6 +100,7 @@ add_subdirectory(opengl)
 
 if(SUBREC_BUILD_LIFECYCLE_TESTS AND WIN32)
     enable_testing()
+    add_subdirectory(tests/gpu_preview)
     add_subdirectory(tests/capture_lifecycle)
     add_subdirectory(tests/startup_failure)
     add_subdirectory(tests/logging)

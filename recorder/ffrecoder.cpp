@@ -87,7 +87,10 @@ void FFRecorder::startRecord(const CaptureConfig &config) {
   qDebug() << "[FFRecorder] video filter rebound";
 
   const bool useSystemAudio = config.audio.kind == CaptureDeviceKind::SystemAudio;
-  if (useSystemAudio) {
+  if (!config.audioEnabled) {
+    d->aFilterThread->closeAudioSource(demuxerType::AUDIO);
+    d->aFilterThread->closeAudioSource(demuxerType::MICROPHONE);
+  } else if (useSystemAudio) {
     d->aFilterThread->openAudioSource(demuxerType::AUDIO);
     d->aFilterThread->closeAudioSource(demuxerType::MICROPHONE);
   } else {
@@ -122,7 +125,7 @@ void FFRecorder::startRecord(const CaptureConfig &config) {
   if (d->aFilterEncoderFrmQueue)
     d->aFilterEncoderFrmQueue->clearQueue();
   if (d->syncQueue)
-    d->syncQueue->reset();
+    d->syncQueue->reset(config.audioEnabled);
   qDebug() << "[FFRecorder] queues cleared";
 
   int64_t t0 = av_gettime_relative(); // 统一墙钟起点
@@ -451,7 +454,26 @@ bool FFRecorder::useSystemAudio() const {
   return m_scheduler && m_scheduler->useSystemAudio();
 }
 
-void FFRecorder::notifyAudioSourceChanged() { emit useSystemAudioChanged(); }
+QString FFRecorder::audioMode() const {
+  return m_scheduler ? m_scheduler->audioMode() : QStringLiteral("none");
+}
+
+bool FFRecorder::mixingEnabled() const {
+  return m_scheduler && m_scheduler->mixingEnabled();
+}
+
+bool FFRecorder::audioMixingAvailable() const {
+  return m_scheduler && m_scheduler->audioMixingAvailable();
+}
+
+QString FFRecorder::mixMicrophoneDeviceId() const {
+  return m_scheduler ? m_scheduler->mixMicrophoneId() : QString{};
+}
+
+void FFRecorder::notifyAudioSourceChanged() {
+  emit useSystemAudioChanged();
+  emit audioModeChanged();
+}
 
 void FFRecorder::setSelectedVideoEncoder(const QString &name, bool isHardware,
                                          const QString &detail) {
@@ -524,6 +546,26 @@ bool FFRecorder::selectVideoCaptureDevice(const QString &deviceId) {
 
 bool FFRecorder::selectAudioCaptureDevice(const QString &deviceId) {
   return m_scheduler && m_scheduler->selectAudioDevice(deviceId);
+}
+
+bool FFRecorder::setAudioMode(const QString &mode) {
+  return m_scheduler && m_scheduler->setAudioMode(mode);
+}
+
+bool FFRecorder::setMixMicrophone(const QString &deviceId) {
+  return m_scheduler && m_scheduler->setMixMicrophone(deviceId);
+}
+
+QString FFRecorder::selectedMicrophoneDeviceId() const {
+  return m_scheduler ? m_scheduler->selectedMicrophoneId() : QString{};
+}
+
+bool FFRecorder::selectMicrophoneCaptureDevice(const QString &deviceId) {
+  return m_scheduler && m_scheduler->selectMicrophoneDevice(deviceId);
+}
+
+bool FFRecorder::clearMix() {
+  return m_scheduler && m_scheduler->clearMix();
 }
 
 QString FFRecorder::screenCaptureBackend() const {

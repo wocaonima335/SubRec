@@ -1,7 +1,9 @@
 #include "ddagrab_screen_source.h"
+#include "gpu_preview.h"
 
 #include <QDebug>
 #include <QStringList>
+#include <exception>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -50,7 +52,16 @@ const char *modeName(DdagrabFrameMode mode)
     }
     return "auto";
 }
+
 } // namespace
+
+QString ddagrabGpuGraphSpec(const DdagrabOptions &options)
+{
+    // The preview branch crosses a single-slot handoff before hwdownload/scale/fps.
+    // Running those filters in this native graph would serialize GPU transfers with capture.
+    return QStringLiteral("ddagrab=output_idx=%1:framerate=%2:draw_mouse=%3,split=2[out][preview_out]")
+        .arg(options.outputIndex).arg(options.frameRate).arg(options.drawMouse ? 1 : 0);
+}
 
 DdagrabOptions DdagrabOptions::fromRequest(const InputRequest &request)
 {
@@ -146,6 +157,12 @@ CaptureStartResult DdagrabScreenSource::open(const InputRequest &request, bool f
                 qInfo() << "[Ddagrab] no encoder accepts D3D11 frames here; using system-memory frames";
             }
             if (m_gpuFrames) {
+                try {
+                    m_preview = std::make_shared<GpuPreview>(m_previewConsumer);
+                } catch (const std::exception &e) {
+                    // Keep draining the split sink even if a preview worker cannot start.
+                    qWarning() << "[Preview] unable to start worker:" << e.what();
+                }
                 qInfo().noquote() << "[Ddagrab] opened" << describe();
                 return CaptureStartResult::success();
             }
@@ -185,11 +202,14 @@ int DdagrabScreenSource::buildGraph(bool gpuFrames, QString *error)
 
     // ddagrab creates its own D3D11 device on the default adapter. dup_frames (default 1)
     // keeps a constant frame rate on a static desktop, like the dshow screen filter did.
-    QString spec = QStringLiteral("ddagrab=output_idx=%1:framerate=%2:draw_mouse=%3")
-                       .arg(m_options.outputIndex)
-                       .arg(m_options.frameRate)
-                       .arg(m_options.drawMouse ? 1 : 0);
-    if (!gpuFrames) {
+    QString spec;
+    if (gpuFrames) {
+        spec = ddagrabGpuGraphSpec(m_options);
+    } else {
+        spec = QStringLiteral("ddagrab=output_idx=%1:framerate=%2:draw_mouse=%3")
+                   .arg(m_options.outputIndex)
+                   .arg(m_options.frameRate)
+                   .arg(m_options.drawMouse ? 1 : 0);
         // Same colour conversion as the dshow path (FFVResampler: BT.601, limited range).
         spec += QStringLiteral(",hwdownload,format=bgra,"
                                "scale=flags=bilinear:out_color_matrix=bt601:out_range=tv,"
@@ -204,9 +224,24 @@ int DdagrabScreenSource::buildGraph(bool gpuFrames, QString *error)
         return ret;
     }
 
+    if (gpuFrames) {
+        m_previewFrame = av_frame_alloc();
+        if (!m_previewFrame) { freeGraph(); *error = "cannot allocate preview frame"; return AVERROR(ENOMEM); }
+        ret = avfilter_graph_create_filter(&m_previewSink, avfilter_get_by_name("buffersink"),
+                                           "preview_out", nullptr, nullptr, m_graph);
+        if (ret < 0) {
+            *error = QStringLiteral("preview buffersink: %1").arg(ffmpegErrorText(ret));
+            freeGraph();
+            return ret;
+        }
+    }
+
     AVFilterInOut *sinkInput = avfilter_inout_alloc();
+    AVFilterInOut *previewInput = gpuFrames ? avfilter_inout_alloc() : nullptr;
     AVFilterInOut *openOutputs = nullptr; // ddagrab is a source: the chain has no open input
-    if (!sinkInput) {
+    if (!sinkInput || (gpuFrames && !previewInput)) {
+        avfilter_inout_free(&previewInput);
+        avfilter_inout_free(&sinkInput);
         freeGraph();
         *error = QStringLiteral("cannot allocate filter in/out");
         return AVERROR(ENOMEM);
@@ -215,6 +250,13 @@ int DdagrabScreenSource::buildGraph(bool gpuFrames, QString *error)
     sinkInput->filter_ctx = m_sink;
     sinkInput->pad_idx = 0;
     sinkInput->next = nullptr;
+    if (previewInput) {
+        previewInput->name = av_strdup("preview_out");
+        previewInput->filter_ctx = m_previewSink;
+        previewInput->pad_idx = 0;
+        previewInput->next = nullptr;
+        sinkInput->next = previewInput;
+    }
 
     const QByteArray specUtf8 = spec.toUtf8();
     ret = avfilter_graph_parse_ptr(m_graph, specUtf8.constData(), &sinkInput, &openOutputs, nullptr);
@@ -281,16 +323,29 @@ bool DdagrabScreenSource::probeGpuEncoder(AVBufferRef *framesContext)
 
 int DdagrabScreenSource::read(AVFrame *frame)
 {
-    if (!m_sink) {
-        return AVERROR(EINVAL);
+    if (!m_sink) return AVERROR(EINVAL);
+    const int ret = av_buffersink_get_frame(m_sink, frame);
+    if (ret >= 0 && m_previewSink) {
+        // split has already enqueued the same capture at both sinks. Never request another
+        // source frame for preview: that would block in ddagrab and accumulate main frames.
+        if (m_previewFrame) {
+            while (av_buffersink_get_frame_flags(m_previewSink, m_previewFrame,
+                                                 AV_BUFFERSINK_FLAG_NO_REQUEST) >= 0) {
+                if (m_preview) m_preview->offer(m_previewFrame);
+                av_frame_unref(m_previewFrame);
+            }
+        }
     }
-    return av_buffersink_get_frame(m_sink, frame);
+    return ret;
 }
 
 void DdagrabScreenSource::freeGraph()
 {
+    m_preview.reset();
+    av_frame_free(&m_previewFrame);
     avfilter_graph_free(&m_graph);
     m_sink = nullptr;
+    m_previewSink = nullptr;
 }
 
 void DdagrabScreenSource::close()

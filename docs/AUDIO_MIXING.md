@@ -1,9 +1,31 @@
 # System audio + microphone mixing
 
-Select a microphone alongside the WASAPI system source through
-`CaptureScheduler::selectMixMicrophone(deviceId)`. Selecting a single source with
-`changeAudioSource()` disables mixing. A mix requires WASAPI; a failed WASAPI open
-is reported instead of silently switching the mixed recording to DirectShow.
+The audio buttons are independent. The scheduler exposes `audioMode` values
+`system`, `microphone`, `both`, and `none`; `setMixMicrophone(deviceId)` enables
+the `both` mode and `clearMix()` returns a mix to system-only (other modes are unchanged). A mix requires a WASAPI
+system source and a DirectShow microphone. When the selected system backend is
+DirectShow, the UI disables the combination and shows the reason. Capture
+configuration changes are refused while recording is active.
+
+The microphone dropdown in Settings remembers the microphone independently of
+the current mode. Enabling both uses that microphone, or the first available
+microphone if none is selected. Switching from both to either single source
+clears the mix. All mode/device changes are refused during Preparing, Running,
+Paused, and Stopping; mode notifications also cover mix and device changes.
+
+When both buttons are off (`none`), SubRec writes a **video-only MP4 with no audio
+track**. It opens no audio device and starts no audio workers. The muxer expects
+only the video stream, and its worker receives no audio queue, so neither header
+creation nor packet interleaving waits for absent audio. RecorderSyncQueue uses
+exact rational video frame counting instead of an audio clock in this mode;
+paused frames are discarded without advancing PTS. Each session resets the mode
+and clock, so switching back to audio restores normal A/V synchronization.
+This avoids encoding a synthetic silent AAC track.
+
+The `ci` tests `scheduler_audio_modes` cover transitions and active-capture
+refusal. `video_only_pipeline` exercises production sync/queue/mux code, pause
+and restart, then reads and decodes the MP4 to verify one video stream and
+continuous timestamps (requires the test FFmpeg MOV demuxer/H.264 decoder).
 
 For the existing record_seconds autotest, both variables now take effect together:
 
@@ -19,7 +41,8 @@ $env:SUBREC_AUTOTEST_OUTPUT = 'C:\Temp\mixed.mp4'
 
 With only MIC_DEVICE, recording remains microphone-only. With only SYSTEM_AUDIO=1,
 recording remains system-only. Mixing still uses one encoder and one AAC track.
-No new QML controls are added; the scheduler API and autotest expose this mode.
+The QML controls and scheduler API expose all four modes. Existing autotest
+variables continue to select microphone-only or mixed recordings.
 
 ## Timing and format
 

@@ -232,20 +232,88 @@ bool CaptureScheduler::changeVideoSource(bool useScreen)
 
 bool CaptureScheduler::changeAudioSource(bool useSystemAudio)
 {
-    if (!onControlThread("changeAudioSource")) return false;
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (!configurationMutableLocked()) {
-        qDebug() << "[CaptureScheduler] audio source change ignored while capture is active";
-        return false;
-    }
-    m_useSystemAudio = useSystemAudio;
-    m_mixMicrophoneId.clear();
-    m_selectedAudioDeviceId.clear();
-    selectDefaultDevicesLocked();
-    qDebug() << "[CaptureScheduler] audio source set to" << (useSystemAudio ? "system" : "microphone");
+    return setAudioMode(useSystemAudio ? QStringLiteral("system") : QStringLiteral("microphone"));
+}
+
+void CaptureScheduler::notifyAudioConfigurationLocked()
+{
     QMetaObject::invokeMethod(&m_recorder, "notifyAudioSourceChanged", Qt::QueuedConnection);
     QMetaObject::invokeMethod(&m_recorder, "notifyDeviceConfigurationChanged", Qt::QueuedConnection);
+}
+
+QString CaptureScheduler::microphoneIdLocked(const QString &requested) const
+{
+    const QString wanted = requested.isEmpty() ? m_selectedMicrophoneId : requested;
+    const auto valid = [](const CaptureDevice &d) {
+        return d.kind == CaptureDeviceKind::Microphone && d.available
+            && d.backend == CaptureBackend::DirectShow;
+    };
+    for (const auto &d : m_devices) if (valid(d) && d.id == wanted) return d.id;
+    if (!requested.isEmpty()) return {}; // Explicit invalid IDs never silently select another mic.
+    for (const auto &d : m_devices) if (valid(d)) return d.id;
+    return {};
+}
+
+bool CaptureScheduler::setAudioMode(const QString &mode)
+{
+    if (!onControlThread("setAudioMode")) return false;
+    const QString normalized = mode.trimmed().toLower();
+    if (normalized == QLatin1String("both")) return setMixMicrophone({});
+    if (normalized != QLatin1String("system") && normalized != QLatin1String("microphone")
+        && normalized != QLatin1String("none")) return false;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!configurationMutableLocked()) return false;
+    m_audioEnabled = normalized != QLatin1String("none");
+    m_useSystemAudio = normalized != QLatin1String("microphone");
+    m_mixMicrophoneId.clear();
+    m_selectedAudioDeviceId = m_useSystemAudio ? m_selectedSystemAudioId : microphoneIdLocked();
+    selectDefaultDevicesLocked();
+    notifyAudioConfigurationLocked();
     return true;
+}
+
+bool CaptureScheduler::setMixMicrophone(const QString &deviceId)
+{
+    if (!onControlThread("setMixMicrophone")) return false;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!configurationMutableLocked() || !audioMixingAvailableLocked()) return false;
+    const QString microphone = microphoneIdLocked(deviceId);
+    if (microphone.isEmpty()) return false;
+    m_audioEnabled = true;
+    m_useSystemAudio = true;
+    m_selectedMicrophoneId = m_mixMicrophoneId = microphone;
+    m_selectedAudioDeviceId = m_selectedSystemAudioId;
+    selectDefaultDevicesLocked();
+    notifyAudioConfigurationLocked();
+    return true;
+}
+
+bool CaptureScheduler::clearMix()
+{
+    if (!onControlThread("clearMix")) return false;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!configurationMutableLocked()) return false;
+    m_mixMicrophoneId.clear(); // A single-source or none selection is unchanged.
+    notifyAudioConfigurationLocked();
+    return true;
+}
+
+bool CaptureScheduler::selectMicrophoneDevice(const QString &deviceId)
+{
+    if (!onControlThread("selectMicrophoneDevice")) return false;
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!configurationMutableLocked() || deviceId.isEmpty() || microphoneIdLocked(deviceId).isEmpty()) return false;
+    m_selectedMicrophoneId = deviceId;
+    if (!m_mixMicrophoneId.isEmpty()) m_mixMicrophoneId = deviceId;
+    if (!m_useSystemAudio) m_selectedAudioDeviceId = deviceId;
+    notifyAudioConfigurationLocked();
+    return true;
+}
+
+QString CaptureScheduler::selectedMicrophoneId() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return microphoneIdLocked();
 }
 
 void CaptureScheduler::refreshDevices()
@@ -265,6 +333,7 @@ void CaptureScheduler::refreshDevices()
         std::lock_guard<std::mutex> lock(m_mutex);
         m_devices = devices;
         selectDefaultDevicesLocked();
+        notifyAudioConfigurationLocked();
     }
     qInfo() << "[CaptureScheduler] device refresh completed count=" << devices.size();
     QMetaObject::invokeMethod(&m_recorder, "notifyDeviceConfigurationChanged", Qt::QueuedConnection);
@@ -296,25 +365,18 @@ bool CaptureScheduler::selectAudioDevice(const QString &deviceId)
     });
     if (match == m_devices.cend()) return false;
     m_selectedAudioDeviceId = deviceId;
-    QMetaObject::invokeMethod(&m_recorder, "notifyDeviceConfigurationChanged", Qt::QueuedConnection);
+    if (!m_useSystemAudio) m_selectedMicrophoneId = deviceId;
+    else {
+        m_selectedSystemAudioId = deviceId;
+        if (match->backend != CaptureBackend::Wasapi) m_mixMicrophoneId.clear();
+    }
+    notifyAudioConfigurationLocked();
     return true;
 }
 
 bool CaptureScheduler::selectMixMicrophone(const QString &deviceId)
 {
-    if (!onControlThread("selectMixMicrophone")) return false;
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (!configurationMutableLocked()) return false;
-    const auto found = std::find_if(m_devices.cbegin(), m_devices.cend(), [&](const CaptureDevice &device) {
-        return device.id == deviceId && device.kind == CaptureDeviceKind::Microphone && device.available
-            && device.backend == CaptureBackend::DirectShow;
-    });
-    if (found == m_devices.cend()) return false;
-    m_useSystemAudio = true;
-    m_mixMicrophoneId = deviceId;
-    selectDefaultDevicesLocked();
-    QMetaObject::invokeMethod(&m_recorder, "notifyDeviceConfigurationChanged", Qt::QueuedConnection);
-    return true;
+    return setMixMicrophone(deviceId);
 }
 
 CaptureSchedulerState CaptureScheduler::state() const
@@ -332,7 +394,46 @@ QString CaptureScheduler::lastError() const
 bool CaptureScheduler::useSystemAudio() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_useSystemAudio;
+    return m_audioEnabled && m_useSystemAudio;
+}
+
+QString CaptureScheduler::audioMode() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (!m_audioEnabled) return QStringLiteral("none");
+    if (m_useSystemAudio && !m_mixMicrophoneId.isEmpty()) return QStringLiteral("both");
+    return m_useSystemAudio ? QStringLiteral("system") : QStringLiteral("microphone");
+}
+
+bool CaptureScheduler::mixingEnabled() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_audioEnabled && m_useSystemAudio && !m_mixMicrophoneId.isEmpty();
+}
+
+QString CaptureScheduler::mixMicrophoneId() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_mixMicrophoneId;
+}
+
+bool CaptureScheduler::audioMixingAvailable() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return audioMixingAvailableLocked();
+}
+
+bool CaptureScheduler::audioMixingAvailableLocked() const
+{
+    if (m_systemAudioBackendPreference == SystemAudioBackendPreference::DirectShow) return false;
+    const QString selectedId = m_useSystemAudio ? m_selectedAudioDeviceId : m_selectedSystemAudioId;
+    for (const auto &d : m_devices) {
+        if (d.id == selectedId && d.kind == CaptureDeviceKind::SystemAudio && d.available)
+            return d.backend == CaptureBackend::Wasapi;
+    }
+    return std::any_of(m_devices.cbegin(), m_devices.cend(), [](const CaptureDevice &d) {
+        return d.kind == CaptureDeviceKind::SystemAudio && d.available && d.backend == CaptureBackend::Wasapi;
+    });
 }
 
 QVariantList CaptureScheduler::devices() const
@@ -364,8 +465,8 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
         return CaptureStartResult::failure(std::move(error));
     }
 
-    std::optional<QString> dshowScreenId, dshowAudioId;
-    QString mixMicrophoneId;
+    *config = CaptureConfig{};
+    std::optional<QString> dshowScreenId;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         // The selected device decides the video backend ("ddagrab:N" screens use Desktop
@@ -379,12 +480,6 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
         config->video = {videoBackend,
                          m_useScreen ? CaptureDeviceKind::Screen : CaptureDeviceKind::Camera,
                          m_selectedVideoDeviceId};
-        const auto selectedAudio = std::find_if(m_devices.cbegin(), m_devices.cend(),
-            [this](const CaptureDevice &device) { return device.id == m_selectedAudioDeviceId; });
-        mixMicrophoneId = m_mixMicrophoneId;
-        config->audio = {selectedAudio != m_devices.cend() ? selectedAudio->backend : CaptureBackend::DirectShow,
-                         m_useSystemAudio ? CaptureDeviceKind::SystemAudio : CaptureDeviceKind::Microphone,
-                         m_selectedAudioDeviceId};
         const auto dshowScreen = std::find_if(m_devices.cbegin(), m_devices.cend(),
                                               [](const CaptureDevice &device) {
                                                   return device.kind == CaptureDeviceKind::Screen
@@ -392,12 +487,8 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
                                                       && device.available;
                                               });
         if (dshowScreen != m_devices.cend()) dshowScreenId = dshowScreen->id;
-        for (const auto &device : m_devices)
-            if (device.kind == CaptureDeviceKind::SystemAudio && device.backend == CaptureBackend::DirectShow && device.available)
-                dshowAudioId = device.id;
     }
     const auto videoKind = config->video.kind;
-    const auto audioKind = config->audio.kind;
     config->outputPath = m_recorder.outputPath();
     config->outputFileName = m_recorder.outputFileName();
 
@@ -433,6 +524,39 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
         result = dshow.makeInputRequest(videoKind, config->video.deviceId, &config->videoInput);
         if (!result.ok) return result;
     }
+    result = buildAudioConfig(config);
+    if (!result.ok) return result;
+    qInfo() << "[CaptureScheduler] video backend" << captureBackendName(config->videoInput.backend)
+            << "device" << config->videoInput.deviceId
+            << "fallback" << (config->videoFallbackInput ? config->videoFallbackInput->deviceId : QString())
+            << "audio device" << config->audioInput.deviceId;
+    return CaptureStartResult::success();
+}
+
+CaptureStartResult CaptureScheduler::buildAudioConfig(CaptureConfig *config) const
+{
+    std::optional<QString> dshowAudioId;
+    QString mixMicrophoneId;
+    config->audioInput = {};
+    config->audioFallbackInput.reset();
+    config->microphoneMixInput.reset();
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        const auto selectedAudio = std::find_if(m_devices.cbegin(), m_devices.cend(),
+            [this](const CaptureDevice &device) { return device.id == m_selectedAudioDeviceId; });
+        mixMicrophoneId = m_mixMicrophoneId;
+        config->audio = {selectedAudio != m_devices.cend() ? selectedAudio->backend : CaptureBackend::DirectShow,
+                         m_useSystemAudio ? CaptureDeviceKind::SystemAudio : CaptureDeviceKind::Microphone,
+                         m_selectedAudioDeviceId};
+        config->audioEnabled = m_audioEnabled;
+        for (const auto &device : m_devices)
+            if (device.kind == CaptureDeviceKind::SystemAudio && device.backend == CaptureBackend::DirectShow && device.available)
+                dshowAudioId = device.id;
+    }
+    if (!config->audioEnabled) return CaptureStartResult::success();
+    DirectShowCaptureBackend dshow;
+    auto result = CaptureStartResult::success();
+    const auto audioKind = config->audio.kind;
 #ifdef _WIN32
     if (config->audio.backend == CaptureBackend::Wasapi) {
         result = WasapiCaptureBackend().makeInputRequest(audioKind, config->audio.deviceId, &config->audioInput);
@@ -458,11 +582,7 @@ CaptureStartResult CaptureScheduler::buildCurrentConfig(CaptureConfig *config) c
         qInfo() << "[CaptureScheduler] mix enabled system=" << config->audioInput.deviceId
                 << "microphone=" << microphone.deviceId;
     }
-    qInfo() << "[CaptureScheduler] video backend" << captureBackendName(config->videoInput.backend)
-            << "device" << config->videoInput.deviceId
-            << "fallback" << (config->videoFallbackInput ? config->videoFallbackInput->deviceId : QString())
-            << "audio device" << config->audioInput.deviceId;
-    return CaptureStartResult::success();
+    return result;
 }
 
 void CaptureScheduler::selectDefaultDevicesLocked()
@@ -506,6 +626,12 @@ void CaptureScheduler::selectDefaultDevicesLocked()
                 std::nullopt
 #endif
     );
+    if (!m_useSystemAudio) m_selectedMicrophoneId = m_selectedAudioDeviceId;
+    else m_selectedSystemAudioId = m_selectedAudioDeviceId;
+    m_selectedMicrophoneId = microphoneIdLocked();
+    if (!m_mixMicrophoneId.isEmpty()
+        && (!audioMixingAvailableLocked() || microphoneIdLocked(m_mixMicrophoneId).isEmpty()))
+        m_mixMicrophoneId.clear();
 }
 
 CaptureBackend CaptureScheduler::effectiveScreenBackendLocked() const

@@ -8,6 +8,7 @@ class FFOpenSourceEvent {
 public:
     FFOpenSourceEvent(FFRecorder *recorder, const InputRequest &video, const InputRequest &)
         : recorder_(recorder), video_(video) {}
+    void setAudioEnabled(bool) {}
     void setMixMicrophone(const std::optional<InputRequest> &) {}
     void setAudioFallback(const std::optional<InputRequest> &) {}
     void setVideoFallback(const std::optional<InputRequest> &) {}

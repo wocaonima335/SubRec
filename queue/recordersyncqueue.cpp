@@ -24,9 +24,11 @@ RecorderSyncQueue::~RecorderSyncQueue()
     reset();
 }
 
-void RecorderSyncQueue::reset()
+void RecorderSyncQueue::reset(bool audioEnabled)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
+    m_audioEnabled = audioEnabled;
+    m_videoFrames = 0;
     clearReadyFramesLocked();
     for (auto &buffer : m_audioBuffers) {
         buffer.clear();
@@ -98,6 +100,7 @@ void RecorderSyncQueue::configureVideo(AVRational frameRate, AVRational timeBase
         frameRate = AVRational{30, 1};
     }
 
+    m_videoFrames = 0;
     m_videoFrameRate = frameRate;
     m_videoTimeBase = timeBase;
     m_videoFrameDurationUs = av_rescale_q(1, av_inv_q(frameRate), kUsecTimeBase);
@@ -196,6 +199,14 @@ RecorderSyncVideoDecision RecorderSyncQueue::reserveVideoFrame()
 
     if (m_videoTimeBase.num <= 0 || m_videoTimeBase.den <= 0) {
         decision.drop = true;
+        return decision;
+    }
+
+    if (!m_audioEnabled) {
+        // Exact rational frame counting avoids rounding drift and has no absent audio clock
+        // to wait on. Paused frames were rejected above, so resume is contiguous.
+        decision.pts = av_rescale_q(m_videoFrames, av_inv_q(m_videoFrameRate), m_videoTimeBase);
+        decision.ptsUs = av_rescale_q(m_videoFrames++, av_inv_q(m_videoFrameRate), kUsecTimeBase);
         return decision;
     }
 

@@ -10,6 +10,10 @@
 
 #include <QMetaObject>
 
+extern "C" {
+#include <libavutil/pixfmt.h>
+}
+
 FFVEncoderThread::FFVEncoderThread() {}
 
 FFVEncoderThread::~FFVEncoderThread() {}
@@ -132,7 +136,12 @@ void FFVEncoderThread::run()
             vpts = decision.pts;
         }
 
-        sendPreviewData(frame);
+        // GPU ddagrab sources submit their yuv420p preview from the split graph. The encoder
+        // receives the original D3D11 frame (and may download it internally), so submitting
+        // it here would be rejected by PreviewBridge and could duplicate CPU previews.
+        if (frame->format != AV_PIX_FMT_D3D11) {
+            sendPreviewData(frame);
+        }
         vEncoder->encode(frame, streamIndex, vpts, timeBase);
         AVFrameTraits::release(frame);
     }

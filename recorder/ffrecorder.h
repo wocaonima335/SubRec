@@ -35,6 +35,11 @@ class FFRecorder : public QObject {
   Q_PROPERTY(QString selectedVideoEncoderDetail READ selectedVideoEncoderDetail
                  NOTIFY selectedVideoEncoderChanged)
   Q_PROPERTY(bool useSystemAudio READ useSystemAudio NOTIFY useSystemAudioChanged)
+  Q_PROPERTY(QString audioMode READ audioMode NOTIFY audioModeChanged)
+  Q_PROPERTY(bool mixingEnabled READ mixingEnabled NOTIFY audioModeChanged)
+  Q_PROPERTY(bool audioMixingAvailable READ audioMixingAvailable NOTIFY captureDevicesChanged)
+  Q_PROPERTY(QString selectedMicrophoneDeviceId READ selectedMicrophoneDeviceId NOTIFY captureDevicesChanged)
+  Q_PROPERTY(QString mixMicrophoneDeviceId READ mixMicrophoneDeviceId NOTIFY audioModeChanged)
   Q_PROPERTY(QVariantList captureDevices READ captureDevices NOTIFY captureDevicesChanged)
   Q_PROPERTY(QString selectedVideoDeviceId READ selectedVideoDeviceId NOTIFY captureDevicesChanged)
   Q_PROPERTY(QString selectedAudioDeviceId READ selectedAudioDeviceId NOTIFY captureDevicesChanged)
@@ -120,6 +125,11 @@ public:
     return m_selectedVideoEncoderDetail;
   }
   bool useSystemAudio() const;
+  QString audioMode() const;
+  bool mixingEnabled() const;
+  bool audioMixingAvailable() const;
+  QString mixMicrophoneDeviceId() const;
+  QString selectedMicrophoneDeviceId() const;
   QVariantList captureDevices() const;
   QString selectedVideoDeviceId() const;
   QString selectedAudioDeviceId() const;
@@ -143,6 +153,10 @@ public slots:
   Q_INVOKABLE void refreshCaptureDevices();
   Q_INVOKABLE bool selectVideoCaptureDevice(const QString &deviceId);
   Q_INVOKABLE bool selectAudioCaptureDevice(const QString &deviceId);
+  Q_INVOKABLE bool setAudioMode(const QString &mode);
+  Q_INVOKABLE bool setMixMicrophone(const QString &deviceId);
+  Q_INVOKABLE bool clearMix();
+  Q_INVOKABLE bool selectMicrophoneCaptureDevice(const QString &deviceId);
   Q_INVOKABLE bool setScreenCaptureBackend(const QString &name);
   Q_INVOKABLE void retryCapture();
 
@@ -155,6 +169,7 @@ signals:
   void videoResolutionChanged();
   void selectedVideoEncoderChanged();
   void useSystemAudioChanged();
+  void audioModeChanged();
   void captureDevicesChanged();
   void captureStateChanged();
   void captureErrorChanged();

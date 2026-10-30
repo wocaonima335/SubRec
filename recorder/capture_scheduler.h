@@ -41,6 +41,9 @@ public:
     void resume();
     bool changeVideoSource(bool useScreen);
     bool changeAudioSource(bool useSystemAudio);
+    bool setAudioMode(const QString &mode);
+    bool setMixMicrophone(const QString &deviceId);
+    bool clearMix();
     void refreshDevices();
     bool selectVideoDevice(const QString &deviceId);
     bool selectAudioDevice(const QString &deviceId);
@@ -55,13 +58,23 @@ public:
     CaptureSchedulerState state() const;
     QString lastError() const;
     bool useSystemAudio() const;
+    QString audioMode() const;
+    bool mixingEnabled() const;
+    bool audioMixingAvailable() const;
+    QString mixMicrophoneId() const;
+    QString selectedMicrophoneId() const;
+    bool selectMicrophoneDevice(const QString &deviceId);
     QVariantList devices() const;
     QString selectedVideoDeviceId() const;
     QString selectedAudioDeviceId() const;
 
 private:
     CaptureStartResult buildCurrentConfig(CaptureConfig *config) const;
+    CaptureStartResult buildAudioConfig(CaptureConfig *config) const;
     bool configurationMutableLocked() const;
+    bool audioMixingAvailableLocked() const;
+    QString microphoneIdLocked(const QString &requested = {}) const;
+    void notifyAudioConfigurationLocked();
     void selectDefaultDevicesLocked();
     CaptureBackend effectiveScreenBackendLocked() const;
     void onSessionStarted(std::uint64_t sessionId, const CaptureStartResult &result);
@@ -88,7 +101,10 @@ private:
     QList<CaptureDevice> m_devices;
     QString m_selectedVideoDeviceId;
     QString m_selectedAudioDeviceId;
+    QString m_selectedSystemAudioId;
+    QString m_selectedMicrophoneId;
     QString m_mixMicrophoneId;
+    bool m_audioEnabled = true;
     bool m_useScreen = true;
     bool m_useSystemAudio = true;
     ScreenBackendPreference m_screenBackendPreference = ScreenBackendPreference::Auto;

@@ -29,7 +29,7 @@ public:
     RecorderSyncQueue();
     ~RecorderSyncQueue();
 
-    void reset();
+    void reset(bool audioEnabled = true);
     void onPauseChanged(bool paused, int64_t tsUs);
 
     void configureAudio(AVSampleFormat sampleFmt,
@@ -58,6 +58,8 @@ private:
 private:
     mutable std::mutex m_mutex;
 
+    bool m_audioEnabled = true;
+    int64_t m_videoFrames = 0;
     bool m_paused = false;
 
     AVSampleFormat m_audioSampleFmt = AV_SAMPLE_FMT_NONE;

@@ -15,9 +15,10 @@ int FFMuxer::failLocked(int error) {
   return terminalError;
 }
 
-int FFMuxer::init(const std::string &url_, const std::string &format_) {
+int FFMuxer::init(const std::string &url_, const std::string &format_, bool audioEnabled) {
   std::lock_guard<std::mutex> lock(mutex);
   if (fmtCtx) return AVERROR(EBUSY);
+  expectAudio = audioEnabled;
   ++generation;
   abortRequested.store(false);
   terminalError = trailerResult = closeResult = 0;
@@ -43,6 +44,7 @@ int FFMuxer::addStream(const AVCodecContext *codecCtx) {
       (codecCtx->codec_type != AVMEDIA_TYPE_AUDIO &&
        codecCtx->codec_type != AVMEDIA_TYPE_VIDEO)) return failLocked(AVERROR(EINVAL));
   const bool audio = codecCtx->codec_type == AVMEDIA_TYPE_AUDIO;
+  if (audio && !expectAudio) return failLocked(AVERROR(EINVAL));
   if ((audio && aStream) || (!audio && vStream)) return failLocked(AVERROR(EEXIST));
   AVStream *stream = avformat_new_stream(fmtCtx, nullptr);
   if (!stream) return failLocked(AVERROR(ENOMEM));
@@ -165,10 +167,10 @@ int FFMuxer::writeHeader(std::chrono::milliseconds timeout) {
   if (!fmtCtx) return AVERROR(EINVAL);
   if (trailerFlag) return AVERROR_EOF;
   if (headerFlag) return 0;
-  // Keep the existing audio+video contract, but never wait indefinitely.
+  // Wait only for streams enabled for this session.
   const bool ready = streamsReady.wait_for(lock, timeout, [&] {
     return generation != currentGeneration || !fmtCtx || abortRequested.load() ||
-           terminalError || (aStream && vStream);
+           terminalError || (vStream && (!expectAudio || aStream));
   });
   if (generation != currentGeneration || !fmtCtx || abortRequested.load())
     return AVERROR_EXIT;

@@ -94,6 +94,7 @@ bool CaptureSession::start(const CaptureConfig &config,
         auto openEvent = std::make_unique<FFOpenSourceEvent>(
             &m_recorder, startConfig.videoInput, startConfig.audioInput);
         openEvent->setMixMicrophone(startConfig.microphoneMixInput);
+        openEvent->setAudioEnabled(startConfig.audioEnabled);
         openEvent->setAudioFallback(startConfig.audioFallbackInput);
         openEvent->setVideoFallback(startConfig.videoFallbackInput);
         const CaptureStartResult result = openEvent->openAndStartResult([this]() {
@@ -337,6 +338,7 @@ bool CaptureSession::closeVideoSource()
 
 bool CaptureSession::closeAudioSource()
 {
+    if (!m_config.audioEnabled) return true;
     auto closeAudioEvent = std::make_unique<FFCloseSourceEvent>(
         &m_recorder, m_config.audio.kind == CaptureDeviceKind::SystemAudio
                                              ? demuxerType::AUDIO : demuxerType::MICROPHONE);

@@ -51,7 +51,7 @@ PreviewFrameData makePreviewFrame(const AVFrame *frame)
 
     const int w = frame->width;
     const int h = frame->height;
-    if (w <= 0 || h <= 0) {
+    if (w <= 0 || h <= 0 || ((w | h) & 1) || !frame->data[0] || !frame->data[1] || !frame->data[2]) {
         return preview;
     }
 
@@ -175,14 +175,16 @@ void PreviewBridge::setPreviewItem(FFGLItem *item)
     }
 }
 
-void PreviewBridge::submitFrame(const AVFrame *frame)
+bool PreviewBridge::submitFrame(const AVFrame *frame)
 {
+    std::unique_lock<std::mutex> lock(m_mutex, std::try_to_lock);
+    if (!lock.owns_lock() || !m_item) return false;
     PreviewFrameData latest = makePreviewFrame(frame);
     if (!latest.isValid()) {
-        return;
+        return false;
     }
 
-    std::lock_guard<std::mutex> lock(m_mutex);
+    const bool replaced = m_latestFrame.isValid();
     m_latestFrame = std::move(latest);
     ++m_latestVersion;
     const qint64 nowMs = currentDebugMs();
@@ -198,6 +200,7 @@ void PreviewBridge::submitFrame(const AVFrame *frame)
     if (item) {
         scheduleDispatchLocked(item);
     }
+    return !replaced;
 }
 
 bool PreviewBridge::takeLatestFrame(PreviewFrameData &frame, quint64 &version)

@@ -1,4 +1,7 @@
 qt_add_library(capture_module STATIC
+    gpu_preview.cpp
+    gpu_preview.h
+    latest_preview_slot.h
     capture_types.h
     capture_types.cpp
     capture_backend.h

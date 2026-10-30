@@ -1,6 +1,7 @@
 #include "ffopensourceevent.h"
 
 #include "thread/ffscreengrabthread.h"
+#include "opengl/ffglitem.h"
 #include <cstdlib>
 
 extern "C" {
@@ -99,7 +100,7 @@ CaptureStartResult FFOpenSourceEvent::openAndStartResult(const std::function<boo
   if (!initVideo(shouldStart)) return startupResult;
   if (!checkContinue(videoInput, shouldStart)) return startupResult;
   const int64_t t0 = av_gettime_relative();
-  aFilterThread->configureMix(microphoneMixInput.has_value(), t0);
+  aFilterThread->configureMix(audioEnabled && microphoneMixInput.has_value(), t0);
   aEncoderThread->setStartTimeUs(t0);
   vEncoderThread->setStartTimeUs(t0);
   startAudio();
@@ -156,7 +157,7 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
     context->systemAudioCapture.reset();
     context->systemAudioSink.reset();
   }
-  if (audioSourceType == AUDIO && audioInput.backend == CaptureBackend::Wasapi) {
+  if (audioEnabled && audioSourceType == AUDIO && audioInput.backend == CaptureBackend::Wasapi) {
     context->systemAudioSink = std::make_shared<capture::wasapi::QueueAudioSink>(*aFrmQueue[A_AUDIO], microphoneMixInput.has_value());
     context->systemAudioCapture = std::make_unique<capture::wasapi::LoopbackCapture>(capture::wasapi::LoopbackConfig{});
     // The relay is owned by the task. Inspect the weak receiver only on its UI
@@ -187,6 +188,7 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
     }
   }
 #endif
+  if (!audioEnabled) return true; // Previous audio resources have been closed above.
   if (!usingWasapi) {
   aDemuxer[audioIndex]->init(audioUrl, audioFormat, aPktQueue[audioIndex], nullptr,
                              audioSourceType, true, shouldStart);
@@ -401,9 +403,9 @@ bool FFOpenSourceEvent::initVideo(const std::function<bool()> &shouldStart)
   qDebug() << "[initVideo] Step 26: Initializing muxer...";
   QString fullPath =
       recoderContext->outputPath() + "/" + recoderContext->outputFileName();
-  muxer->init(fullPath.toStdString());
+  muxer->init(fullPath.toStdString(), "mp4", audioEnabled);
   qDebug() << "[initVideo] Step 27: Initializing muxerThread...";
-  muxerThread->init(aEncoderPktQueue, vEncoderPktQueue, muxer, aEncoder,
+  muxerThread->init(audioEnabled ? aEncoderPktQueue : nullptr, vEncoderPktQueue, muxer, aEncoder,
                     vEncoder, recoderContext);
   qDebug() << "[initVideo] Step 28: All done!";
   std::cout << "init opensource" << std::endl;
@@ -412,8 +414,8 @@ bool FFOpenSourceEvent::initVideo(const std::function<bool()> &shouldStart)
 
 void FFOpenSourceEvent::startAudio()
 {
-  if (!aDemuxerThread[audioIndex] || !aDecoderThread[audioIndex] ||
-      !aEncoderThread || !recoderContext)
+  if (!audioEnabled || !aDemuxerThread[audioIndex] || !aDecoderThread[audioIndex]
+      || !aEncoderThread || !recoderContext)
     return;
 
   auto *aEncPktQueue = recoderContext->getAEncoderPktQueue();
@@ -492,7 +494,8 @@ bool FFOpenSourceEvent::openScreenGrab(const std::function<bool()> &shouldStart)
 
   usingScreenGrab = true; // Session owns abort/join if preparation fails.
   startupResult = screenGrabThread->prepareOpenAndWait(
-      videoInput, vFrmQueue[videoIndex], recoderContext, 10000, shouldStart);
+      videoInput, vFrmQueue[videoIndex], recoderContext, 10000, shouldStart,
+      [](const AVFrame *frame) { return PreviewBridge::instance().submitFrame(frame); });
   if (startupResult.ok) {
     qInfo().noquote() << "[initVideo] ddagrab screen ready:" << screenGrabThread->describe();
     return true;

@@ -79,10 +79,20 @@ target_link_libraries(capture_diagnostics_tests PRIVATE Qt6::Core
 add_test(NAME capture_diagnostics COMMAND capture_diagnostics_tests)
 set_tests_properties(capture_diagnostics PROPERTIES TIMEOUT 10)
 
+add_executable(video_only_tests video_only_tests.cpp
+    ../../queue/recordersyncqueue.cpp ../../queue/ffapacketqueue.cpp ../../queue/ffvpacketqueue.cpp
+    ../../thread/ffthread.cpp ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp)
+target_compile_features(video_only_tests PRIVATE cxx_std_17)
+target_include_directories(video_only_tests PRIVATE ui_stubs ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(video_only_tests PRIVATE Qt6::Core
+    "${FFMPEG_ROOT}/lib/avformat.lib" "${FFMPEG_ROOT}/lib/avcodec.lib" "${FFMPEG_ROOT}/lib/avutil.lib")
+add_test(NAME video_only_pipeline COMMAND video_only_tests)
+set_tests_properties(video_only_pipeline PROPERTIES TIMEOUT 15 LABELS "video;sync;muxer")
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()
 # NUT/null/PCM encoders and MOV demuxing are absent in release FFmpeg.
-set_property(TEST muxer_lifecycle aac_priming aac_pipeline_priming APPEND PROPERTY LABELS needs_ffmpeg_test_components)
+set_property(TEST muxer_lifecycle aac_priming aac_pipeline_priming video_only_pipeline APPEND PROPERTY LABELS needs_ffmpeg_test_components)
 if(SUBREC_POWERSHELL)
     set_property(TEST mp4_edit_list_parser APPEND PROPERTY LABELS needs_powershell needs_ffmpeg_test_components)
 endif()

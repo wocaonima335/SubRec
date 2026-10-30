@@ -32,6 +32,7 @@ struct FFScreenGrabThread::State {
     bool m_gpuFrames = false;
     int m_width = 0, m_height = 0;
     QString m_description;
+    std::function<bool(const AVFrame *)> m_previewConsumer;
     void run();
     void grabLoop();
     bool reopenAfterLoss();
@@ -52,13 +53,15 @@ CaptureStartResult FFScreenGrabThread::prepareOpenAndWait(const InputRequest &re
                                                           FFVFrameQueue *queue,
                                                           QObject *recorder,
                                                           int timeoutMs,
-                                                          const std::function<bool()> &shouldOpen)
+                                                          const std::function<bool()> &shouldOpen,
+                                                          std::function<bool(const AVFrame *)> previewConsumer)
 {
     requestAbort();
     abandon();
     auto state = std::make_shared<State>();
     state_ = state;
     state->m_request = request;
+    state->m_previewConsumer = std::move(previewConsumer);
     state->m_queue = queue ? queue->sharedState() : nullptr;
     state->m_recorder = recorder;
     // Evaluate the session-borrowing guard HERE; never keep it in a detached task.
@@ -223,6 +226,7 @@ void FFScreenGrabThread::State::run()
             result = CaptureStartResult::failure(std::move(error));
         } else {
 #endif
+            m_source.setPreviewConsumer(m_previewConsumer);
             result = m_source.open(request);
 #if !defined(SUBREC_STRIP_TEST_HOOKS) || !SUBREC_STRIP_TEST_HOOKS
         }

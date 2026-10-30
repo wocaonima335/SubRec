@@ -113,7 +113,8 @@ public:
     }
     void setPreviewItem(FFGLItem *item);
     FFGLItem *get() const { return m_item; }
-    void submitFrame(const AVFrame *frame);
+    // false counts a discarded input or an overwritten pending frame. Never waits on UI.
+    bool submitFrame(const AVFrame *frame);
     bool takeLatestFrame(PreviewFrameData &frame, quint64 &version);
     void finishDispatch(quint64 appliedVersion);
     void markApplied(quint64 version, int width, int height, quint64 fingerprint);

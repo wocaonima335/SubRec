@@ -28,6 +28,7 @@ public:
     void setMixMicrophone(const std::optional<InputRequest> &input) { microphoneMixInput = input; }
     void setAudioFallback(const std::optional<InputRequest> &fallback) { audioFallback = fallback; }
     void setVideoFallback(const std::optional<InputRequest> &fallback) { videoFallback = fallback; }
+    void setAudioEnabled(bool enabled) { audioEnabled = enabled; }
 
 private:
     bool initVideo(const std::function<bool()> &shouldStart);
@@ -43,6 +44,7 @@ private:
     std::optional<InputRequest> audioFallback;
     bool usingWasapi = false;
     std::optional<InputRequest> microphoneMixInput;
+    bool audioEnabled = true;
     bool openScreenGrab(const std::function<bool()> &shouldStart);
     void switchToVideoFallback();
     void startVideo();

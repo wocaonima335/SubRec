@@ -262,17 +262,35 @@ Item {
 
                     ComboBox {
                         id: audioDeviceBox
+                        enabled: recorder.canStartCapture
                         Layout.fillWidth: true
                         textRole: "displayName"
                         valueRole: "id"
                         model: recorder.captureDevices.filter(function(device) {
-                            return device.kind === "system-audio" || device.kind === "microphone"
+                            return device.available && device.kind === (recorder.audioMode === "microphone"
+                                   ? "microphone" : "system-audio")
                         })
                         currentIndex: model.findIndex(function(device) {
                             return device.id === recorder.selectedAudioDeviceId
                         })
                         onActivated: recorder.selectAudioCaptureDevice(currentValue)
                     }
+
+                    Text { text: "Microphone (single or mixed)"; color: "#B0B0B0" }
+                    ComboBox {
+                        Layout.fillWidth: true
+                        enabled: recorder.canStartCapture
+                        textRole: "displayName"
+                        valueRole: "id"
+                        model: recorder.captureDevices.filter(function(device) {
+                            return device.kind === "microphone" && device.available
+                        })
+                        currentIndex: model.findIndex(function(device) {
+                            return device.id === recorder.selectedMicrophoneDeviceId
+                        })
+                        onActivated: recorder.selectMicrophoneCaptureDevice(currentValue)
+                    }
+
                 }
 
                 // 输出路径配置

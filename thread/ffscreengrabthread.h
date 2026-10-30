@@ -12,6 +12,7 @@
 
 class FFVFrameQueue;
 class QObject;
+struct AVFrame;
 
 // Screen frame producer for the ddagrab backend. It replaces the screen demuxer + decoder
 // pair: frames go straight into the decoder frame queue that FFVFilterThread reads
@@ -31,7 +32,8 @@ public:
                                           FFVFrameQueue *queue,
                                           QObject *recorder,
                                           int timeoutMs,
-                                          const std::function<bool()> &shouldOpen);
+                                          const std::function<bool()> &shouldOpen,
+                                          std::function<bool(const AVFrame *)> previewConsumer = {});
     void resume();
     // Stop grabbing and send finish (EOF) to the queue, so filter/encoder drain normally.
     void requestDrainStop();

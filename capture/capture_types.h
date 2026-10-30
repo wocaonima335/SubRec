@@ -95,6 +95,8 @@ struct CaptureConfig
     InputRequest audioInput;
     std::optional<InputRequest> audioFallbackInput;
     std::optional<InputRequest> microphoneMixInput;
+    // false: no audio device, worker, or output stream; video owns the clock.
+    bool audioEnabled = true;
     QString outputPath;
     QString outputFileName;
 };

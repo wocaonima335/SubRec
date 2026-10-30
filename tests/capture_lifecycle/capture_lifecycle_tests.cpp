@@ -3,6 +3,7 @@
 #include "recorder/capture_scheduler.h"
 #include "recorder/capture_session.h"
 #include "recorder/ffrecorder.h"
+#include "capture/ddagrab_screen_source.h"
 
 #include <QCoreApplication>
 #include <QEvent>
@@ -212,6 +213,22 @@ public:
         return QMetaObject::invokeMethod(&scheduler, [&scheduler, id, result] {
             scheduler.onSessionStarted(id, result);
         }, Qt::QueuedConnection);
+    }
+
+    static CaptureStartResult resolveConfig(CaptureScheduler &scheduler, CaptureConfig *config)
+    {
+        return scheduler.buildAudioConfig(config);
+    }
+
+    static void installAudioDevices(CaptureScheduler &scheduler,
+                                    const CaptureDevice &system,
+                                    const CaptureDevice &microphone)
+    {
+        scheduler.m_devices.append(system);
+        scheduler.m_devices.append(microphone);
+        scheduler.m_selectedAudioDeviceId = system.id;
+        scheduler.m_selectedSystemAudioId = system.id;
+        scheduler.m_systemAudioBackendPreference = SystemAudioBackendPreference::Auto;
     }
 };
 
@@ -424,6 +441,79 @@ bool pausedRejectsStartAndConfiguration()
     return true;
 }
 
+bool audioModeTransitions()
+{
+    Fixture f;
+    auto &s = *f.scheduler;
+    CaptureDevice wasapi;
+    wasapi.id = QStringLiteral("probe-wasapi");
+    wasapi.kind = CaptureDeviceKind::SystemAudio;
+    wasapi.backend = CaptureBackend::Wasapi;
+    wasapi.available = true;
+    CaptureDevice microphone;
+    microphone.id = QStringLiteral("probe-mic");
+    microphone.kind = CaptureDeviceKind::Microphone;
+    microphone.backend = CaptureBackend::DirectShow;
+    microphone.available = true;
+    CaptureLifecycleTest::installAudioDevices(s, wasapi, microphone);
+    CHECK(s.audioMode() == QStringLiteral("system"));
+    CHECK(s.setAudioMode(QStringLiteral("both")));
+    CHECK(s.audioMode() == QStringLiteral("both"));
+    CHECK(s.mixingEnabled());
+    CHECK(s.setAudioMode(QStringLiteral("microphone")));
+    CHECK(s.audioMode() == QStringLiteral("microphone"));
+    CHECK(!s.mixingEnabled());
+    CHECK(s.setAudioMode(QStringLiteral("none")));
+    CHECK(s.audioMode() == QStringLiteral("none"));
+    CaptureConfig config;
+    CHECK(CaptureLifecycleTest::resolveConfig(s, &config).ok);
+    CHECK(!config.audioEnabled);
+    CHECK(config.audioInput.deviceId.isEmpty());
+    CHECK(!config.microphoneMixInput && !config.audioFallbackInput);
+    CHECK(s.setMixMicrophone(microphone.id));
+    CHECK(!s.setMixMicrophone(QStringLiteral("missing")));
+    CHECK(s.audioMode() == QStringLiteral("both"));
+    CHECK(s.clearMix());
+    CHECK(s.audioMode() == QStringLiteral("system"));
+    CHECK(s.setMixMicrophone(microphone.id));
+    CHECK(s.selectAudioDevice(QStringLiteral("probe-audio"))); // DirectShow clears mix.
+    CHECK(s.audioMode() == QStringLiteral("system"));
+    CHECK(!s.audioMixingAvailable());
+    CHECK(!s.setMixMicrophone(microphone.id));
+    CHECK(s.selectAudioDevice(wasapi.id));
+    CHECK(s.audioMixingAvailable());
+    return true;
+}
+
+bool audioModeRefusedWhileActive()
+{
+    Fixture f;
+    auto &s = *f.scheduler;
+    CaptureDevice system, mic;
+    system.id = "wasapi"; system.kind = CaptureDeviceKind::SystemAudio;
+    system.backend = CaptureBackend::Wasapi; system.available = true;
+    mic.id = "mic"; mic.kind = CaptureDeviceKind::Microphone; mic.available = true;
+    CaptureLifecycleTest::installAudioDevices(s, system, mic);
+    CHECK(s.setMixMicrophone(mic.id));
+    const auto opener = f.opener(true, Mode::Result, false);
+    CHECK(s.start());
+    const auto refuses = [&] {
+        return !s.setAudioMode("none") && !s.clearMix() && !s.setMixMicrophone(mic.id)
+            && !s.selectMicrophoneDevice(mic.id) && !s.changeAudioSource(false)
+            && s.audioMode() == "both" && s.mixMicrophoneId() == mic.id;
+    };
+    CHECK(refuses()); // Preparing
+    opener->release.store(true);
+    CHECK(waitFor([&] { return opener->posted.load() == 1; }));
+    deliver(&s);
+    CHECK(s.state() == CaptureSchedulerState::Running && refuses());
+    s.pause();
+    CHECK(s.state() == CaptureSchedulerState::Paused && refuses());
+    s.stop();
+    CHECK(s.setAudioMode("none"));
+    return true;
+}
+
 bool offThreadControlRejected()
 {
     Fixture f;
@@ -633,7 +723,7 @@ bool realVideoTimeoutClosesOpenedAudio()
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
-    const std::vector<std::pair<const char *, bool (*)()>> groups = {
+    std::vector<std::pair<const char *, bool (*)()>> groups = {
         {"cancel_during_preparing", cancelDuringPreparing},
         {"stop_joins_outside_lock", stopJoinsOutsideLock},
         {"queued_old_generation_across_restart", queuedOldGenerationAcrossRestart},
@@ -641,12 +731,18 @@ int main(int argc, char **argv)
         {"restart_directly_from_failed", restartDirectlyFromFailed},
         {"double_stop", doubleStop},
         {"paused_rejects_start_and_configuration", pausedRejectsStartAndConfiguration},
+        {"audio_mode_transitions", audioModeTransitions},
+        {"audio_mode_refused_while_active", audioModeRefusedWhileActive},
         {"off_thread_control_rejected", offThreadControlRejected},
         {"destructor_joins_blocked_opener", destructorJoinsBlockedOpener},
         {"destructor_discards_posted_callbacks", destructorDiscardsPostedCallbacks},
         {"real_session_input_format_failure_twice", realSessionInputFormatFailureTwice},
         {"real_video_timeout_closes_opened_audio", realVideoTimeoutClosesOpenedAudio},
     };
+    if (argc > 1 && std::string(argv[1]) == "--audio-modes") {
+        groups = {{"audio_mode_transitions", audioModeTransitions},
+                  {"audio_mode_refused_while_active", audioModeRefusedWhileActive}};
+    }
     int failures = 0;
     {
         struct RecorderLifetime {

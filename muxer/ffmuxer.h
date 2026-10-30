@@ -21,7 +21,7 @@ public:
     ~FFMuxer();
     // 0 on success, negative AVERROR on failure; old ignored returns are valid.
     // Reinit requires close and joining previous workers first.
-    int init(const std::string &url_, const std::string &format_ = "mp4");
+    int init(const std::string &url_, const std::string &format_ = "mp4", bool audioEnabled = true);
     // Borrows only for this call. AVStream owns a deep copy of codecpar.
     int addStream(const AVCodecContext *codecCtx);
     int mux(AVPacket *packet);
@@ -44,6 +44,7 @@ private:
 
     std::string url;
     std::string format;
+    bool expectAudio = true;
     bool headerFlag = false;
     bool trailerFlag = false;
     int terminalError = 0;

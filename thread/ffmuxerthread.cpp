@@ -207,12 +207,12 @@ void FFMuxerThread::fail(int error)
 void FFMuxerThread::run()
 {
     qDebug() << "[MuxThread] run() start. Waiting header write...";
-    if (!muxer || !aPktQueue || !vPktQueue) { fail(AVERROR(EINVAL)); return; }
+    if (!muxer || !vPktQueue) { fail(AVERROR(EINVAL)); return; }
     if (m_stop.load()) { requestAbort(); return; }
     const int headerResult = muxer->writeHeader();
     if (headerResult < 0) { fail(headerResult); return; }
     AVRational aTB{}, vTB{};
-    int timingResult = muxer->getStreamTiming(AVMEDIA_TYPE_AUDIO, &aTB);
+    int timingResult = aPktQueue ? muxer->getStreamTiming(AVMEDIA_TYPE_AUDIO, &aTB) : 0;
     if (timingResult >= 0)
         timingResult = muxer->getStreamTiming(AVMEDIA_TYPE_VIDEO, &vTB);
     if (timingResult < 0) { fail(timingResult); return; }
@@ -252,7 +252,7 @@ void FFMuxerThread::run()
         return receivePacket(aPktQueue);
     };
 
-    bool audioFinished = false;
+    bool audioFinished = !aPktQueue;
     bool videoFinished = false;
     bool audioBootstrapFailed = false;
     bool videoBootstrapFailed = false;

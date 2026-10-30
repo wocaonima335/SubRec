@@ -5,6 +5,9 @@
 
 #include <QString>
 #include <QStringList>
+#include <functional>
+#include <memory>
+class GpuPreview;
 
 struct AVFilterGraph;
 struct AVFilterContext;
@@ -31,6 +34,9 @@ struct DdagrabOptions
     static DdagrabOptions fromRequest(const InputRequest &request);
 };
 
+// Exposed for graph-spec tests without a DXGI device.
+QString ddagrabGpuGraphSpec(const DdagrabOptions &options);
+
 // DXGI Desktop Duplication screen source built on FFmpeg's ddagrab filter. It is a frame
 // source (no demuxer, no decoder): read() returns frames ready for FFVFilterThread.
 // Not thread-safe: open/read/close must run on one thread (FFScreenGrabThread does that, the
@@ -55,6 +61,9 @@ public:
     // 0: frame filled; AVERROR(EAGAIN): nothing yet; AVERROR_OUTPUT_CHANGED / other < 0: the
     // duplication is gone (desktop switch, UAC, resolution change): close() and reopen.
     int read(AVFrame *frame);
+    void setPreviewConsumer(std::function<bool(const AVFrame *)> consumer) {
+        m_previewConsumer = std::move(consumer);
+    }
     void close();
 
     bool isOpen() const { return m_sink != nullptr; }
@@ -73,6 +82,10 @@ private:
     DdagrabOptions m_options;
     AVFilterGraph *m_graph = nullptr;
     AVFilterContext *m_sink = nullptr;
+    AVFilterContext *m_previewSink = nullptr;
+    AVFrame *m_previewFrame = nullptr;
+    std::shared_ptr<GpuPreview> m_preview;
+    std::function<bool(const AVFrame *)> m_previewConsumer;
     bool m_gpuFrames = false;
     int m_width = 0;
     int m_height = 0;
