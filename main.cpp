@@ -1,4 +1,5 @@
 ﻿#include "thread/failure_cleanup_deadline.h"
+#include "capture/test_hook_gate.h"
 #include "logging/frame_log.h"
 #include "opengl/ffglitem.h"
 #include "recorder/capture_scheduler.h"
@@ -153,10 +154,9 @@ bool applyAutoTestEnvironment()
 
 void runAutoScenario(QObject *root)
 {
-  const QString scenario =
-      qEnvironmentVariable("SUBREC_AUTOTEST_SCENARIO").trimmed();
-  if (scenario.isEmpty())
+  if (!capture::test::autoTestScenarioActive())
     return;
+  const QString scenario = qEnvironmentVariable("SUBREC_AUTOTEST_SCENARIO").trimmed();
 
   const int quitDelay = qEnvironmentVariableIntValue(
       "SUBREC_AUTOTEST_QUIT_MS");
@@ -538,8 +538,7 @@ int main(int argc, char *argv[])
   QGuiApplication app(argc, argv);
   subrec::logging::reportLevel(debugLog);
   int exitCode = 0;
-  const bool autoTestMode =
-      !qEnvironmentVariable("SUBREC_AUTOTEST_SCENARIO").trimmed().isEmpty();
+  const bool autoTestMode = capture::test::autoTestScenarioActive();
 
   init();
 

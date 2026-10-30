@@ -14,8 +14,12 @@ public:
         return end != value && *end == '\0' && ms > 0 && ms <= 60000
             ? std::chrono::milliseconds(ms) : std::chrono::milliseconds(0);
     }
+#if defined(SUBREC_STRIP_TEST_HOOKS) && SUBREC_STRIP_TEST_HOOKS
+    explicit VideoStartDelay(std::chrono::milliseconds delay = {}) : delay_(delay) {}
+#else
     explicit VideoStartDelay(std::chrono::milliseconds delay =
         parse(hookEnvironment("SUBREC_TEST_VIDEO_START_DELAY_MS"))) : delay_(delay) {}
+#endif
     // wait returns true on cancellation. Use the source's existing CV/stop flag.
     template<class Wait, class Log> bool beforeFirstPacket(Wait wait, Log log) {
         if (used_ || delay_.count() == 0) return true;

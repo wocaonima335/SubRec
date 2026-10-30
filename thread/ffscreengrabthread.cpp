@@ -209,6 +209,7 @@ void FFScreenGrabThread::State::run()
         error.userMessage = QStringLiteral("Capture start was cancelled.");
         result = CaptureStartResult::failure(std::move(error));
     } else {
+#if !defined(SUBREC_STRIP_TEST_HOOKS) || !SUBREC_STRIP_TEST_HOOKS
         if (capture::test::videoOpenTimeoutRequested()) {
             qWarning() << "[TestHook] SUBREC_TEST_VIDEO_OPEN_TIMEOUT enabled";
             std::unique_lock<std::mutex> lock(m_mutex);
@@ -221,8 +222,11 @@ void FFScreenGrabThread::State::run()
             error.userMessage = QStringLiteral("Injected video startup timeout.");
             result = CaptureStartResult::failure(std::move(error));
         } else {
+#endif
             result = m_source.open(request);
+#if !defined(SUBREC_STRIP_TEST_HOOKS) || !SUBREC_STRIP_TEST_HOOKS
         }
+#endif
     }
 
     {
@@ -276,6 +280,7 @@ void FFScreenGrabThread::State::grabLoop()
         queue = m_queue;
     }
 
+#if !defined(SUBREC_STRIP_TEST_HOOKS) || !SUBREC_STRIP_TEST_HOOKS
     capture::test::VideoStartDelay testDelay;
     const bool ready = testDelay.beforeFirstPacket([&](std::chrono::milliseconds delay) {
         std::unique_lock<std::mutex> lock(m_mutex);
@@ -284,6 +289,7 @@ void FFScreenGrabThread::State::grabLoop()
         qInfo() << "[TestHook] SUBREC_TEST_VIDEO_START_DELAY_MS enabled ms=" << delayMs;
     });
     if (!ready) { av_frame_free(&frame); return; }
+#endif
 
     std::uint64_t frames = 0;
     while (!m_stop.load(std::memory_order_acquire)) {

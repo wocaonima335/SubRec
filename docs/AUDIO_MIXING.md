@@ -207,3 +207,17 @@ never receive that definition merely because `SUBREC_BUILD_LIFECYCLE_TESTS=ON`.
 `tests/startup_failure` uses the test definition; the real-module
 `capture_lifecycle_tests` fixture temporarily sets an AutoTest scenario.
 `tests/test_hooks` checks production gating and the explicit test-build opt-in.
+Its independent `runtime_hook_gate` CTest exercises the real screen worker with
+fake native input and the runtime gate (no `SUBREC_ENABLE_TEST_HOOKS`, NUT or
+FFmpeg test components). The full NUT-backed lifecycle regression remains.
+The application and gate share `autoTestScenarioActive()` for whitespace checks,
+matching `QChar::isSpace()` including NBSP and ideographic/line spaces. Windows
+reads UTF-16 via `GetEnvironmentVariableW`; other platforms decode UTF-8.
+
+The GitHub release configuration sets `SUBREC_STRIP_TEST_HOOKS=ON`. This compiles the
+two hook paths and their environment names out of the application modules; the
+separate `build/ci-tests` configuration leaves it OFF so hook and startup tests
+remain available. The option defaults to OFF. Combining it with
+`SUBREC_BUILD_LIFECYCLE_TESTS=ON` is a configure error; defining both strip and
+`SUBREC_ENABLE_TEST_HOOKS=1` in one target is a compile error. The independent
+`test_hooks_strip` target always checks the stripped variant with static assertions.

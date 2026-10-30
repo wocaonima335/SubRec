@@ -167,6 +167,7 @@ jobs:
           -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
           -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
           -DSUBREC_BUILD_LIFECYCLE_TESTS=OFF
+          -DSUBREC_STRIP_TEST_HOOKS=ON
 
       - name: Build
         run: cmake --build build/ci --target appSubRec --parallel

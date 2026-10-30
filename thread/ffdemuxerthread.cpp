@@ -159,6 +159,7 @@ void FFDemuxerThread::run()
         }
     }
     if (demuxer && (demuxer->getType() == SCREEN || demuxer->getType() == CAMERA || demuxer->getType() == VIDEO)) {
+#if !defined(SUBREC_STRIP_TEST_HOOKS) || !SUBREC_STRIP_TEST_HOOKS
         capture::test::VideoStartDelay testDelay;
         const bool ready = testDelay.beforeFirstPacket([&](std::chrono::milliseconds delay) {
             std::unique_lock<std::mutex> lock(mutex);
@@ -167,6 +168,7 @@ void FFDemuxerThread::run()
             qInfo() << "[TestHook] SUBREC_TEST_VIDEO_START_DELAY_MS enabled ms=" << delayMs;
         });
         if (!ready) return;
+#endif
     }
     while (!m_stop) {
         stopFlag.store(false, std::memory_order_release);

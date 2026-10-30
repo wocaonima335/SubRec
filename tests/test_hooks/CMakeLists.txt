@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.21)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     project(test_hook_tests LANGUAGES CXX)
     enable_testing()
+    include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecFFmpeg.cmake")
+    subrec_require_ffmpeg_root()
+    set(FFMPEG_INCLUDE_DIR "${FFMPEG_ROOT}/include")
 endif()
 foreach(mode IN ITEMS production enabled)
     add_executable(test_hook_${mode}_tests test_hook_tests.cpp)
@@ -14,5 +17,35 @@ foreach(mode IN ITEMS production enabled)
     add_test(NAME test_hooks_${mode} COMMAND test_hook_${mode}_tests)
     set_tests_properties(test_hooks_${mode} PROPERTIES TIMEOUT 10)
 endforeach()
+
+add_executable(test_hook_strip_tests test_hook_strip_tests.cpp)
+target_compile_features(test_hook_strip_tests PRIVATE cxx_std_17)
+target_include_directories(test_hook_strip_tests PRIVATE ../..)
+target_compile_definitions(test_hook_strip_tests PRIVATE
+    slots= signals=public emit= SUBREC_STRIP_TEST_HOOKS=1)
+add_test(NAME test_hooks_strip COMMAND test_hook_strip_tests)
+set_tests_properties(test_hooks_strip PROPERTIES TIMEOUT 10)
+add_test(NAME test_hooks_strip_binary COMMAND ${CMAKE_COMMAND}
+    "-DBINARY=$<TARGET_FILE:test_hook_strip_tests>"
+    -P "${CMAKE_CURRENT_LIST_DIR}/check_stripped_binary.cmake")
+set_tests_properties(test_hooks_strip_binary PROPERTIES TIMEOUT 10)
+
+add_executable(runtime_hook_gate_tests runtime_hook_gate_tests.cpp
+    ../../thread/ffscreengrabthread.cpp ../../thread/ffthread.cpp
+    ../../queue/ffvframequeue.cpp)
+target_compile_features(runtime_hook_gate_tests PRIVATE cxx_std_17)
+target_include_directories(runtime_hook_gate_tests PRIVATE ../.. ${FFMPEG_INCLUDE_DIR})
+target_compile_definitions(runtime_hook_gate_tests PRIVATE slots= signals=public emit=)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    find_package(Qt6 REQUIRED COMPONENTS Core)
+    find_package(Threads REQUIRED)
+    target_link_libraries(runtime_hook_gate_tests PRIVATE Qt6::Core Threads::Threads
+        "${FFMPEG_ROOT}/lib/avutil.lib")
+else()
+    target_link_libraries(runtime_hook_gate_tests PRIVATE Qt6::Core Threads::Threads ${FFMPEG_LIBRARIES})
+endif()
+add_test(NAME runtime_hook_gate COMMAND runtime_hook_gate_tests)
+set_tests_properties(runtime_hook_gate PROPERTIES TIMEOUT 10)
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()

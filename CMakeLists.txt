@@ -6,6 +6,18 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTORCC ON)
 
+option(SUBREC_BUILD_LIFECYCLE_TESTS "Build all in-tree CTest harnesses" ON)
+option(SUBREC_STRIP_TEST_HOOKS
+    "Compile video startup test hooks out of the application" OFF)
+if(SUBREC_STRIP_TEST_HOOKS)
+    if(SUBREC_BUILD_LIFECYCLE_TESTS)
+        message(FATAL_ERROR
+            "SUBREC_STRIP_TEST_HOOKS requires SUBREC_BUILD_LIFECYCLE_TESTS=OFF; configure tests in a separate build directory")
+    endif()
+    # Apply consistently to the app and all modules before adding subdirectories.
+    add_compile_definitions(SUBREC_STRIP_TEST_HOOKS=1)
+endif()
+
 find_package(Qt6 REQUIRED COMPONENTS Quick)
 find_package(Qt6 REQUIRED COMPONENTS Quick Qml Multimedia Widgets Gui)
 
@@ -86,7 +98,6 @@ add_subdirectory(recorder)
 add_subdirectory(encoder)
 add_subdirectory(opengl)
 
-option(SUBREC_BUILD_LIFECYCLE_TESTS "Build all in-tree CTest harnesses" ON)
 if(SUBREC_BUILD_LIFECYCLE_TESTS AND WIN32)
     enable_testing()
     add_subdirectory(tests/capture_lifecycle)
