@@ -18,7 +18,7 @@
 #include <QRect>
 #include <QQuickWindow>
 #include <QTimer>
-#include <QTimer>
+#include <QStringList>
 #include <cstdlib>
 #include <cstdio>
 #include <memory>
@@ -117,11 +117,12 @@ bool applyAutoTestEnvironment()
     qInfo() << "[AutoTest] output =" << info.absoluteFilePath();
   }
 
+  const QString requestedMode = qEnvironmentVariable("SUBREC_AUTOTEST_AUDIO_MODE").trimmed().toLower();
+  const bool hasExplicitMode = !requestedMode.isEmpty();
   const bool withSystem = qEnvironmentVariableIntValue("SUBREC_AUTOTEST_SYSTEM_AUDIO") == 1;
-  if (withSystem) scheduler.changeAudioSource(true);
   const QString wanted = qEnvironmentVariable("SUBREC_AUTOTEST_MIC_DEVICE").trimmed();
+  QString chosen;
   if (!wanted.isEmpty()) {
-    if (!withSystem) scheduler.changeAudioSource(false);
     QStringList candidates;
     QString exact;
     QStringList partial;
@@ -140,14 +141,53 @@ bool applyAutoTestEnvironment()
       else if (name.contains(wanted, Qt::CaseInsensitive) || id.contains(wanted, Qt::CaseInsensitive))
         partial << id;
     }
-    const QString chosen = !exact.isEmpty() ? exact : (partial.size() == 1 ? partial.first() : QString());
-    if (chosen.isEmpty() || !(withSystem ? scheduler.selectMixMicrophone(chosen) : scheduler.selectAudioDevice(chosen))) {
+    chosen = !exact.isEmpty() ? exact : (partial.size() == 1 ? partial.first() : QString());
+    if (chosen.isEmpty()) {
       qWarning().noquote() << "[AutoTest] SUBREC_AUTOTEST_MIC_DEVICE=" + wanted
                                   + " matches no single available microphone; candidates: "
                                   + (candidates.isEmpty() ? QStringLiteral("none") : candidates.join(QStringLiteral(", ")));
       return false;
     }
-    qInfo().noquote() << "[AutoTest] microphone =" << chosen;
+  }
+
+  if (hasExplicitMode) {
+    if (requestedMode != QLatin1String("system") && requestedMode != QLatin1String("microphone")
+        && requestedMode != QLatin1String("both") && requestedMode != QLatin1String("none")) {
+      qWarning() << "[AutoTest] invalid SUBREC_AUTOTEST_AUDIO_MODE =" << requestedMode;
+      qWarning() << "[AutoTest] audio mode could not be applied:" << scheduler.lastError();
+      return false;
+    }
+    bool applied = false;
+    if (requestedMode == QLatin1String("both")) {
+      applied = scheduler.setAudioMode(QStringLiteral("system"));
+      if (applied) applied = chosen.isEmpty() ? scheduler.setAudioMode(QStringLiteral("both"))
+                                             : scheduler.selectMixMicrophone(chosen);
+    } else {
+      if (!chosen.isEmpty())
+        applied = scheduler.selectMicrophoneDevice(chosen);
+      else
+        applied = true;
+      if (applied) applied = scheduler.setAudioMode(requestedMode);
+    }
+    const QString actualMic = scheduler.mixMicrophoneId().isEmpty()
+                                  ? scheduler.selectedMicrophoneId() : scheduler.mixMicrophoneId();
+    qInfo().noquote() << QStringLiteral("[AutoTest] audio mode = %1 mic=%2")
+                             .arg(requestedMode, actualMic.isEmpty() ? QStringLiteral("-") : actualMic);
+    if (!applied) {
+      qWarning() << "[AutoTest] audio mode could not be applied:" << scheduler.lastError();
+      return false;
+    }
+  } else if (withSystem) {
+    if (!scheduler.changeAudioSource(true)
+        || (!chosen.isEmpty() && !scheduler.selectMixMicrophone(chosen))) {
+      qWarning() << "[AutoTest] microphone mix could not be selected:" << scheduler.lastError();
+      return false;
+    }
+  } else if (!wanted.isEmpty()) {
+    if (!scheduler.changeAudioSource(false) || !scheduler.selectAudioDevice(chosen)) {
+      qWarning() << "[AutoTest] microphone could not be selected:" << scheduler.lastError();
+      return false;
+    }
   }
   return true;
 }
@@ -424,6 +464,149 @@ void runAutoScenario(QObject *root)
                    });
         },
         QStringLiteral("running-before-phase4-long-dynamic"));
+  } else if (scenario == "mode_cycle") {
+    const int recordMsEnv = qEnvironmentVariableIntValue("SUBREC_AUTOTEST_RECORD_MS");
+    const int recordMs = recordMsEnv > 0 ? recordMsEnv : 5000;
+    const QString sequenceText = qEnvironmentVariable("SUBREC_AUTOTEST_MODE_SEQUENCE").trimmed();
+    QStringList modes = (sequenceText.isEmpty()
+                             ? QStringLiteral("system,microphone,both,none,system")
+                             : sequenceText).split(',', Qt::SkipEmptyParts);
+    for (QString &mode : modes) mode = mode.trimmed().toLower();
+    modes.removeAll(QString());
+    if (modes.isEmpty()) {
+      qWarning() << "[AutoTest] mode cycle has no modes";
+      QTimer::singleShot(0, [quitIssued] {
+        if (!quitIssued->exchange(true, std::memory_order_acq_rel))
+          QCoreApplication::exit(AutoTestBadEnvironment);
+      });
+      return;
+    }
+    if (quitDelay <= 0)
+      finalQuitDelay = modes.size() * (recordMs + 50000) + 10000;
+    auto exitWith = [quitIssued](int code) {
+      if (quitIssued->exchange(true, std::memory_order_acq_rel)) return;
+      qInfo() << "[AutoTest] exit code" << code;
+      const auto grace = capture_stop::timeout() + std::chrono::milliseconds(1500);
+      capture_stop::armAutoTestExitWatchdog(code, grace);
+      QCoreApplication::exit(code);
+    };
+    auto state = [] { return FFRecorder::getInstance().captureScheduler().state(); };
+    auto pollUntil = [](std::function<bool()> done, int timeoutMs,
+                        std::function<void()> onDone, std::function<void()> onTimeout) {
+      auto timer = std::make_shared<QElapsedTimer>();
+      timer->start();
+      auto poller = std::make_shared<std::function<void()>>();
+      *poller = [done, timeoutMs, onDone, onTimeout, timer, poller]() {
+        if (done()) { onDone(); return; }
+        if (timer->elapsed() >= timeoutMs) { onTimeout(); return; }
+        QTimer::singleShot(100, [poller] { (*poller)(); });
+      };
+      QTimer::singleShot(100, [poller] { (*poller)(); });
+    };
+    auto &recorder = FFRecorder::getInstance();
+    auto &scheduler = recorder.captureScheduler();
+    const QString requestedMic = qEnvironmentVariable("SUBREC_AUTOTEST_MIC_DEVICE").trimmed();
+    QString cycleMic = scheduler.selectedMicrophoneId();
+    if (!requestedMic.isEmpty()) cycleMic.clear();
+    if (!requestedMic.isEmpty()) {
+      QString exact;
+      QStringList partial;
+      for (const QVariant &value : scheduler.devices()) {
+        const QVariantMap device = value.toMap();
+        if (device.value(QStringLiteral("kind")).toString() != QLatin1String("microphone")) continue;
+        const QString id = device.value(QStringLiteral("id")).toString();
+        const QString name = device.value(QStringLiteral("displayName")).toString();
+        if (id.compare(requestedMic, Qt::CaseInsensitive) == 0
+            || name.compare(requestedMic, Qt::CaseInsensitive) == 0) exact = id;
+        else if (id.contains(requestedMic, Qt::CaseInsensitive)
+                 || name.contains(requestedMic, Qt::CaseInsensitive)) partial << id;
+      }
+      cycleMic = !exact.isEmpty() ? exact : (partial.size() == 1 ? partial.first() : QString());
+    }
+    QFileInfo baseFile(recorder.outputPath() + QLatin1Char('/') + recorder.outputFileName());
+    const QString baseStem = baseFile.completeBaseName();
+    const QString baseSuffix = baseFile.suffix().isEmpty() ? QStringLiteral("mp4") : baseFile.suffix();
+    auto applyMode = [&scheduler, cycleMic](const QString &mode) {
+      bool ok = false;
+      if (mode == QLatin1String("both")) {
+        ok = scheduler.setAudioMode(QStringLiteral("system"));
+        if (ok) ok = cycleMic.isEmpty() ? scheduler.setAudioMode(QStringLiteral("both"))
+                                       : scheduler.selectMixMicrophone(cycleMic);
+      } else {
+        if (!cycleMic.isEmpty())
+          ok = scheduler.selectMicrophoneDevice(cycleMic);
+        else
+          ok = true;
+        if (ok) ok = scheduler.setAudioMode(mode);
+      }
+      return ok;
+    };
+    auto step = std::make_shared<std::function<void(int)>>();
+    *step = [step, modes, recordMs, baseStem, baseSuffix, &recorder, &scheduler,
+             state, pollUntil, applyMode, exitWith](int index) mutable {
+      if (index >= modes.size()) { exitWith(AutoTestOk); return; }
+      const QString mode = modes.at(index);
+      if (mode != QLatin1String("system") && mode != QLatin1String("microphone")
+          && mode != QLatin1String("both") && mode != QLatin1String("none")) {
+        qWarning() << "[AutoTest] invalid cycle mode =" << mode;
+        exitWith(AutoTestBadEnvironment);
+        return;
+      }
+      const QString fileName = QStringLiteral("%1_%2_%3.%4")
+                                   .arg(baseStem).arg(index).arg(mode).arg(baseSuffix);
+      recorder.setOutputFileName(fileName);
+      QFile::remove(recorder.outputPath() + QLatin1Char('/') + fileName);
+      if (!applyMode(mode)) {
+        qWarning() << "[AutoTest] cycle mode could not be applied:" << scheduler.lastError();
+        exitWith(AutoTestBadEnvironment);
+        return;
+      }
+      const QString actualMic = scheduler.mixMicrophoneId().isEmpty()
+                                    ? scheduler.selectedMicrophoneId() : scheduler.mixMicrophoneId();
+      qInfo().noquote() << QStringLiteral("[AutoTest] audio mode = %1 mic=%2")
+                               .arg(mode, actualMic.isEmpty() ? QStringLiteral("-") : actualMic);
+      QTimer::singleShot(100, [step, index, mode, fileName, recordMs, state, pollUntil,
+                               exitWith, &scheduler, &recorder] {
+        startRecording();
+        pollUntil(
+            [state] { return state() == CaptureSchedulerState::Running
+                           || state() == CaptureSchedulerState::Failed; },
+            20000,
+            [step, index, mode, fileName, recordMs, state, pollUntil, exitWith, &scheduler, &recorder] {
+              if (state() != CaptureSchedulerState::Running) {
+                qWarning() << "[AutoTest] cycle start failed:" << scheduler.lastError();
+                exitWith(AutoTestNotRunning);
+                return;
+              }
+              static bool runningRejectionChecked = false;
+              if (!runningRejectionChecked) {
+                runningRejectionChecked = true;
+                const bool rejected = !scheduler.setAudioMode(QStringLiteral("none"));
+                qInfo() << "[AutoTest] setAudioMode while Running rejected =" << (rejected ? "yes" : "no");
+                if (!rejected) { exitWith(AutoTestBadEnvironment); return; }
+              }
+              QTimer::singleShot(recordMs, [step, index, mode, fileName, state, pollUntil, exitWith,
+                                             &recorder] {
+                stopRecording();
+                pollUntil(
+                    [state] { return state() == CaptureSchedulerState::Idle; },
+                    20000,
+                    [step, index, mode, fileName, exitWith, &recorder] {
+                      const QFileInfo file(recorder.outputPath() + QLatin1Char('/') + fileName);
+                      const bool ok = file.exists() && file.size() > 0;
+                      qInfo().noquote() << QStringLiteral("[AutoTest] cycle %1 mode=%2 file=%3 result=%4")
+                                               .arg(index).arg(mode, file.absoluteFilePath(),
+                                                               ok ? QStringLiteral("PASS") : QStringLiteral("FAIL"));
+                      if (!ok) { exitWith(AutoTestNoOutput); return; }
+                      (*step)(index + 1);
+                    },
+                    [exitWith] { exitWith(AutoTestStopTimeout); });
+              });
+            },
+            [exitWith] { exitWith(AutoTestNotRunning); });
+      });
+    };
+    QTimer::singleShot(0, [step] { (*step)(0); });
   } else if (scenario == "record_seconds") {
     // Start, record SUBREC_AUTOTEST_RECORD_MS (default 5000) once Running, stop, wait for Idle
     // and check the output file. The process exit code is the result (enum AutoTestExit).
