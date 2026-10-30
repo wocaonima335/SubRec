@@ -7,13 +7,30 @@ extern "C" {
 #include <libavfilter/buffersink.h>
 }
 #define CHECK(x) do { if (!(x)) throw std::runtime_error(#x); } while (false)
+AVFilterContext *configuredBufferSource(AVFilterGraph *graph, const char *name,
+                                        int width, int height, AVPixelFormat format,
+                                        AVRational timeBase, AVRational sampleAspectRatio)
+{
+    AVFilterContext *source = avfilter_graph_alloc_filter(graph, avfilter_get_by_name("buffer"), name);
+    CHECK(source);
+    AVBufferSrcParameters *params = av_buffersrc_parameters_alloc();
+    CHECK(params);
+    params->format = format;
+    params->width = width;
+    params->height = height;
+    params->time_base = timeBase;
+    params->sample_aspect_ratio = sampleAspectRatio;
+    const int parameterResult = av_buffersrc_parameters_set(source, params);
+    av_free(params);
+    CHECK(parameterResult == 0);
+    CHECK(avfilter_init_str(source, nullptr) == 0);
+    return source;
+}
 void run(int w, int h, int expectedW, int expectedH) {
     AVFilterGraph *graph = avfilter_graph_alloc(); CHECK(graph); graph->nb_threads = 1;
     struct Guard { AVFilterGraph *g; ~Guard() { avfilter_graph_free(&g); } } guard{graph};
     AVFilterContext *in=nullptr, *out=nullptr, *main=nullptr;
-    const auto args = "video_size="+std::to_string(w)+"x"+std::to_string(h)
-        +":pix_fmt="+std::to_string(AV_PIX_FMT_BGRA)+":time_base=1/30:pixel_aspect=1/1";
-    CHECK(avfilter_graph_create_filter(&in,avfilter_get_by_name("buffer"),"in",args.c_str(),nullptr,graph)==0);
+    in = configuredBufferSource(graph, "in", w, h, AV_PIX_FMT_BGRA, AVRational{1, 30}, AVRational{1, 1});
     CHECK(avfilter_graph_create_filter(&out,avfilter_get_by_name("buffersink"),"out",nullptr,nullptr,graph)==0);
     CHECK(avfilter_graph_create_filter(&main,avfilter_get_by_name("buffersink"),"main",nullptr,nullptr,graph)==0);
     AVFilterInOut *inputs=avfilter_inout_alloc(), *outputs=avfilter_inout_alloc();
@@ -52,8 +69,8 @@ void handoff() {
     AVFilterGraph *graph = avfilter_graph_alloc(); CHECK(graph); graph->nb_threads = 1;
     struct Guard { AVFilterGraph *g; ~Guard(){ avfilter_graph_free(&g); } } guard{graph};
     AVFilterContext *source=nullptr, *split=nullptr, *main=nullptr, *preview=nullptr;
-    CHECK(avfilter_graph_create_filter(&source,avfilter_get_by_name("buffer"),"in",
-        "video_size=16x16:pix_fmt=bgra:time_base=1/30:pixel_aspect=1/1",nullptr,graph)==0);
+    source = configuredBufferSource(graph, "in", 16, 16, AV_PIX_FMT_BGRA,
+                                    AVRational{1, 30}, AVRational{1, 1});
     CHECK(avfilter_graph_create_filter(&split,avfilter_get_by_name("split"),"split","2",nullptr,graph)==0);
     CHECK(avfilter_graph_create_filter(&main,avfilter_get_by_name("buffersink"),"main",nullptr,nullptr,graph)==0);
     CHECK(avfilter_graph_create_filter(&preview,avfilter_get_by_name("buffersink"),"preview",nullptr,nullptr,graph)==0);

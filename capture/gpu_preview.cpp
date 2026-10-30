@@ -14,6 +14,7 @@ extern "C" {
 #include <libavfilter/buffersink.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/time.h>
+#include <libavutil/error.h>
 }
 
 struct GpuPreview::State {
@@ -28,31 +29,40 @@ struct GpuPreview::State {
     AVFilterContext *input = nullptr, *output = nullptr;
     ~State() { avfilter_graph_free(&graph); }
 
-    bool configure(const AVFrame *frame) {
+    int configure(const AVFrame *frame) {
         graph = avfilter_graph_alloc();
-        if (!graph) return false;
+        if (!graph) return AVERROR(ENOMEM);
         graph->nb_threads = 1;
-        const QByteArray args = QStringLiteral("video_size=%1x%2:pix_fmt=%3:time_base=1/1000000:pixel_aspect=1/1")
-            .arg(frame->width).arg(frame->height).arg(frame->format).toLatin1();
-        int ret = avfilter_graph_create_filter(&input, avfilter_get_by_name("buffer"), "in",
-                                               args.constData(), nullptr, graph);
+        input = avfilter_graph_alloc_filter(graph, avfilter_get_by_name("buffer"), "in");
+        if (!input) return AVERROR(ENOMEM);
         AVBufferSrcParameters *params = av_buffersrc_parameters_alloc();
-        if (ret < 0 || !params) { av_free(params); return false; }
+        if (!params) return AVERROR(ENOMEM);
+        params->format = frame->format;
+        params->width = frame->width;
+        params->height = frame->height;
+        params->time_base = AVRational{1, 1000000};
+        params->sample_aspect_ratio = AVRational{1, 1};
         params->hw_frames_ctx = frame->hw_frames_ctx;
-        ret = av_buffersrc_parameters_set(input, params); // refs the hardware context
+        int ret = av_buffersrc_parameters_set(input, params); // refs the hardware context
         av_free(params);
-        if (ret < 0) return false;
+        if (ret < 0) return ret;
+        ret = avfilter_init_str(input, nullptr);
+        if (ret < 0) return ret;
         ret = avfilter_graph_create_filter(&output, avfilter_get_by_name("buffersink"), "out",
                                            nullptr, nullptr, graph);
-        if (ret < 0) return false;
+        if (ret < 0) return ret;
         AVFilterInOut *in = avfilter_inout_alloc(), *out = avfilter_inout_alloc();
-        if (!in || !out) { avfilter_inout_free(&in); avfilter_inout_free(&out); return false; }
+        if (!in || !out) {
+            avfilter_inout_free(&in); avfilter_inout_free(&out);
+            return AVERROR(ENOMEM);
+        }
         in->name = av_strdup("out"); in->filter_ctx = output;
         out->name = av_strdup("in"); out->filter_ctx = input;
         const std::string spec = gpuPreviewFilterSpec();
         ret = avfilter_graph_parse_ptr(graph, spec.c_str(), &in, &out, nullptr);
         avfilter_inout_free(&in); avfilter_inout_free(&out);
-        return ret >= 0 && avfilter_graph_config(graph, nullptr) >= 0;
+        if (ret < 0) return ret;
+        return avfilter_graph_config(graph, nullptr);
     }
     void run() {
         Frame latest(av_frame_alloc()), next(av_frame_alloc());
@@ -67,8 +77,10 @@ struct GpuPreview::State {
             auto frame = pending.take();
             if (!frame) { std::this_thread::sleep_for(std::chrono::milliseconds(5)); continue; }
             if (!configured) {
-                if (!configure(frame.get())) {
-                    qWarning() << "[Preview] GPU preview conversion unavailable; recording continues";
+                const int ret = configure(frame.get());
+                if (ret < 0) {
+                    qWarning().noquote() << QStringLiteral("[Preview] GPU preview conversion unavailable; recording continues: %1 (%2)")
+                        .arg(QString::fromLocal8Bit(av_err2str(ret))).arg(ret);
                     stop = true; break;
                 }
                 configured = true;
