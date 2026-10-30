@@ -17,6 +17,17 @@ extern "C" {
 #include <libavutil/error.h>
 }
 
+namespace {
+QString ffmpegErrorText(int errorCode)
+{
+    char buffer[AV_ERROR_MAX_STRING_SIZE] = {};
+    if (av_strerror(errorCode, buffer, sizeof(buffer)) < 0) {
+        return QStringLiteral("unknown FFmpeg error");
+    }
+    return QString::fromLocal8Bit(buffer);
+}
+} // namespace
+
 struct GpuPreview::State {
     struct Release { void operator()(AVFrame *p) const { av_frame_free(&p); } };
     using Frame = std::unique_ptr<AVFrame, Release>;
@@ -80,7 +91,7 @@ struct GpuPreview::State {
                 const int ret = configure(frame.get());
                 if (ret < 0) {
                     qWarning().noquote() << QStringLiteral("[Preview] GPU preview conversion unavailable; recording continues: %1 (%2)")
-                        .arg(QString::fromLocal8Bit(av_err2str(ret))).arg(ret);
+                        .arg(ffmpegErrorText(ret)).arg(ret);
                     stop = true; break;
                 }
                 configured = true;
