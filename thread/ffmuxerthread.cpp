@@ -1,4 +1,5 @@
 #include "ffmuxerthread.h"
+#include "interleave_wait_diagnostics.h"
 
 #include "recorder/ffrecorder.h"
 
@@ -66,7 +67,7 @@ void FFMuxerThread::init(FFAPacketQueue *aPktQueue_,
     (void)aEncoder_;
     (void)vEncoder_;
     errorCode.store(0);
-    bootstrapMaxPackets = bootstrapHoldNs = droppedPackets = 0;
+    bootstrapMaxPackets = bootstrapHoldNs = droppedPackets = interleaveStalls = 0;
     diagnosticsLogged = false;
     drainDeadlineMs.store(0);
     drainExpired.store(false);
@@ -93,7 +94,11 @@ void FFMuxerThread::close()
                 << "bootstrap_hold_ms=" << s.bootstrapHoldNs / 1000000.0
                 << "enqueue_backpressure_total_ms=" << s.enqueueBlockedNs / 1000000.0
                 << "dropped_packets=" << s.droppedPackets
-                << "skipped_packets=" << (muxer ? muxer->skippedPackets() : 0);
+                << "skipped_packets=" << (muxer ? muxer->skippedPackets() : 0)
+                << "guardDropped=" << s.guardDropped
+                << "guardDropped_audio=" << (muxer ? muxer->guardDropped(AVMEDIA_TYPE_AUDIO) : 0)
+                << "guardDropped_video=" << (muxer ? muxer->guardDropped(AVMEDIA_TYPE_VIDEO) : 0)
+                << "interleaveStalls=" << s.interleaveStalls;
         diagnosticsLogged = true;
     }
     lastProcessTime = 0;
@@ -111,6 +116,8 @@ FFMuxerThread::Diagnostics FFMuxerThread::diagnostics() const
         result.droppedPackets += s.rejected + s.discarded;
     };
     add(aPktQueue); add(vPktQueue);
+    result.guardDropped = muxer ? muxer->guardDropped() : 0;
+    result.interleaveStalls = interleaveStalls.load();
     return result;
 }
 
@@ -148,14 +155,20 @@ void FFMuxerThread::checkDrainDeadline()
     }
 }
 
-template<class Queue> auto FFMuxerThread::receivePacket(Queue *queue)
+template<class Queue> auto FFMuxerThread::receivePacket(Queue *queue, bool opposingPending)
 {
+    InterleaveWaitDiagnostics wait;
     // Polling permits a stop deadline to be armed while already waiting. Idle
     // recording and pause have no deadline. DTS merge order remains unchanged.
     for (;;) {
         checkDrainDeadline();
         auto result = queue->tryReceive();
         if (result.result != MediaQueueResult::Again) return result;
+        const auto nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        const bool queuedOpposing = static_cast<const void *>(queue) == aPktQueue
+            ? (vPktQueue && vPktQueue->length() > 0) : (aPktQueue && aPktQueue->length() > 0);
+        if (wait.observe(nowUs, opposingPending || queuedOpposing)) ++interleaveStalls;
         if (m_stop.load()) {
             result.result = MediaQueueResult::Closed;
             return result;
@@ -251,14 +264,14 @@ void FFMuxerThread::run()
         bootstrapAudioPackets.push_back(pkt);
         bootstrapMaxPackets.store(std::max<uint64_t>(bootstrapMaxPackets.load(), bootstrapAudioPackets.size()));
     };
-    auto nextAudioPacket = [this, &bootstrapAudioPackets]() -> MediaQueueReadResult<FFPacket> {
+    auto nextAudioPacket = [this, &bootstrapAudioPackets](bool opposingPending) -> MediaQueueReadResult<FFPacket> {
         if (!bootstrapAudioPackets.empty()) {
             FFPacket *pkt = bootstrapAudioPackets.front();
             bootstrapAudioPackets.pop_front();
             return MediaQueueReadResult<FFPacket>{
                 MediaQueueResult::Ok, pkt, MediaQueueCloseReason::None, 0};
         }
-        return receivePacket(aPktQueue);
+        return receivePacket(aPktQueue, opposingPending);
     };
 
     bool audioFinished = !aPktQueue;
@@ -268,6 +281,7 @@ void FFMuxerThread::run()
     FFPacket *audioPkt = nullptr;
     FFPacket *videoPkt = nullptr;
 
+    InterleaveWaitDiagnostics bootstrapWait;
     auto holdStart = std::chrono::steady_clock::time_point{};
     while (!m_stop && !videoPkt && !videoFinished) {
         checkDrainDeadline();
@@ -291,6 +305,10 @@ void FFMuxerThread::run()
             holdStart == std::chrono::steady_clock::time_point{})
             holdStart = std::chrono::steady_clock::now();
         const auto videoBootstrap = vPktQueue->tryReceive();
+        if (videoBootstrap.result == MediaQueueResult::Again &&
+            bootstrapWait.observe(std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count(), !bootstrapAudioPackets.empty()))
+            ++interleaveStalls;
         if (videoBootstrap.ok()) {
             videoPkt = videoBootstrap.item;
             break;
@@ -321,7 +339,7 @@ void FFMuxerThread::run()
         audioPkt = bootstrapAudioPackets.front();
         bootstrapAudioPackets.pop_front();
     } else if (!audioFinished && !audioBootstrapFailed) {
-        const auto audioFirst = receivePacket(aPktQueue);
+        const auto audioFirst = receivePacket(aPktQueue, videoPkt != nullptr);
         audioFinished = audioFirst.result == MediaQueueResult::Eof;
         audioPkt = audioFirst.ok() ? audioFirst.item : nullptr;
         if (!audioPkt && !audioFinished && audioFirst.result != MediaQueueResult::Again) {
@@ -331,7 +349,7 @@ void FFMuxerThread::run()
     }
 
     if (!m_stop.load() && !videoPkt && !videoFinished && !videoBootstrapFailed) {
-        const auto videoFirst = receivePacket(vPktQueue);
+        const auto videoFirst = receivePacket(vPktQueue, audioPkt != nullptr);
         videoFinished = videoFirst.result == MediaQueueResult::Eof;
         videoPkt = videoFirst.ok() ? videoFirst.item : nullptr;
         if (!videoPkt && !videoFinished && videoFirst.result != MediaQueueResult::Again) {
@@ -425,7 +443,7 @@ void FFMuxerThread::run()
             processedSec = aSec;
             FFPacketTraits::release(audioPkt);
             if (ret < 0) { ++droppedPackets; fail(ret); break; }
-            auto nextAudio = nextAudioPacket();
+            auto nextAudio = nextAudioPacket(videoPkt != nullptr);
             if (nextAudio.result == MediaQueueResult::Eof) {
                 audioFinished = true;
                 audioPkt = nullptr;
@@ -444,7 +462,7 @@ void FFMuxerThread::run()
             processedSec = vSec;
             FFPacketTraits::release(videoPkt);
             if (ret < 0) { ++droppedPackets; fail(ret); break; }
-            auto nextVideo = receivePacket(vPktQueue);
+            auto nextVideo = receivePacket(vPktQueue, audioPkt != nullptr);
             if (nextVideo.result == MediaQueueResult::Eof) {
                 videoFinished = true;
                 videoPkt = nullptr;

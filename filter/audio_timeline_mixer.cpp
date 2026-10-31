@@ -88,7 +88,10 @@ void AudioTimelineMixer::pushTimeline(unsigned source, const AVFrame &frame) {
     // Within 10 ms, PTS is an observation of the source clock, not a new output
     // position. Keep every converted block adjacent to the previous one.
     if (changed || input.finished || discontinuity) {
-        if (input.swr && !input.finished && (changed || discontinuity)) ++stats_.resyncs[source];
+        const bool resync = input.swr != nullptr;
+        const char *reason = changed ? "format_change" : input.finished ? "source_restart" : "timestamp_jump";
+        const double previousPpm = stats_.compensationPpm[source];
+        if (resync) ++stats_.resyncs[source];
         finishTimeline(source);
         swr_free(&input.swr); av_channel_layout_uninit(&input.layout);
         check(av_channel_layout_copy(&input.layout, &frame.ch_layout));
@@ -106,6 +109,9 @@ void AudioTimelineMixer::pushTimeline(unsigned source, const AVFrame &frame) {
         input.compensationDelta = 0;
         input.finished = false;
         stats_.compensationPpm[source] = 0;
+        if (resync && resyncObserver_)
+            resyncObserver_(source, reason,
+                            errorUs, previousPpm, 0);
     }
     const double durationUs = double(frame.nb_samples) * 1000000 / frame.sample_rate;
     compensate(source, static_cast<double>(us - input.nextUs), durationUs);
@@ -145,6 +151,8 @@ void AudioTimelineMixer::compensate(unsigned source, double errorUs, double dura
                                         input.compensationDelta + maxStep);
     check(swr_set_compensation(input.swr, input.compensationDelta, distance));
     stats_.compensationPpm[source] = double(input.compensationDelta) * 1000000 / distance;
+    stats_.ppmMin[source] = std::min(stats_.ppmMin[source], stats_.compensationPpm[source]);
+    stats_.ppmMax[source] = std::max(stats_.ppmMax[source], stats_.compensationPpm[source]);
     input.observationUs = input.weightedError = 0;
 }
 
@@ -268,7 +276,7 @@ void AudioTimelineMixer::push(unsigned source, const AVFrame &frame) {
     Frame copy(av_frame_clone(&frame)); if (!copy) throw std::bad_alloc();
     copy->pts = us; copy->time_base = {1,1000000};
     captureEndUs_ = std::max(captureEndUs_, us+duration);
-    captured_[source].push_back(std::move(copy));
+    captured_[source].push_back(Captured{std::move(copy), 0});
 }
 
 void AudioTimelineMixer::finish(unsigned source) {
@@ -303,21 +311,38 @@ AudioTimelineMixer::Frame AudioTimelineMixer::renderAt(int64_t captureThroughUs,
     for (unsigned source = 0; source < 2; ++source) {
         auto &pending = captured_[source];
         while (!pending.empty()) {
-            const auto &frame = *pending.front();
+            auto &entry = pending.front();
+            const auto &frame = *entry.frame;
             if (frame.pts >= captureThroughUs) break;
             const auto endUs = frame.pts + av_rescale_q(frame.nb_samples, {1,frame.sample_rate}, {1,1000000});
             const auto available = endUs <= captureThroughUs ? int64_t(frame.nb_samples) :
                 av_rescale_rnd(captureThroughUs-frame.pts, frame.sample_rate, 1000000, AV_ROUND_DOWN);
             const int count = static_cast<int>(std::min<int64_t>(frame.nb_samples, available));
-            if (count <= 0) break;
-            mapCaptured(source, frame, 0, count);
+            if (count <= entry.consumed) break;
+            mapCaptured(source, frame, entry.consumed, count);
+            mappedThroughUs_[source] = frame.pts + av_rescale_q(count,
+                {1,frame.sample_rate}, {1,1000000});
             if (count < frame.nb_samples) {
-                auto rest = slice(frame, count, frame.nb_samples-count);
-                pending.front() = std::move(rest); break;
+                // Retain the original sample origin; repeatedly rounding a sliced
+                // remainder's PTS to microseconds accumulates boundary error.
+                entry.consumed = count; break;
             }
             pending.pop_front();
         }
         if (ended_[source] && pending.empty()) finishTimeline(source);
     }
-    return render(av_rescale_q(media, {1,1000000}, {1,48000}), systemGain, micGain);
+    int64_t target = av_rescale_q(media, {1,1000000}, {1,48000});
+    for (unsigned source = 0; source < 2; ++source) {
+        const auto &input = inputs_[source];
+        // renderAt deliberately splits input at the capture cutoff (pause safety).
+        // swr retains a filter tail: mapped input through T is NOT output through T.
+        // If PCM covers this cutoff, defer its unconverted tail instead of filling
+        // it with silence and then trimming those same samples on the next turn.
+        // A real missing-input gap still advances with silence; EOF flushes swr.
+        const int64_t sampleUs = input.rate > 0 ? (1000000 + input.rate-1)/input.rate : 0;
+        if (input.swr && !input.finished && mappedThroughUs_[source] != AV_NOPTS_VALUE &&
+            mappedThroughUs_[source] >= captureThroughUs - sampleUs)
+            target = std::min(target, input.tailPts);
+    }
+    return render(target, systemGain, micGain);
 }

@@ -318,6 +318,23 @@ void FFAFilterThread::runMixed()
     try {
         if (!mediaClock) throw std::runtime_error("Audio session clock not configured");
         AudioTimelineMixer mixer(*mediaClock);
+        mixer.setResyncObserver([](unsigned source, const char *reason, double errorUs,
+                                   double before, double after) {
+            qWarning() << "[AudioMix] resync source=" << (source ? "microphone" : "system")
+                       << "reason=" << reason << "error_us=" << errorUs
+                       << "ppm_before=" << before << "ppm_after=" << after;
+        });
+        // Also report on abort/error unwinding, before the mixer's stats disappear.
+        struct ClockSummary {
+            const AudioTimelineMixer &mixer;
+            ~ClockSummary() {
+                const auto &s = mixer.stats();
+                for (unsigned source = 0; source < 2; ++source)
+                    qInfo() << "[AudioMix] clock_summary source=" << (source ? "microphone" : "system")
+                            << "resyncs=" << s.resyncs[source] << "ppm_min=" << s.ppmMin[source]
+                            << "ppm_max=" << s.ppmMax[source] << "ppm_last=" << s.compensationPpm[source];
+            }
+        } clockSummary{mixer};
         int64_t nextDiagnosticUs = av_gettime_relative() + 60000000;
         bool eof[2]{!audioFlag.load(), !microphoneFlag.load()};
         uint64_t sourceDiagnostics[2]{};
@@ -370,6 +387,11 @@ void FFAFilterThread::runMixed()
             const int64_t nowUs = av_gettime_relative();
             if (nowUs >= nextDiagnosticUs) {
                 nextDiagnosticUs = nowUs + 60000000;
+                const auto &s = mixer.stats();
+                for (unsigned source = 0; source < 2; ++source)
+                    qInfo() << "[AudioMix] compensation source=" << (source ? "microphone" : "system")
+                            << "ppm=" << s.compensationPpm[source] << "error_us=" << s.phaseErrorUs[source]
+                            << "resyncs=" << s.resyncs[source];
                 qInfo() << "[RecordingBuffers] mixer_system_frames=" << mixer.pendingFrames(0)
                         << "mixer_mic_frames=" << mixer.pendingFrames(1)
                         << "mixer_ahead_samples=" << mixer.end() - mixer.position()

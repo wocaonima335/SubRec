@@ -38,6 +38,7 @@ public:
     struct Diagnostics {
         uint64_t bootstrapMaxPackets = 0, bootstrapHoldNs = 0;
         uint64_t enqueueBlockedNs = 0, droppedPackets = 0;
+        uint64_t guardDropped = 0, interleaveStalls = 0;
     };
     Diagnostics diagnostics() const;
     int lastError() const { return errorCode.load(); }
@@ -49,7 +50,7 @@ private:
     void sendCaptureProcessEvent(double seconds);
     void fail(int error);
     void checkDrainDeadline();
-    template<class Queue> auto receivePacket(Queue *queue);
+    template<class Queue> auto receivePacket(Queue *queue, bool opposingPending = false);
 
 private:
     FFAPacketQueue *aPktQueue = nullptr;
@@ -62,6 +63,7 @@ private:
     std::atomic<bool> drainExpired{false};
 
     std::atomic<uint64_t> bootstrapMaxPackets{0}, bootstrapHoldNs{0}, droppedPackets{0};
+    std::atomic<uint64_t> interleaveStalls{0};
     bool diagnosticsLogged = false; // control thread, close after join
     double lastProcessTime = 0;
 

@@ -34,6 +34,10 @@ public:
                         AVRational *frameRate = nullptr);
     int close(); // Serialized with mux; idempotent. Callers own worker lifetime.
     uint64_t skippedPackets() const;
+    // Missing timestamps rejected by the pre-write guard. Duplicate DTS remains
+    // exclusively skippedPackets(), so these counters are disjoint.
+    uint64_t guardDropped() const;
+    uint64_t guardDropped(AVMediaType type) const;
 
 private:
     int initMuxer();
@@ -53,6 +57,7 @@ private:
     int closeResult = 0;
     int64_t lastAudioDts = AV_NOPTS_VALUE;
     int64_t lastVideoDts = AV_NOPTS_VALUE;
+    uint64_t guardDroppedCount[2]{}; // audio, video; retained on close, reset by init
     uint64_t skippedPacketCount = 0;
     uint64_t skippedWarningCount = 0;
     uint64_t writtenPacketCount = 0;

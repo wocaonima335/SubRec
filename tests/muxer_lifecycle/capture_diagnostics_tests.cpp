@@ -2,6 +2,7 @@
 #include "capture/wasapi_packet_diagnostics.h"
 #include "capture/wasapi_queue_sink.h"
 #include "thread/ffmuxerthread.h"
+#include "thread/interleave_wait_diagnostics.h"
 #include "queue/ffapacketqueue.h"
 #include "queue/ffvpacketqueue.h"
 #include <future>
@@ -122,9 +123,22 @@ void muxDropCounters() {
     mux.close();
     audio.start(); video.start(); mux.init(&audio, &video, nullptr, nullptr, nullptr, nullptr);
     CHECK(mux.diagnostics().droppedPackets == 0 && mux.diagnostics().bootstrapMaxPackets == 0);
+    CHECK(mux.diagnostics().guardDropped == 0 && mux.diagnostics().interleaveStalls == 0);
     std::cout << "PASS: mux drop aggregation counts discarded/rejected packets, resets per session\n";
 }
+void interleaveWaitCounters() {
+    InterleaveWaitDiagnostics wait;
+    unsigned stalls = 0;
+    auto observe = [&](int64_t t, bool pending) { if (wait.observe(t,pending)) ++stalls; };
+    observe(0,false); observe(9000000,false); CHECK(stalls==0); // idle/EOF/no-audio
+    observe(10000000,true); observe(10999999,true); CHECK(stalls==0);
+    observe(11000000,true); observe(20000000,true); CHECK(stalls==1); // one episode
+    observe(21000000,false); observe(22000000,true); observe(23000000,true); CHECK(stalls==2);
+    wait.reset(); observe(24000000,true); observe(24999999,true); CHECK(stalls==2);
+    observe(25000000,true); CHECK(stalls==3);
+    std::cout << "PASS: interleave stalls threshold, idle, once per episode, reset\n";
+}
 int main() {
-    try { queueCounters(); restartCounters(); deviceCounters(); delayHook(); sinkCounters(); muxDropCounters(); }
+    try { interleaveWaitCounters(); queueCounters(); restartCounters(); deviceCounters(); delayHook(); sinkCounters(); muxDropCounters(); }
     catch (const std::exception &e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
 }

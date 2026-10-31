@@ -3,6 +3,7 @@
 #include <deque>
 #include <cstdint>
 #include <memory>
+#include <functional>
 extern "C" {
 #include <libavfilter/avfilter.h>
 #include <libavutil/frame.h>
@@ -35,6 +36,7 @@ public:
         }
         uint64_t futurePacketsDropped[2]{};
         double compensationPpm[2]{}, phaseErrorUs[2]{};
+        double ppmMin[2]{}, ppmMax[2]{}; // Includes the initial/reset zero compensation.
     };
     explicit AudioTimelineMixer(int64_t startUs);
     // Production mode: defer timestamp mapping until renderAt's capture cutoff,
@@ -53,6 +55,9 @@ public:
     int64_t end() const { return end_; }
     size_t pendingFrames(unsigned source) const { return inputs_.at(source).frames.size() + captured_.at(source).size(); }
     const Stats &stats() const { return stats_; }
+    // Synchronous notification on the owning mixer worker; observer must not throw.
+    using ResyncObserver = std::function<void(unsigned, const char *, double, double, double)>;
+    void setResyncObserver(ResyncObserver observer) { resyncObserver_ = std::move(observer); }
 private:
     struct Input {
         SwrContext *swr = nullptr;
@@ -71,9 +76,12 @@ private:
     void mapCaptured(unsigned source, const AVFrame &frame, int begin, int end);
     Frame slice(const AVFrame &frame, int begin, int count);
     const MediaClock *clock_ = nullptr;
-    std::array<std::deque<Frame>, 2> captured_;
+    struct Captured { Frame frame; int consumed = 0; };
+    std::array<std::deque<Captured>, 2> captured_;
     bool ended_[2]{};
     int64_t captureEndUs_ = 0;
+    int64_t mappedThroughUs_[2]{AV_NOPTS_VALUE, AV_NOPTS_VALUE};
+    ResyncObserver resyncObserver_;
     Frame allocate(int samples, int64_t pts);
     void append(unsigned source, Frame frame);
     void compensate(unsigned source, double errorUs, double durationUs);

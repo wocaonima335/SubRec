@@ -58,5 +58,36 @@ void pauses() {
         while(auto out=ntsc.renderAt(cutoff)){CHECK(out->pts==samples);samples+=out->nb_samples;}
     CHECK(samples==48000 && ntsc.pendingFrames(0)==0);
 }
-int main(){try{single(0);single(1);pauses();std::cout<<"PASS single-source silence, sample timeline and queued pause boundaries\n";}
+// Match production: capture is ahead by the holdback, but renderAt maps
+// only through each cutoff. A continuously queued signal must never be
+// replaced by silence while swr still owns its filter tail.
+void streamingTail(int rate, unsigned source) {
+    MediaClock clock; clock.start(1000000); AudioTimelineMixer mixer(clock);
+    mixer.finish(1-source);
+    constexpr int seconds = 10;
+    int64_t nextSample = 0, samples = 0;
+    auto drain = [&](int64_t cutoff) {
+        while (auto out = mixer.renderAt(cutoff)) {
+            CHECK(out->pts == samples); samples += out->nb_samples;
+            for (int i=0;i<out->nb_samples;++i)
+                CHECK(std::abs(reinterpret_cast<float*>(out->extended_data[0])[i]-.2f)<.001f);
+        }
+    };
+    // Vary the cutoff and split 50-ms device packets at non-sample boundaries.
+    for (int64_t cutoff=1005001; cutoff<1000000+seconds*1000000; cutoff+=7133) {
+        while (nextSample < seconds*rate &&
+               1000000+nextSample*1000000/rate < cutoff+200000) {
+            auto f=input(1000000+nextSample*1000000/rate, rate/20, rate);
+            mixer.push(source,*f); nextSample+=rate/20;
+        }
+        drain(cutoff);
+    }
+    mixer.finish(source); drain(1000000+seconds*1000000);
+    std::cout << "streaming rate=" << rate << " samples=" << samples << " trimmed=" << mixer.stats().trimmed[source] << " silence=" << mixer.stats().silence[source] << " pending=" << mixer.pendingFrames(source) << " end=" << mixer.captureEndUs() << "\n";
+    CHECK(samples == seconds*48000);
+    CHECK(mixer.stats().trimmed[source] == 0);
+    CHECK(mixer.stats().silence[source] == 0);
+    CHECK(mixer.stats().resyncs[source] == 0);
+}
+int main(){try{streamingTail(48000,1);streamingTail(44100,0);single(0);single(1);pauses();std::cout<<"PASS single-source silence, sample timeline and queued pause boundaries\n";}
 catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

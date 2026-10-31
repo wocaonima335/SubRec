@@ -26,6 +26,7 @@ int FFMuxer::init(const std::string &url_, const std::string &format_, bool audi
   terminalError = trailerResult = closeResult = 0;
   lastAudioDts = lastVideoDts = AV_NOPTS_VALUE;
   skippedPacketCount = skippedWarningCount = writtenPacketCount = 0;
+  guardDroppedCount[0] = guardDroppedCount[1] = 0;
   headerFlag = trailerFlag = false;
   url = url_;
   format = format_;
@@ -130,6 +131,7 @@ int FFMuxer::mux(AVPacket *packet) {
   }
 
   if (packet->pts == AV_NOPTS_VALUE || packet->dts == AV_NOPTS_VALUE) {
+    ++guardDroppedCount[streamIndex == aStreamIndex ? 0 : 1];
     av_ts_make_string(pts_buf, packet->pts);
     av_ts_make_string(dts_buf, packet->dts);
     qDebug().noquote() << "[Mux Drop]" << streamType
@@ -301,6 +303,16 @@ int FFMuxer::close() {
 uint64_t FFMuxer::skippedPackets() const {
   std::lock_guard<std::mutex> lock(mutex);
   return skippedPacketCount;
+}
+
+uint64_t FFMuxer::guardDropped() const {
+  std::lock_guard<std::mutex> lock(mutex);
+  return guardDroppedCount[0] + guardDroppedCount[1];
+}
+uint64_t FFMuxer::guardDropped(AVMediaType type) const {
+  std::lock_guard<std::mutex> lock(mutex);
+  return type == AVMEDIA_TYPE_AUDIO ? guardDroppedCount[0]
+       : type == AVMEDIA_TYPE_VIDEO ? guardDroppedCount[1] : 0;
 }
 
 int FFMuxer::initMuxer() {

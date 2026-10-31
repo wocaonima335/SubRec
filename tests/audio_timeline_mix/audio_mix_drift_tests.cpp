@@ -92,6 +92,39 @@ void drift(double magnitude, int rate0, bool jitter) {
     CHECK(maxJump < .01); // > largest natural tone slope, far below a click to silence
     std::cout << "max_step_ppm=" << maxStep << " max_adjacent_sample_jump=" << maxJump << '\n';
 }
+void resyncCounters() {
+    AudioTimelineMixer mixer(epoch);
+    unsigned calls[2]{};
+    double lastBefore = 0;
+    std::string reason;
+    mixer.setResyncObserver([&](unsigned source, const char *why, double error,
+                                double before, double after) {
+        ++calls[source]; reason = why; lastBefore = before;
+        CHECK(after == 0);
+        if (reason == "timestamp_jump") CHECK(std::abs(error) > AudioTimelineMixer::resyncThresholdUs);
+    });
+    for (int n=0; n<150; ++n) {
+        for (unsigned source=0; source<2; ++source) {
+            auto f=packet(48000,480,n*480,source ? -200 : 200,0,source);
+            mixer.push(source,*f);
+        }
+    }
+    CHECK(calls[0]==0 && calls[1]==0); // Initial setup isn't a resync.
+    for (unsigned source=0; source<2; ++source) {
+        const auto before=mixer.stats().compensationPpm[source]; CHECK(before != 0);
+        CHECK(mixer.stats().ppmMin[source] <= before && mixer.stats().ppmMax[source] >= before);
+        auto f=packet(48000,480,80000,0,0,source); mixer.push(source,*f);
+        CHECK(calls[source]==1 && mixer.stats().resyncs[source]==1);
+        CHECK(reason=="timestamp_jump" && lastBefore==before);
+        CHECK(mixer.stats().compensationPpm[source]==0);
+        auto changed=packet(44100,441,73941,0,0,source); mixer.push(source,*changed);
+        CHECK(reason=="format_change" && calls[source]==2 && mixer.stats().resyncs[source]==2);
+        mixer.finish(source); mixer.finish(source);
+        CHECK(calls[source]==2); // EOF flush isn't a resync.
+    }
+    AudioTimelineMixer next(epoch);
+    CHECK(next.stats().resyncs[0]==0 && next.stats().ppmMin[0]==0 && next.stats().ppmMax[1]==0);
+}
 void jitterAndDiscontinuity() {
     AudioTimelineMixer mixer(epoch);
     for (int n = 0; n < 100; ++n) {
@@ -115,7 +148,7 @@ int main() {
 #else
         unsetenv("SUBREC_AUDIO_MIX_DUMP_DIR");
 #endif
-        jitterAndDiscontinuity();
+        resyncCounters(); jitterAndDiscontinuity();
         drift(50, 44100, false); drift(100, 48000, false); drift(200, 48000, false);
         drift(200, 48000, true);
         std::cout << "PASS: +/-50..200 ppm, continuous samples, bounded slew, jitter and hard resync\n";

@@ -178,8 +178,31 @@ static void duplicateDtsIsSkipped()
         av_packet_free(&packet);
     }
     CHECK(mux.skippedPackets() == 1);
+    CHECK(mux.guardDropped() == 0);
+    AVPacket *missing = av_packet_alloc(); CHECK(missing);
+    missing->stream_index = mux.getVStreamIndex();
+    CHECK(mux.mux(missing) == 0);
+    CHECK(mux.guardDropped() == 1 && mux.guardDropped(AVMEDIA_TYPE_VIDEO) == 1);
+    CHECK(mux.guardDropped(AVMEDIA_TYPE_AUDIO) == 0 && mux.skippedPackets() == 1);
+    missing->pts = 4; // One known timestamp is repaired, not dropped.
+    CHECK(mux.mux(missing) == 0); av_packet_free(&missing);
+    CHECK(mux.guardDropped() == 1);
     CHECK(mux.writeTrailer() == 0);
     CHECK(mux.close() == 0);
+}
+static void guardCountersReset()
+{
+    FFMuxer mux; CHECK(mux.init("unused", "null") == 0); streams(mux);
+    CHECK(mux.writeHeader() == 0);
+    for (const int stream : {mux.getAStreamIndex(), mux.getVStreamIndex()}) {
+        AVPacket *p = av_packet_alloc(); CHECK(p); p->stream_index=stream;
+        CHECK(mux.mux(p)==0); av_packet_free(&p);
+    }
+    CHECK(mux.guardDropped()==2 && mux.guardDropped(AVMEDIA_TYPE_AUDIO)==1);
+    CHECK(mux.guardDropped(AVMEDIA_TYPE_VIDEO)==1 && mux.skippedPackets()==0);
+    CHECK(mux.close()==0); CHECK(mux.close()==0); CHECK(mux.guardDropped()==2);
+    CHECK(mux.init("unused", "null")==0);
+    CHECK(mux.guardDropped()==0 && mux.skippedPackets()==0); mux.close();
 }
 static void injectedFailureStillWritesTrailer(const QString &root)
 {
@@ -219,7 +242,7 @@ int main()
         const QString root = QDir::currentPath() + "/muxer-output-" +
                              QUuid::createUuid().toString(QUuid::WithoutBraces);
         CHECK(QDir().mkpath(root));
-        emptyAndPreconditions(); waits(); failures(root); freedContextsAndCloseRace(root); duplicateDtsIsSkipped(); injectedFailureStillWritesTrailer(root);
+        emptyAndPreconditions(); waits(); failures(root); freedContextsAndCloseRace(root); duplicateDtsIsSkipped(); guardCountersReset(); injectedFailureStillWritesTrailer(root);
         std::cout << "PASS: muxer lifecycle; artifacts=" << root.toStdString() << '\n';
         return 0;
     } catch (const std::exception &error) {
