@@ -2,6 +2,7 @@
 #define FFVENCODERTHREAD_H
 
 #include "ffthread.h"
+#include "queue/video_tick_scheduler.h"
 
 extern "C"
 {
@@ -38,7 +39,11 @@ public:
     void wakeAllThread();
     void close();
 
-    void setStartTimeUs(int64_t us) { start_time_us = us; }
+    // Configure before start; clock is session-owned and outlives this worker.
+    void setMediaClock(MediaClock *clock) { mediaClock = clock; }
+    // Future capture supervisor notification; requests are executed on this worker.
+    void setCaptureStalled(bool stalled) { captureStalled.store(stalled); }
+    uint64_t missingCaptureStamps() const { return missingStamps.load(); }
     void onPauseChanged(bool pausedFlag, int64_t ts_us);
 
 protected:
@@ -47,6 +52,7 @@ protected:
 private:
     bool initEncoder(AVFrame *frame);
     void failEncoding(int error);
+    void failTimestamp(const char *reason);
     void publishEncoderSelection(const VideoEncoderSelection &selection);
     void sendPreviewData(AVFrame *frame);
 
@@ -61,7 +67,11 @@ private:
     int streamIndex = -1;
     AVRational timeBase{};
     AVRational frameRate{};
-    int64_t start_time_us = 0;
+    MediaClock *mediaClock = nullptr;
+    VideoTickScheduler ticks;
+    std::atomic<bool> captureStalled{false};
+    std::atomic<uint64_t> missingStamps{0};
+    std::atomic<int64_t> minimumCaptureUs{AV_NOPTS_VALUE};
 
     std::atomic<bool> paused{false};
     std::atomic<int64_t> pause_accum_us{0};

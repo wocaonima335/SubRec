@@ -1,4 +1,8 @@
 qt_add_library(queue_module STATIC
+    media_clock.h
+    media_clock.cpp
+    video_tick_scheduler.h
+    video_tick_scheduler.cpp
     recordersyncqueue.h
     recordersyncqueue.cpp
     ffvpacketqueue.h

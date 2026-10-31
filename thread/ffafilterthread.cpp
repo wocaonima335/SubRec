@@ -4,6 +4,7 @@
 #include "filter/ffafilter.h"
 #include "filter/audio_timeline_mixer.h"
 #include "queue/ffaframequeue.h"
+#include "queue/media_clock.h"
 #include "recorder/ffrecorder.h"
 
 #include <QDebug>
@@ -63,7 +64,6 @@ void FFAFilterThread::init(FFAFrameQueue *micFrmQueue_,
     micFrmQueue = micFrmQueue_;
     sysFrmQueue = sysFrmQueue_;
     filter = filter_;
-    mixPauses.clear();
 }
 
 void FFAFilterThread::startEncoder()
@@ -93,13 +93,13 @@ void FFAFilterThread::pauseEncoder()
 {
     std::lock_guard<std::mutex> lock(mutex);
     if (pauseFlag.load()) {
-        recordMixPause(false, av_gettime_relative());
+
         pauseTime += av_gettime_relative() - lastPauseTime;
         pauseFlag.store(false);
     } else {
         pauseFlag.store(true);
         lastPauseTime = av_gettime_relative();
-        recordMixPause(true, lastPauseTime);
+
     }
 }
 
@@ -111,7 +111,7 @@ void FFAFilterThread::onPauseChanged(bool pausedFlag, int64_t ts_us)
         if (pauseFlag.load(std::memory_order_acquire)) {
             return;
         }
-        recordMixPause(true, now);
+
         pauseFlag.store(true, std::memory_order_release);
         lastPauseTime.store(now, std::memory_order_release);
         qDebug() << "[FFAFilterThread] paused at" << now;
@@ -119,7 +119,7 @@ void FFAFilterThread::onPauseChanged(bool pausedFlag, int64_t ts_us)
         if (!pauseFlag.load(std::memory_order_acquire)) {
             return;
         }
-        recordMixPause(false, now);
+
         pauseTime.store(pauseTime.load(std::memory_order_acquire)
                             + (now - lastPauseTime.load(std::memory_order_acquire)),
                         std::memory_order_release);
@@ -313,22 +313,16 @@ AVFrame *FFAFilterThread::generateMuteFrame()
     return frame;
 }
 
-void FFAFilterThread::recordMixPause(bool paused, int64_t timestampUs)
-{
-    if (!mixing) return;
-    if (paused) mixPauses.emplace_back(timestampUs, AV_NOPTS_VALUE);
-    else if (!mixPauses.empty() && mixPauses.back().second == AV_NOPTS_VALUE)
-        mixPauses.back().second = timestampUs;
-}
-
 void FFAFilterThread::runMixed()
 {
     try {
-        AudioTimelineMixer mixer(mixStartUs);
+        if (!mediaClock) throw std::runtime_error("Audio session clock not configured");
+        AudioTimelineMixer mixer(*mediaClock);
         int64_t nextDiagnosticUs = av_gettime_relative() + 60000000;
-        bool eof[2]{};
+        bool eof[2]{!audioFlag.load(), !microphoneFlag.load()};
+        for (unsigned source = 0; source < 2; ++source) if (eof[source]) mixer.finish(source);
         FFAFrameQueue *queues[] = {sysFrmQueue, micFrmQueue};
-        qInfo() << "[AudioMix] enabled: WASAPI + microphone, 48k stereo FLTP, amix normalize=0, peak limiter="
+        qInfo() << "[AudioMix] enabled: clock-aligned 48k stereo FLTP, amix normalize=0, peak limiter="
                 << AudioTimelineMixer::limiterCeiling;
         while (!m_stop) {
             for (unsigned source = 0; source < 2; ++source) {
@@ -349,30 +343,14 @@ void FFAFilterThread::runMixed()
                 }
             }
             const bool done = eof[0] && eof[1];
-            const int64_t target = done ? mixer.end() :
-                std::max<int64_t>(0, (av_gettime_relative() - mixStartUs - capture::audio::mixHoldbackUs) * 48000 / 1000000);
-            while (!m_stop && mixer.position() < target) {
-                int64_t until = target;
-                bool discard = false;
-                {
-                    std::lock_guard<std::mutex> lock(mutex);
-                    const auto sample = [this](int64_t us) {
-                        return av_rescale_q(us - mixStartUs, AVRational{1,1000000}, AVRational{1,48000});
-                    };
-                    while (!mixPauses.empty() && mixPauses.front().second != AV_NOPTS_VALUE &&
-                           sample(mixPauses.front().second) <= mixer.position()) mixPauses.pop_front();
-                    if (!mixPauses.empty()) {
-                        const auto &pause = mixPauses.front();
-                        if (sample(pause.first) <= mixer.position()) {
-                            discard = true;
-                            if (pause.second != AV_NOPTS_VALUE) until = std::min(until, sample(pause.second));
-                        } else until = std::min(until, sample(pause.first));
-                    }
-                }
-                const bool retain = encoderFlag && !discard;
-                auto frame = mixer.render(until, systemGain, microphoneGain, retain);
-                if (retain) {
-                    filter->forwardAudioFrame(frame.release(), mixStartUs, pauseTime);
+            // The raw cutoff is only a holdback boundary. renderAt maps it
+            // through MediaClock, excluding pauses and preserving capture origin.
+            const int64_t cutoff = done ? mixer.captureEndUs() : av_gettime_relative() - capture::audio::mixHoldbackUs;
+            while (!m_stop) {
+                auto frame = mixer.renderAt(cutoff, systemGain, microphoneGain);
+                if (!frame) break;
+                if (encoderFlag) {
+                    filter->forwardAudioFrame(frame.release(), 0, 0);
                     ++forwardedFrameCount;
                 } else ++droppedFrameCount;
             }

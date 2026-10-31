@@ -128,8 +128,6 @@ void FFRecorder::startRecord(const CaptureConfig &config) {
     d->syncQueue->reset(config.audioEnabled);
   qDebug() << "[FFRecorder] queues cleared";
 
-  int64_t t0 = av_gettime_relative(); // 统一墙钟起点
-  qDebug() << "[FFRecorder] provisional start clock prepared, real arm deferred until sources start:" << t0;
   d->audioSampler->clear();
   qDebug() << "[FFRecorder] audio sampler cleared";
   d->audioSampler->start();
@@ -141,9 +139,8 @@ void FFRecorder::startRecord(const CaptureConfig &config) {
 
 void FFRecorder::applyPauseState(bool paused, int64_t tsUs) {
   std::lock_guard<std::mutex> lock(m_mutex);
-  if (d->syncQueue) {
-    d->syncQueue->onPauseChanged(paused, tsUs);
-  }
+  if (paused) d->mediaClock.pause(tsUs);
+  else d->mediaClock.resume(tsUs);
   if (d->vFilterThread) {
     d->vFilterThread->onPauseChanged(paused, tsUs);
   }
@@ -153,9 +150,8 @@ void FFRecorder::applyPauseState(bool paused, int64_t tsUs) {
   if (d->vEncoderThread) {
     d->vEncoderThread->onPauseChanged(paused, tsUs);
   }
-  if (d->aEncoderThread) {
-    d->aEncoderThread->onPauseChanged(paused, tsUs);
-  }
+  // Mixer removes pause intervals by capture time. Keep AAC draining buffered
+  // pre-pause samples; arrival-time gating would silently shorten the timeline.
 }
 
 void FFRecorder::stopRecord() {
@@ -415,6 +411,8 @@ FFVFrameQueue *FFRecorder::getVFilterEncoderFrmQueue() {
 FFAFrameQueue *FFRecorder::getAFilterEncoderFrmQueue() {
   return d ? d->aFilterEncoderFrmQueue : nullptr;
 }
+
+MediaClock &FFRecorder::mediaClock() { return d->mediaClock; }
 
 RecorderSyncQueue *FFRecorder::getSyncQueue() {
   return d ? d->syncQueue : nullptr;

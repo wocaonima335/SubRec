@@ -11,6 +11,7 @@ find_package(Threads REQUIRED)
 # fakes. No production seam, device, optional codec or test hook is required.
 add_executable(encoder_failure_tests encoder_failure_tests.cpp
     fakes/recorder/ffrecorder.h
+    ../../queue/media_clock.cpp ../../queue/video_tick_scheduler.cpp
     ../../thread/ffvencoderthread.cpp ../../thread/ffaencoderthread.cpp
     ../../thread/ffthread.cpp ../../queue/ffvframequeue.cpp
     ../../queue/ffaframequeue.cpp ../../queue/recordersyncqueue.cpp)
@@ -19,7 +20,7 @@ target_compile_features(encoder_failure_tests PRIVATE cxx_std_17)
 target_include_directories(encoder_failure_tests PRIVATE fakes ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(encoder_failure_tests PRIVATE Qt6::Core Threads::Threads
     "${FFMPEG_ROOT}/lib/avutil.lib")
-foreach(mode IN ITEMS video audio audio_sync)
+foreach(mode IN ITEMS video audio audio_sync missing_stamp)
     add_test(NAME encoder_failure_${mode} COMMAND encoder_failure_tests ${mode})
     set_tests_properties(encoder_failure_${mode} PROPERTIES TIMEOUT 10)
 endforeach()

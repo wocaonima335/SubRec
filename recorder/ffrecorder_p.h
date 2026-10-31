@@ -18,6 +18,7 @@
 #include "queue/ffaframequeue.h"
 #include "queue/ffapacketqueue.h"
 #include "queue/recordersyncqueue.h"
+#include "queue/media_clock.h"
 #include "queue/ffvframequeue.h"
 #include "queue/ffvpacketqueue.h"
 
@@ -111,6 +112,7 @@ namespace FFRecordURLS
 
         // A/V 同步模块
         RecorderSyncQueue *syncQueue;
+        MediaClock mediaClock; // Session-owned; workers are joined before destruction.
 
         // 音频解复用器
         Demuxer *aDemuxer[FFRecordContextType::A_DEMUXER_SIZE];

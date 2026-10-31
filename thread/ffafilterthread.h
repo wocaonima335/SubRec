@@ -13,6 +13,7 @@ extern "C" {
 #include <deque>
 #include <utility>
 
+class MediaClock;
 class FFAFrameQueue;
 class FFAFilter;
 class AVFrame;
@@ -27,7 +28,7 @@ public:
     void closeAudioSource(int audioType);
     void init(FFAFrameQueue *micFrmQueue_, FFAFrameQueue *sysFrmQueue_, FFAFilter *filter_);
 
-    void configureMix(bool enabled, int64_t startUs = 0) { mixing = enabled; mixStartUs = startUs; }
+    void configureMix(bool enabled, int64_t startUs = 0, MediaClock *clock = nullptr) { mixing = enabled; mixStartUs = startUs; mediaClock = clock; }
     bool isMixing() const { return mixing; }
     void startEncoder();
     void stopEncoder();
@@ -46,12 +47,11 @@ protected:
 private:
     AVFrame *generateMuteFrame();
     void runMixed();
-    void recordMixPause(bool paused, int64_t timestampUs); // mutex held
 
 private:
     std::atomic<bool> mixing{false};
     int64_t mixStartUs = 0;
-    std::deque<std::pair<int64_t, int64_t>> mixPauses;
+    MediaClock *mediaClock = nullptr;
     std::atomic<double> systemGain{1}, microphoneGain{1};
     FFAFrameQueue *micFrmQueue = nullptr;
     FFAFrameQueue *sysFrmQueue = nullptr;

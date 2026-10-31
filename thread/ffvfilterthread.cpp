@@ -187,7 +187,6 @@ void FFVFilterThread::run()
         }
         AVFrame *encodeFrame = received.item;
         auto end = av_gettime_relative();
-        int64_t duration = (end - start) * 10;
         qCDebug(subrec::logging::frameLog) << "[FFVFilterThread] dequeue done, frame=" << encodeFrame
                  << ", wait_us=" << (end - start);
 
@@ -196,12 +195,8 @@ void FFVFilterThread::run()
             continue;
         }
 
-        overplayPts = av_gettime_relative() * 10 + duration - pauseTime * 10;
-        qCDebug(subrec::logging::frameLog) << "[FFVFilterThread] computed pts (100ns units)=" << overplayPts
-                 << ", pauseTime(100ns)=" << (pauseTime.load() * 10);
-
-        encodeFrame->pts = overplayPts;
-        qCDebug(subrec::logging::frameLog) << "[FFVFilterThread] set frame->pts and forwarding to encoder queue";
+        // Keep captureUs in opaque_ref intact. Only VideoTickScheduler assigns
+        // encoder PTS; filter queue arrival time is not a capture timestamp.
         if (localFilter) {
             localFilter->sendEncodeFrame(encodeFrame);
             AVFrameTraits::release(encodeFrame);

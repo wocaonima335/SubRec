@@ -104,6 +104,7 @@ public:
   FFVFrameQueue *getVFilterEncoderFrmQueue();
   FFAFrameQueue *getAFilterEncoderFrmQueue();
   RecorderSyncQueue *getSyncQueue();
+  MediaClock &mediaClock();
 
   QString captureTimeText() const;
   bool isRecording() const {
