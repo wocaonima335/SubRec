@@ -23,8 +23,13 @@
 #include <QStringList>
 #include <cstdlib>
 #include <cstdio>
+#include <algorithm>
 #include <chrono>
 #include <memory>
+
+extern "C" {
+#include <libavutil/time.h>
+}
 
 QFile logFile;
 
@@ -258,6 +263,7 @@ void runAutoScenario(QObject *root)
   // Keep watching independently of the duration timers and report it as soon
   // as cleanup reaches Idle/Failed (the output trailer has then been handled).
   if (scenario == QLatin1String("record_seconds") ||
+      scenario == QLatin1String("pause_cycles") ||
       scenario == QLatin1String("mode_cycle")) {
     auto sawRunning = std::make_shared<bool>(false);
     auto watchFatal = std::make_shared<std::function<void()>>();
@@ -651,6 +657,96 @@ void runAutoScenario(QObject *root)
       });
     };
     QTimer::singleShot(0, [step] { (*step)(0); });
+  } else if (scenario == "pause_cycles") {
+#if !defined(SUBREC_STRIP_TEST_HOOKS) || !SUBREC_STRIP_TEST_HOOKS
+    // Pause-cycle acceptance scenario. RECORD_SECONDS is the public duration
+    // knob; retain RECORD_MS as a compatibility fallback for existing scripts.
+    const int secondsEnv = qEnvironmentVariableIntValue("SUBREC_AUTOTEST_RECORD_SECONDS");
+    const int recordMsFallback = qEnvironmentVariableIntValue("SUBREC_AUTOTEST_RECORD_MS");
+    const int recordMs = secondsEnv > 0
+                             ? secondsEnv * 1000
+                             : (recordMsFallback > 0 ? recordMsFallback : 5000);
+    const int cyclesEnv = qEnvironmentVariableIntValue("SUBREC_AUTOTEST_PAUSE_CYCLES");
+    const int cycles = cyclesEnv > 0 ? cyclesEnv : 1;
+    const int pauseMsEnv = qEnvironmentVariableIntValue("SUBREC_AUTOTEST_PAUSE_MS");
+    const int pauseMs = pauseMsEnv > 0 ? pauseMsEnv : 10000;
+    const int interval = std::max(1, recordMs / (cycles + 1));
+    const int stopAfterMs = std::max(recordMs, interval * cycles + pauseMs + 100);
+    if (quitDelay <= 0)
+      finalQuitDelay = stopAfterMs + 60000;
+    auto exitWith = [quitIssued](int code) {
+      if (quitIssued->exchange(true, std::memory_order_acq_rel)) return;
+      qInfo() << "[AutoTest] exit code" << code;
+      const auto grace = capture_stop::timeout() + std::chrono::milliseconds(1500);
+      capture_stop::armAutoTestExitWatchdog(code, grace);
+      QCoreApplication::exit(code);
+    };
+    auto state = [] { return FFRecorder::getInstance().captureScheduler().state(); };
+    auto pollUntil = [](std::function<bool()> done, int timeoutMs,
+                        std::function<void()> onDone, std::function<void()> onTimeout) {
+      auto timer = std::make_shared<QElapsedTimer>();
+      timer->start();
+      auto poller = std::make_shared<std::function<void()>>();
+      *poller = [done, timeoutMs, onDone, onTimeout, timer, poller]() {
+        if (done()) { onDone(); return; }
+        if (timer->elapsed() >= timeoutMs) { onTimeout(); return; }
+        QTimer::singleShot(100, [poller] { (*poller)(); });
+      };
+      QTimer::singleShot(100, [poller] { (*poller)(); });
+    };
+    schedule(200, [] { startRecording(); });
+    pollUntil(
+        [state] { return state() == CaptureSchedulerState::Running
+                       || state() == CaptureSchedulerState::Failed; },
+        20000,
+        [state, schedule, pollUntil, exitWith, cycles, pauseMs, interval, stopAfterMs] {
+          if (state() != CaptureSchedulerState::Running) {
+            qWarning() << "[AutoTest] result=FAIL stage=start";
+            exitWith(AutoTestNotRunning);
+            return;
+          }
+          for (int i = 0; i < cycles; ++i) {
+            const int pauseAt = interval * (i + 1);
+            schedule(pauseAt, [i, pauseMs] {
+              auto &r = FFRecorder::getInstance();
+              if (r.captureScheduler().state() != CaptureSchedulerState::Running) return;
+              qInfo() << "[AutoTest] pause" << (i + 1)
+                      << "at mediaUs/wall" << r.mediaClock().nowMediaUs()
+                      << av_gettime_relative();
+              pauseRecording();
+              QTimer::singleShot(pauseMs, [i] {
+                auto &r = FFRecorder::getInstance();
+                if (r.captureScheduler().state() != CaptureSchedulerState::Paused) return;
+                qInfo() << "[AutoTest] resume" << (i + 1)
+                        << "at mediaUs/wall" << r.mediaClock().nowMediaUs()
+                        << av_gettime_relative();
+                readyRecording();
+              });
+            });
+          }
+          schedule(stopAfterMs, [state, pollUntil, exitWith] {
+            stopRecording();
+            pollUntil(
+                [state] { return state() == CaptureSchedulerState::Idle; },
+                20000,
+                [exitWith] {
+                  auto &recorder = FFRecorder::getInstance();
+                  const QFileInfo file(recorder.outputPath() + "/" + recorder.outputFileName());
+                  const auto result = autoTestRecordingResult(file.exists(), file.size(), recorder.captureError().isEmpty());
+                  logAutoTestRecordingResult(result);
+                  exitWith(result);
+                },
+                [exitWith] { exitWith(AutoTestStopTimeout); });
+          });
+        },
+        [exitWith] { exitWith(AutoTestNotRunning); });
+#else
+    qDebug() << "[AutoTest] pause_cycles is disabled in SUBREC_STRIP_TEST_HOOKS builds";
+    QTimer::singleShot(0, [quitIssued] {
+      if (!quitIssued->exchange(true, std::memory_order_acq_rel))
+        QCoreApplication::exit(AutoTestBadEnvironment);
+    });
+#endif
   } else if (scenario == "record_seconds") {
     // Start, record SUBREC_AUTOTEST_RECORD_MS (default 5000) once Running, stop, wait for Idle
     // and check the output file. The process exit code is the result (enum AutoTestExit).
