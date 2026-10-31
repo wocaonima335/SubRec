@@ -88,6 +88,7 @@ void FFVEncoderThread::run()
     ticks.configure(kRecordFrameRate);
     missingStamps.store(0);
     AVFrame *lastFrame = nullptr;
+    uint64_t stampDiagnostics = 0;
     struct FrameCleanup { AVFrame *&frame; ~FrameCleanup() { av_frame_free(&frame); } } cleanup{lastFrame};
     ticks.setHoldFrameCallback([&](int64_t tick, int64_t) {
         if (!lastFrame || streamIndex < 0) return false;
@@ -133,6 +134,20 @@ void FFVEncoderThread::run()
             AVFrameTraits::release(frame);
             failTimestamp("Video capture timestamp missing; P1-Z capture stamping is required.");
             break;
+        }
+        // Read-only timing telemetry: the stamp is the source-side value, while
+        // this arrival time is sampled at the encoder consumer. The original
+        // ddagrab PTS is retained for correlation, but its private first_pts
+        // origin is not convertible to the absolute session clock here.
+        const int64_t encoderArrivalUs = av_gettime_relative();
+        const auto diagnosticIndex = ++stampDiagnostics;
+        if (diagnosticIndex == 1 || diagnosticIndex % 300 == 0) {
+            qInfo() << "[VideoClock] stamp_diagnostic index=" << diagnosticIndex
+                    << "captureUs=" << captureUs
+                    << "encoderArrivalUs=" << encoderArrivalUs
+                    << "postStampDelayUs=" << (encoderArrivalUs - captureUs)
+                    << "sourcePts=" << frame->pts
+                    << "sourceTimeBase=" << frame->time_base.num << "/" << frame->time_base.den;
         }
         if (paused.load(std::memory_order_acquire) ||
             (minimumCaptureUs.load() != AV_NOPTS_VALUE && captureUs < minimumCaptureUs.load())) {

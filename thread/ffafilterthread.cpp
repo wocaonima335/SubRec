@@ -320,6 +320,7 @@ void FFAFilterThread::runMixed()
         AudioTimelineMixer mixer(*mediaClock);
         int64_t nextDiagnosticUs = av_gettime_relative() + 60000000;
         bool eof[2]{!audioFlag.load(), !microphoneFlag.load()};
+        uint64_t sourceDiagnostics[2]{};
         for (unsigned source = 0; source < 2; ++source) if (eof[source]) mixer.finish(source);
         FFAFrameQueue *queues[] = {sysFrmQueue, micFrmQueue};
         qInfo() << "[AudioMix] enabled: clock-aligned 48k stereo FLTP, amix normalize=0, peak limiter="
@@ -339,6 +340,18 @@ void FFAFilterThread::runMixed()
                         return; // abort: the session closes all downstream queues
                     }
                     AudioTimelineMixer::Frame frame(received.item);
+                    const int64_t receiptUs = av_gettime_relative();
+                    const int64_t sourceUs = av_rescale_q(frame->pts, frame->time_base,
+                                                          AVRational{1, 1000000});
+                    const auto diagnosticIndex = ++sourceDiagnostics[source];
+                    if (diagnosticIndex == 1 || diagnosticIndex % 300 == 0) {
+                        qInfo() << "[AudioClock] mixer_diagnostic source=" << source
+                                << "index=" << diagnosticIndex
+                                << "sourceUs=" << sourceUs
+                                << "receiptUs=" << receiptUs
+                                << "receiptDelayUs=" << (receiptUs - sourceUs)
+                                << "samples=" << frame->nb_samples;
+                    }
                     mixer.push(source, *frame);
                 }
             }

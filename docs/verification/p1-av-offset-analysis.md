@@ -159,6 +159,13 @@ are outside this Linux sandbox verification.
 
 ## Next PC3 measurements
 
+The new PC3 five-minute runs are now available. System-only has median 71.7 ms,
+p90 105.0 ms, and maximum 140.0 ms; both-mode has median 77.5 ms and p90 96.7
+ms (one -571.7 ms pairing outlier). These are positive audio-late offsets under
+the same beacon convention and show that the residual is present without the
+microphone. The detailed physical-path accounting and black-frame review are in
+`p1-av-offset-breakdown.md`. No timing correction was applied.
+
 After P1-Z integration, repeat identical system-only and both-mode beacons with
 raw pairs, matching emission script/interval, MP4s and VideoClock summaries. Keep
 microphone gain/acoustics fixed; a both-mode run with muted microphone gain helps
