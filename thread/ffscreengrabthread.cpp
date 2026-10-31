@@ -314,6 +314,16 @@ void FFScreenGrabThread::State::grabLoop()
             // P1-Z: stamp on the session clock (av_gettime_relative domain, see
             // queue/media_clock.h) right after the grab, before queueing/filtering.
             // ddagrab's own pts (origin = its first_pts) is left untouched, reference only.
+            // Known error (P1 decision: keep receive time, see DdagrabScreenSource::read()):
+            // - DXGI LastPresentTime is only used inside FFmpeg ddagrab to detect a new
+            //   frame; it is not exported, so the real present time is unavailable here.
+            // - ddagrab's pts is av_gettime_relative() taken right after AcquireNextFrame;
+            //   this stamp is taken after buffersink, so it lags by the texture copy, mouse
+            //   drawing and filter-graph time.
+            // - Duplicated frames (dup_frames=1) carry ddagrab's tick time as pts, and here
+            //   get the same receive-time stamp semantics as new frames.
+            // - Real present time (ddagrab exporting it as side data, or our own DXGI
+            //   duplication capture) is a P3 candidate.
             const int stampRet = setFrameCaptureUs(frame, av_gettime_relative());
             if (stampRet < 0) {
                 // Never substitute a later time downstream; the consumer reports the gap.
