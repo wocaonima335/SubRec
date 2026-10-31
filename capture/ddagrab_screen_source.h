@@ -25,7 +25,6 @@ enum class DdagrabFrameMode
 struct DdagrabOptions
 {
     int outputIndex = 0;   // DXGI output of the default adapter (ddagrab "output_idx")
-    int frameRate = 30;    // must match FFVFilter::getFrameRate()
     bool drawMouse = true;
     DdagrabFrameMode mode = DdagrabFrameMode::Auto;
 
@@ -33,6 +32,9 @@ struct DdagrabOptions
     // (auto|gpu|cpu), output from SUBREC_DDAGRAB_OUTPUT if set (overrides the request).
     static DdagrabOptions fromRequest(const InputRequest &request);
 };
+
+// ddagrab "framerate" option value for kRecordFrameRate (queue/media_clock.h), e.g. "30/1".
+QString ddagrabFrameRateArg();
 
 // Exposed for graph-spec tests without a DXGI device.
 QString ddagrabGpuGraphSpec(const DdagrabOptions &options);

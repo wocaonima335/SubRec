@@ -5,10 +5,12 @@
 #include <cstdlib>
 
 #include "queue/ffvframequeue.h"
+#include "queue/media_clock.h"
 
 #include <QDebug>
 #include <QMetaObject>
 #include <QObject>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <thread>
@@ -16,6 +18,7 @@
 extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
+#include <libavutil/time.h>
 }
 
 struct FFScreenGrabThread::State {
@@ -304,6 +307,18 @@ void FFScreenGrabThread::State::grabLoop()
             continue;
         }
         if (ret >= 0) {
+            // P1-Z: stamp on the session clock (av_gettime_relative domain, see
+            // queue/media_clock.h) right after the grab, before queueing/filtering.
+            // ddagrab's own pts (origin = its first_pts) is left untouched, reference only.
+            const int stampRet = setFrameCaptureUs(frame, av_gettime_relative());
+            if (stampRet < 0) {
+                // Never substitute a later time downstream; the consumer reports the gap.
+                static std::atomic<std::uint64_t> stampFailures{0};
+                const auto n = stampFailures.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (n == 1 || n % 300 == 0)
+                    qWarning() << "[FFScreenGrabThread] captureUs stamp failed ret=" << stampRet
+                               << "count=" << n;
+            }
             queue->enqueueFromSrc(frame); // moves the reference; blocks while the queue is full
             ++frames;
             if (frames == 1 || frames % 300 == 0) {

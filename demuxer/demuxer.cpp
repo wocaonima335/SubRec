@@ -1,4 +1,5 @@
 #include "logging/frame_log.h"
+#include "queue/media_clock.h"
 #include "demuxer.h"
 extern "C" {
 #include <libavutil/time.h>
@@ -109,6 +110,25 @@ void Demuxer::init(const string &url_,
     }
 }
 
+namespace {
+// P1-Z: DirectShow video arrives as packets. Stamp packet->opaque_ref with the same
+// tagged CaptureStamp that setFrameCaptureUs() writes (queue/media_clock.h). A decoder
+// opened with AV_CODEC_FLAG_COPY_OPAQUE moves packet->opaque_ref to the decoded
+// frame->opaque_ref, where frameCaptureUs() reads it.
+int setPacketCaptureUs(AVPacket *packet, int64_t captureUs)
+{
+    using namespace media_clock_detail;
+    if (!packet || captureUs == AV_NOPTS_VALUE) return AVERROR(EINVAL);
+    if (packet->opaque_ref) return AVERROR(EEXIST); // never overwrite foreign metadata
+    AVBufferRef *buffer = av_buffer_alloc(sizeof(CaptureStamp));
+    if (!buffer) return AVERROR(ENOMEM);
+    const CaptureStamp stamp{captureStampTag, 1, 0, captureUs};
+    std::memcpy(buffer->data, &stamp, sizeof(stamp));
+    packet->opaque_ref = buffer;
+    return 0;
+}
+} // namespace
+
 int Demuxer::demux()
 {
     std::lock_guard<std::mutex> lock(mutex);
@@ -205,6 +225,10 @@ int Demuxer::demux()
             av_packet_free(&packet);
         }
     } else if (vStream && packet->stream_index == vStream->index) {
+        // Session-clock capture time, taken right after av_read_frame (device pts untouched).
+        const int stampRet = setPacketCaptureUs(packet, av_gettime_relative());
+        if (stampRet < 0)
+            qWarning() << "[Demux] video captureUs stamp failed ret=" << stampRet;
         qCDebug(subrec::logging::frameLog) << "[DemuxHash] type=" << type
                  << " stream=" << packet->stream_index
                  << " pts=" << packet->pts

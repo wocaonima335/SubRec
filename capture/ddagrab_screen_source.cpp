@@ -1,5 +1,6 @@
 #include "ddagrab_screen_source.h"
 #include "gpu_preview.h"
+#include "queue/media_clock.h"
 
 #include <QDebug>
 #include <QStringList>
@@ -55,12 +56,18 @@ const char *modeName(DdagrabFrameMode mode)
 
 } // namespace
 
+QString ddagrabFrameRateArg()
+{
+    // Single frame-rate source: kRecordFrameRate (rational, e.g. 30000/1001 stays exact).
+    return QStringLiteral("%1/%2").arg(kRecordFrameRate.num).arg(kRecordFrameRate.den);
+}
+
 QString ddagrabGpuGraphSpec(const DdagrabOptions &options)
 {
     // The preview branch crosses a single-slot handoff before hwdownload/scale/fps.
     // Running those filters in this native graph would serialize GPU transfers with capture.
     return QStringLiteral("ddagrab=output_idx=%1:framerate=%2:draw_mouse=%3,split=2[out][preview_out]")
-        .arg(options.outputIndex).arg(options.frameRate).arg(options.drawMouse ? 1 : 0);
+        .arg(options.outputIndex).arg(ddagrabFrameRateArg()).arg(options.drawMouse ? 1 : 0);
 }
 
 DdagrabOptions DdagrabOptions::fromRequest(const InputRequest &request)
@@ -208,7 +215,7 @@ int DdagrabScreenSource::buildGraph(bool gpuFrames, QString *error)
     } else {
         spec = QStringLiteral("ddagrab=output_idx=%1:framerate=%2:draw_mouse=%3")
                    .arg(m_options.outputIndex)
-                   .arg(m_options.frameRate)
+                   .arg(ddagrabFrameRateArg())
                    .arg(m_options.drawMouse ? 1 : 0);
         // Same colour conversion as the dshow path (FFVResampler: BT.601, limited range).
         spec += QStringLiteral(",hwdownload,format=bgra,"
@@ -301,8 +308,8 @@ bool DdagrabScreenSource::probeGpuEncoder(AVBufferRef *framesContext)
         }
         probe->width = m_width;
         probe->height = m_height;
-        probe->time_base = AVRational{1, m_options.frameRate};
-        probe->framerate = AVRational{m_options.frameRate, 1};
+        probe->time_base = av_inv_q(kRecordFrameRate);
+        probe->framerate = kRecordFrameRate;
         probe->pix_fmt = AV_PIX_FMT_D3D11;
         probe->sw_pix_fmt = frames->sw_format;
         probe->bit_rate = 4 * 1024 * 1024;
@@ -363,7 +370,7 @@ QString DdagrabScreenSource::describe() const
         .arg(m_options.outputIndex)
         .arg(m_width)
         .arg(m_height)
-        .arg(m_options.frameRate)
+        .arg(ddagrabFrameRateArg())
         .arg(m_gpuFrames ? QStringLiteral("d3d11") : QStringLiteral("yuv420p"))
         .arg(QString::fromLatin1(modeName(m_options.mode)))
         .arg(m_probedEncoder.isEmpty() ? QString() : QStringLiteral(", probe ") + m_probedEncoder);
