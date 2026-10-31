@@ -5,6 +5,7 @@
 #include "filter/ffafilter.h"
 #include "filter/audio_timeline_mixer.h"
 #include "queue/ffaframequeue.h"
+#include "queue/media_clock.h"
 #include "thread/ffafilterthread.h"
 
 #include <cmath>
@@ -257,6 +258,8 @@ void mixedWorkerDrainsBothSources(bool paused = false, bool injectFuture = false
     FFAFilter filter;
     filter.initalize(&output, nullptr, nullptr);
     const int64_t epoch = av_gettime_relative();
+    MediaClock sessionClock;
+    sessionClock.start(epoch);
     auto *sys = makeFltpFrame(kSystemLevel, epoch);
     auto *mic = makeFltpFrame(kMicrophoneLevel, epoch);
     sys->time_base = mic->time_base = AVRational{1,1000000};
@@ -273,9 +276,11 @@ void mixedWorkerDrainsBothSources(bool paused = false, bool injectFuture = false
     system.sendFinish(); microphone.sendFinish();
     FFAFilterThread worker;
     worker.init(&microphone, &system, &filter);
-    worker.configureMix(true, epoch);
+    worker.configureMix(true, epoch, &sessionClock);
     worker.startEncoder();
     if (paused) {
+        sessionClock.pause(epoch + 5000);
+        sessionClock.resume(epoch + 15000);
         worker.onPauseChanged(true, epoch + 5000);
         worker.onPauseChanged(false, epoch + 15000);
     }

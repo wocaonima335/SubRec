@@ -170,6 +170,11 @@ void FFVEncoderThread::run()
             failEncoding(encoded);
             break;
         }
+        if (frame->pict_type == AV_PICTURE_TYPE_I &&
+            minimumCaptureUs.load(std::memory_order_acquire) != AV_NOPTS_VALUE) {
+            qInfo() << "[VEnc] resume keyframe pts=" << vpts;
+            minimumCaptureUs.store(AV_NOPTS_VALUE, std::memory_order_release);
+        }
         if (syncQueue) syncQueue->observeVideoTick(vpts, kRecordFrameRate);
         av_frame_free(&lastFrame);
         lastFrame = av_frame_clone(frame);
