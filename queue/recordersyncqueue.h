@@ -30,6 +30,7 @@ public:
     ~RecorderSyncQueue();
 
     void reset(bool audioEnabled = true);
+    void setAudioClockDelayUs(int64_t delayUs);
     void onPauseChanged(bool paused, int64_t tsUs);
 
     void configureAudio(AVSampleFormat sampleFmt,
@@ -75,6 +76,7 @@ private:
     int m_audioBufferedSamples = 0;
     int64_t m_nextAudioPts = 0;
     int64_t m_audioClockUs = AV_NOPTS_VALUE;
+    int64_t m_audioClockDelayUs = 0;
     bool m_audioFinished = false;
     std::vector<std::vector<uint8_t>> m_audioBuffers;
     std::deque<AVFrame *> m_readyAudioFrames;

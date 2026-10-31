@@ -45,6 +45,7 @@ public:
     Frame render(int64_t target, double systemGain = 1, double micGain = 1, bool retainedOutput = true);
     int64_t position() const { return cursor_; }
     int64_t end() const { return end_; }
+    size_t pendingFrames(unsigned source) const { return inputs_.at(source).frames.size(); }
     const Stats &stats() const { return stats_; }
 private:
     struct Input {

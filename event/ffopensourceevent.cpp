@@ -1,4 +1,6 @@
 #include "ffopensourceevent.h"
+#include "capture/audio_timing.h"
+#include "queue/recordersyncqueue.h"
 
 #include "thread/ffscreengrabthread.h"
 #include "opengl/ffglitem.h"
@@ -100,7 +102,11 @@ CaptureStartResult FFOpenSourceEvent::openAndStartResult(const std::function<boo
   if (!initVideo(shouldStart)) return startupResult;
   if (!checkContinue(videoInput, shouldStart)) return startupResult;
   const int64_t t0 = av_gettime_relative();
-  aFilterThread->configureMix(audioEnabled && microphoneMixInput.has_value(), t0);
+  const bool mixedAudio = audioEnabled && microphoneMixInput.has_value();
+  const int64_t clockDelayUs = mixedAudio ? capture::audio::mixHoldbackUs : 0;
+  recoderContext->getSyncQueue()->setAudioClockDelayUs(clockDelayUs);
+  qInfo() << "[RecorderSyncQueue] audioClockDelayUs=" << clockDelayUs;
+  aFilterThread->configureMix(mixedAudio, t0);
   aEncoderThread->setStartTimeUs(t0);
   vEncoderThread->setStartTimeUs(t0);
   startAudio();

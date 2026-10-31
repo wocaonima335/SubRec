@@ -1,3 +1,4 @@
+#include "capture/audio_timing.h"
 #include "ffafilterthread.h"
 
 #include "filter/ffafilter.h"
@@ -324,6 +325,7 @@ void FFAFilterThread::runMixed()
 {
     try {
         AudioTimelineMixer mixer(mixStartUs);
+        int64_t nextDiagnosticUs = av_gettime_relative() + 60000000;
         bool eof[2]{};
         FFAFrameQueue *queues[] = {sysFrmQueue, micFrmQueue};
         qInfo() << "[AudioMix] enabled: WASAPI + microphone, 48k stereo FLTP, amix normalize=0, peak limiter="
@@ -348,7 +350,7 @@ void FFAFilterThread::runMixed()
             }
             const bool done = eof[0] && eof[1];
             const int64_t target = done ? mixer.end() :
-                std::max<int64_t>(0, (av_gettime_relative() - mixStartUs - 200000) * 48000 / 1000000);
+                std::max<int64_t>(0, (av_gettime_relative() - mixStartUs - capture::audio::mixHoldbackUs) * 48000 / 1000000);
             while (!m_stop && mixer.position() < target) {
                 int64_t until = target;
                 bool discard = false;
@@ -373,6 +375,15 @@ void FFAFilterThread::runMixed()
                     filter->forwardAudioFrame(frame.release(), mixStartUs, pauseTime);
                     ++forwardedFrameCount;
                 } else ++droppedFrameCount;
+            }
+            const int64_t nowUs = av_gettime_relative();
+            if (nowUs >= nextDiagnosticUs) {
+                nextDiagnosticUs = nowUs + 60000000;
+                qInfo() << "[RecordingBuffers] mixer_system_frames=" << mixer.pendingFrames(0)
+                        << "mixer_mic_frames=" << mixer.pendingFrames(1)
+                        << "mixer_ahead_samples=" << mixer.end() - mixer.position()
+                        << "system_queue=" << queues[0]->sharedState()->length()
+                        << "mic_queue=" << queues[1]->sharedState()->length();
             }
             if (done) {
                 const auto &s = mixer.stats();

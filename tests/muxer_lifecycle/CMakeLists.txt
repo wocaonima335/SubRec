@@ -97,6 +97,21 @@ target_link_libraries(sync_tick_tests PRIVATE Qt6::Core "${FFMPEG_ROOT}/lib/avut
 add_test(NAME recorder_sync_ticks COMMAND sync_tick_tests)
 set_tests_properties(recorder_sync_ticks PROPERTIES TIMEOUT 30 LABELS "sync")
 
+add_executable(mixed_audio_clock_tests mixed_audio_clock_tests.cpp ../../queue/recordersyncqueue.cpp)
+target_compile_features(mixed_audio_clock_tests PRIVATE cxx_std_17)
+target_include_directories(mixed_audio_clock_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(mixed_audio_clock_tests PRIVATE Qt6::Core "${FFMPEG_ROOT}/lib/avutil.lib")
+add_test(NAME mixed_audio_clock_delay COMMAND mixed_audio_clock_tests)
+set_tests_properties(mixed_audio_clock_delay PROPERTIES TIMEOUT 30 LABELS "sync")
+
+add_executable(aac_packet_ownership_tests aac_packet_ownership_tests.cpp ../../queue/ffapacketqueue.cpp)
+target_compile_features(aac_packet_ownership_tests PRIVATE cxx_std_17)
+target_include_directories(aac_packet_ownership_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(aac_packet_ownership_tests PRIVATE Qt6::Core
+    "${FFMPEG_ROOT}/lib/avcodec.lib" "${FFMPEG_ROOT}/lib/avutil.lib")
+add_test(NAME aac_packet_ownership COMMAND aac_packet_ownership_tests)
+set_tests_properties(aac_packet_ownership PROPERTIES TIMEOUT 30 LABELS "audio")
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()
 # NUT/null/PCM encoders and MOV demuxing are absent in release FFmpeg.

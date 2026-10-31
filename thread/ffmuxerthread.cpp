@@ -373,6 +373,8 @@ void FFMuxerThread::run()
     qDebug() << "[MuxThread] preserve session timeline: firstAudio(us)=" << firstAudioUs
              << " firstVideo(us)=" << firstVideoUs;
 
+    uint64_t audioPacketsProcessed = 0, videoPacketsProcessed = 0;
+    auto nextDiagnostic = std::chrono::steady_clock::now() + std::chrono::minutes(1);
     while (!m_stop)
     {
         checkDrainDeadline();
@@ -419,6 +421,7 @@ void FFMuxerThread::run()
         if (chooseAudio)
         {
             ret = muxer->mux(aPacket);
+            if (ret >= 0) ++audioPacketsProcessed;
             processedSec = aSec;
             FFPacketTraits::release(audioPkt);
             if (ret < 0) { ++droppedPackets; fail(ret); break; }
@@ -437,6 +440,7 @@ void FFMuxerThread::run()
         else
         {
             ret = muxer->mux(vPacket);
+            if (ret >= 0) ++videoPacketsProcessed;
             processedSec = vSec;
             FFPacketTraits::release(videoPkt);
             if (ret < 0) { ++droppedPackets; fail(ret); break; }
@@ -453,6 +457,15 @@ void FFMuxerThread::run()
             }
         }
 
+        const auto diagnosticNow = std::chrono::steady_clock::now();
+        if (diagnosticNow >= nextDiagnostic) {
+            nextDiagnostic = diagnosticNow + std::chrono::minutes(1);
+            qInfo() << "[RecordingBuffers] audio_packets=" << audioPacketsProcessed
+                    << "video_packets=" << videoPacketsProcessed
+                    << "audio_packet_queue=" << (aPktQueue ? aPktQueue->length() : 0)
+                    << "video_packet_queue=" << (vPktQueue ? vPktQueue->length() : 0)
+                    << "skipped_packets=" << muxer->skippedPackets();
+        }
         if (processedSec - lastProcessTime >= 0.01)
         {
             sendCaptureProcessEvent(processedSec);

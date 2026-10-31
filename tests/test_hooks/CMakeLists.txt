@@ -57,5 +57,11 @@ target_compile_features(capture_error_state_tests PRIVATE cxx_std_17)
 target_include_directories(capture_error_state_tests PRIVATE ../..)
 add_test(NAME capture_error_first_error_wins COMMAND capture_error_state_tests)
 
+add_executable(autotest_report_tests autotest_report_tests.cpp)
+target_compile_features(autotest_report_tests PRIVATE cxx_std_17)
+target_include_directories(autotest_report_tests PRIVATE ../..)
+target_link_libraries(autotest_report_tests PRIVATE Qt6::Core)
+add_test(NAME autotest_result_metadata COMMAND autotest_report_tests)
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()

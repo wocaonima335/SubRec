@@ -1,6 +1,7 @@
 ﻿#include "thread/failure_cleanup_deadline.h"
 #include "capture/test_hook_gate.h"
 #include "capture/autotest_result.h"
+#include "capture/autotest_report.h"
 #include "logging/frame_log.h"
 #include "opengl/ffglitem.h"
 #include "recorder/capture_scheduler.h"
@@ -87,6 +88,17 @@ void openSourceByControl(bool useScreen)
 void openAudioByControl(bool useSystemAudio)
 {
   FFRecorder::getInstance().captureScheduler().changeAudioSource(useSystemAudio);
+}
+
+// Shared by duration completion and the finalized fatal-stop watcher.
+static void logAutoTestRecordingResult(AutoTestExit result)
+{
+  auto &recorder = FFRecorder::getInstance();
+  const QFileInfo file(recorder.outputPath() + "/" + recorder.outputFileName());
+  qInfo().noquote() << autoTestRecordingReport(
+      result, file.absoluteFilePath(), file.exists() ? file.size() : -1,
+      recorder.selectedVideoEncoder(), recorder.selectedVideoEncoderIsHardware(),
+      recorder.videoResolution(), recorder.selectedVideoEncoderDetail(), recorder.captureError());
 }
 
 // SUBREC_AUTOTEST_OUTPUT=<dir>/<name>.mp4: output folder and file name for this run.
@@ -259,8 +271,7 @@ void runAutoScenario(QObject *root)
       if (*sawRunning && autoTestCaptureFailureReady(finalized,
                                                      recorder.captureError().isEmpty())) {
         if (!quitIssued->exchange(true, std::memory_order_acq_rel)) {
-          qInfo().noquote() << QStringLiteral("[AutoTest] result=FAIL captureError=%1")
-                                    .arg(recorder.captureError());
+          logAutoTestRecordingResult(AutoTestCaptureError);
           qInfo() << "[AutoTest] exit code" << AutoTestCaptureError;
           const auto grace = capture_stop::timeout() + std::chrono::milliseconds(1500);
           capture_stop::armAutoTestExitWatchdog(AutoTestCaptureError, grace);
@@ -695,19 +706,7 @@ void runAutoScenario(QObject *root)
                   auto &recorder = FFRecorder::getInstance();
                   const QFileInfo file(recorder.outputPath() + "/" + recorder.outputFileName());
                   const auto result = autoTestRecordingResult(file.exists(), file.size(), recorder.captureError().isEmpty());
-                      const bool ok = result == AutoTestOk;
-                  qInfo().noquote()
-                      << QStringLiteral("[AutoTest] result=%1 file=%2 bytes=%3 encoder=%4 "
-                                        "hardware=%5 resolution=%6 encoderDetail=%7 captureError=%8")
-                             .arg(ok ? QStringLiteral("PASS") : QStringLiteral("FAIL"),
-                                  file.absoluteFilePath(),
-                                  QString::number(file.exists() ? file.size() : -1),
-                                  recorder.selectedVideoEncoder(),
-                                  recorder.selectedVideoEncoderIsHardware() ? QStringLiteral("yes")
-                                                                            : QStringLiteral("no"),
-                                  recorder.videoResolution(),
-                                  recorder.selectedVideoEncoderDetail(),
-                                  recorder.captureError());
+                  logAutoTestRecordingResult(result);
                   exitWith(result);
                 },
                 [exitWith] {

@@ -75,6 +75,7 @@ int FFAEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
 
         while (true) {
             AVPacket *pkt = av_packet_alloc();
+            if (!pkt) return AVERROR(ENOMEM);
             int ret = avcodec_receive_packet(codecCtx, pkt);
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
                 av_packet_free(&pkt);
@@ -89,6 +90,8 @@ int FFAEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
             pkt->stream_index = streamIndex;
             if (pkt->duration <= 0) pkt->duration = std::max(1, codecCtx->frame_size);
             pktQueue->enqueue(pkt);
+            // enqueue moves the references, but the caller still owns the shell.
+            av_packet_free(&pkt);
         }
         return 0;
     }
@@ -157,6 +160,7 @@ int FFAEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
 
         while (1) {
             AVPacket *pkt = av_packet_alloc();
+            if (!pkt) return AVERROR(ENOMEM);
             int ret = avcodec_receive_packet(codecCtx, pkt);
 
             if (ret == AVERROR(EAGAIN)) {
@@ -172,6 +176,8 @@ int FFAEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
                 pkt->duration = std::max(1, codecCtx->frame_size);
             }
             pktQueue->enqueue(pkt);
+            // enqueue moves the references, but the caller still owns the shell.
+            av_packet_free(&pkt);
         }
     }
 

@@ -28,6 +28,7 @@ void RecorderSyncQueue::reset(bool audioEnabled)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_audioEnabled = audioEnabled;
+    m_audioClockDelayUs = 0;
     m_videoFrames = 0;
     clearReadyFramesLocked();
     for (auto &buffer : m_audioBuffers) {
@@ -55,6 +56,12 @@ void RecorderSyncQueue::reset(bool audioEnabled)
     m_droppedVideoFrames = 0;
     m_videoCatchupCount = 0;
     m_paused = false;
+}
+
+void RecorderSyncQueue::setAudioClockDelayUs(int64_t delayUs)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_audioClockDelayUs = std::max<int64_t>(0, delayUs);
 }
 
 void RecorderSyncQueue::onPauseChanged(bool paused, int64_t tsUs)
@@ -209,10 +216,15 @@ RecorderSyncVideoDecision RecorderSyncQueue::reserveVideoFrame()
         return decision;
     }
 
+    // The mixed output cursor trails capture by a known holdback. Pace current
+    // video against the capture position, without shifting AAC samples/priming.
+    // Before audio arrives retain the existing startup bound; no invented clock.
+    const int64_t pacingClockUs = decision.audioClockReady
+        ? decision.audioClockUs + m_audioClockDelayUs : AV_NOPTS_VALUE;
     int64_t candidateTick = m_nextVideoTick;
     if (decision.audioClockReady) {
         const int64_t minPtsUs =
-            std::max<int64_t>(0, decision.audioClockUs - m_targetVideoLagUs);
+            std::max<int64_t>(0, pacingClockUs - m_targetVideoLagUs);
         const int64_t targetTick = av_rescale_rnd(
             minPtsUs, m_videoFrameRate.num,
             int64_t(AV_TIME_BASE) * m_videoFrameRate.den, AV_ROUND_UP);
@@ -224,6 +236,7 @@ RecorderSyncVideoDecision RecorderSyncQueue::reserveVideoFrame()
                          << m_videoCatchupCount
                          << "candidateUs=" << av_rescale_q(candidateTick, av_inv_q(m_videoFrameRate), kUsecTimeBase)
                          << "audioClockUs=" << decision.audioClockUs
+                         << "audioClockDelayUs=" << m_audioClockDelayUs
                          << "targetLagUs=" << m_targetVideoLagUs;
             }
         }
@@ -237,7 +250,7 @@ RecorderSyncVideoDecision RecorderSyncQueue::reserveVideoFrame()
             ++m_droppedVideoFrames;
             return decision;
         }
-    } else if (decision.ptsUs > decision.audioClockUs + m_maxVideoLeadUs) {
+    } else if (decision.ptsUs > pacingClockUs + m_maxVideoLeadUs) {
         decision.drop = true;
         ++m_droppedVideoFrames;
         if (m_droppedVideoFrames == 1 || m_droppedVideoFrames % 30 == 0) {
@@ -245,7 +258,7 @@ RecorderSyncVideoDecision RecorderSyncQueue::reserveVideoFrame()
                      << m_droppedVideoFrames
                      << "candidateUs=" << decision.ptsUs
                      << "audioClockUs=" << decision.audioClockUs
-                     << "leadUs=" << (decision.ptsUs - decision.audioClockUs);
+                     << "leadUs=" << (decision.ptsUs - pacingClockUs);
         }
         return decision;
     }
