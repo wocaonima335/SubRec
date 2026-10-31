@@ -328,6 +328,17 @@ bool DdagrabScreenSource::probeGpuEncoder(AVBufferRef *framesContext)
     return false;
 }
 
+// Timestamps and frame rate (FFmpeg n8.0.3 vsrc_ddagrab.c):
+// - The graph's frame rate is kRecordFrameRate (ddagrabFrameRateArg()); ddagrab paces
+//   itself to it and, with dup_frames=1, re-emits the last frame on a static desktop.
+// - Output pts is in 1/1000000 time base: av_gettime_relative() - first_pts, sampled
+//   right after AcquireNextFrame for new frames and at the scheduled tick for duplicated
+//   frames. first_pts is private to the filter, so pts is not in the session clock domain.
+// - DXGI_OUTDUPL_FRAME_INFO.LastPresentTime (QPC) is only checked inside ddagrab to tell
+//   whether a new frame exists; it is never exported.
+// FFScreenGrabThread therefore stamps captureUs with its own receive time after this
+// read(); that lags capture by the copy, mouse drawing and graph time. Exporting the real
+// present time (ddagrab side data or our own DXGI capture) is a P3 candidate.
 int DdagrabScreenSource::read(AVFrame *frame)
 {
     if (!m_sink) return AVERROR(EINVAL);

@@ -36,6 +36,9 @@ struct FFScreenGrabThread::State {
     int m_width = 0, m_height = 0;
     QString m_description;
     std::function<bool(const AVFrame *)> m_previewConsumer;
+    // Per-session captureUs stamp failures; State is recreated per session and the
+    // counter is also cleared when grabbing starts. Atomic for future diagnostics readers.
+    std::atomic<std::uint64_t> m_stampFailures{0};
     void run();
     void grabLoop();
     bool reopenAfterLoss();
@@ -299,6 +302,7 @@ void FFScreenGrabThread::State::grabLoop()
 #endif
 
     std::uint64_t frames = 0;
+    m_stampFailures.store(0, std::memory_order_relaxed); // recording start: new session count
     while (!m_stop.load(std::memory_order_acquire)) {
         // ddagrab paces itself to the frame rate (it sleeps until the next frame time and
         // duplicates the last frame on a static desktop), so this loop does not spin.
@@ -310,11 +314,20 @@ void FFScreenGrabThread::State::grabLoop()
             // P1-Z: stamp on the session clock (av_gettime_relative domain, see
             // queue/media_clock.h) right after the grab, before queueing/filtering.
             // ddagrab's own pts (origin = its first_pts) is left untouched, reference only.
+            // Known error (P1 decision: keep receive time, see DdagrabScreenSource::read()):
+            // - DXGI LastPresentTime is only used inside FFmpeg ddagrab to detect a new
+            //   frame; it is not exported, so the real present time is unavailable here.
+            // - ddagrab's pts is av_gettime_relative() taken right after AcquireNextFrame;
+            //   this stamp is taken after buffersink, so it lags by the texture copy, mouse
+            //   drawing and filter-graph time.
+            // - Duplicated frames (dup_frames=1) carry ddagrab's tick time as pts, and here
+            //   get the same receive-time stamp semantics as new frames.
+            // - Real present time (ddagrab exporting it as side data, or our own DXGI
+            //   duplication capture) is a P3 candidate.
             const int stampRet = setFrameCaptureUs(frame, av_gettime_relative());
             if (stampRet < 0) {
                 // Never substitute a later time downstream; the consumer reports the gap.
-                static std::atomic<std::uint64_t> stampFailures{0};
-                const auto n = stampFailures.fetch_add(1, std::memory_order_relaxed) + 1;
+                const auto n = m_stampFailures.fetch_add(1, std::memory_order_relaxed) + 1;
                 if (n == 1 || n % 300 == 0)
                     qWarning() << "[FFScreenGrabThread] captureUs stamp failed ret=" << stampRet
                                << "count=" << n;
