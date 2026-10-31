@@ -13,7 +13,7 @@ extern "C" {
 #include <libavfilter/buffersrc.h>
 }
 
-#define FF_VIDEO_FRMAE_RATE {30, 1}
+#include "queue/media_clock.h"
 #define FF_VIDEO_TIME_BASE {1, 10000000}
 
 FFVFilter::FFVFilter()
@@ -76,7 +76,7 @@ int FFVFilter::sendFilter()
 
 AVRational FFVFilter::getFrameRate()
 {
-    return FF_VIDEO_FRMAE_RATE;
+    return kRecordFrameRate;
 }
 
 AVRational FFVFilter::getTimeBase()

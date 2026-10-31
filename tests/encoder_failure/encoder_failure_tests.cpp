@@ -121,6 +121,10 @@ void submitFrames(Queue &queue, AVFrame *frame) {
                                     frame->ch_layout.nb_channels, AV_SAMPLE_FMT_FLTP) == 0);
     AVFrame *second = av_frame_clone(frame);
     CHECK(second);
+    if (frame->nb_samples == 0) {
+        CHECK(setFrameCaptureUs(frame, 1000000) == 0);
+        CHECK(setFrameCaptureUs(second, 1033333) == 0);
+    }
     // The bounded queues move frame references on enqueue.
     queue.enqueue(frame);
     queue.enqueue(second);
@@ -153,12 +157,30 @@ void videoCase(bool fail) {
     frame->format = AV_PIX_FMT_YUV420P;
     frame->width = frame->height = 16;
     submitFrames(queue, frame);
-    FFVEncoderThread worker;
+    MediaClock clock; clock.start(1000000);
+    FFVEncoderThread worker; worker.setMediaClock(&clock);
     worker.init(&filter, &encoder, &muxer, &queue, nullptr, &recorder);
     worker.start();
     joinWorker(worker);
     checkQueue(queue, fail);
     checkDelivery(recorder, fail, "Video");
+}
+
+void missingStampCase() {
+    calls = {};
+    FFRecorder recorder; FFVEncoder encoder; FFVFilter filter; FFMuxer muxer;
+    FFVFrameQueue queue; MediaClock clock; clock.start(1000000);
+    AVFrame *frame = av_frame_alloc(); CHECK(frame);
+    frame->format=AV_PIX_FMT_YUV420P;frame->width=frame->height=16;
+    CHECK(av_frame_get_buffer(frame,0)==0);
+    queue.enqueue(frame);av_frame_free(&frame);queue.sendFinish();
+    FFVEncoderThread worker; worker.setMediaClock(&clock);
+    worker.init(&filter,&encoder,&muxer,&queue,nullptr,&recorder);
+    worker.start();joinWorker(worker);
+    CHECK(worker.missingCaptureStamps()==1 && calls.encoded==0);
+    QCoreApplication::sendPostedEvents(&recorder,QEvent::MetaCall);
+    CHECK(recorder.captureError.contains("timestamp missing") && recorder.stopRequests==1);
+    CHECK(recorder.errorCalls==1 && recorder.errorBeforeStop);
 }
 
 void audioCase(bool fail, bool useSync) {
@@ -190,7 +212,8 @@ int main(int argc, char **argv) {
     try {
         CHECK(argc == 2);
         const std::string mode = argv[1];
-        CHECK(mode == "video" || mode == "audio" || mode == "audio_sync");
+        CHECK(mode == "video" || mode == "audio" || mode == "audio_sync" || mode == "missing_stamp");
+        if (mode == "missing_stamp") { missingStampCase(); return 0; }
         // Healthy controls prevent unconditional error/stop reporting from passing.
         for (bool fail : {false, true}) {
             if (mode == "video") videoCase(fail);

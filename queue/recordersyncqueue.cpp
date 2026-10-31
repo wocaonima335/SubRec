@@ -3,12 +3,14 @@
 extern "C" {
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
+#include <libavutil/time.h>
 }
 
 #include <QDebug>
 
 #include <algorithm>
 #include <cstring>
+#include <climits>
 
 namespace {
 constexpr AVRational kUsecTimeBase{1, AV_TIME_BASE};
@@ -28,8 +30,7 @@ void RecorderSyncQueue::reset(bool audioEnabled)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_audioEnabled = audioEnabled;
-    m_audioClockDelayUs = 0;
-    m_videoFrames = 0;
+    m_videoUs = m_lastDiagnosticUs = AV_NOPTS_VALUE;
     clearReadyFramesLocked();
     for (auto &buffer : m_audioBuffers) {
         buffer.clear();
@@ -49,26 +50,6 @@ void RecorderSyncQueue::reset(bool audioEnabled)
     m_audioBytesPerSample = 0;
     av_channel_layout_uninit(&m_audioChannelLayout);
 
-    m_videoFrameRate = AVRational{0, 1};
-    m_videoTimeBase = AVRational{0, 1};
-    m_videoFrameDurationUs = 0;
-    m_nextVideoTick = 0;
-    m_droppedVideoFrames = 0;
-    m_videoCatchupCount = 0;
-    m_paused = false;
-}
-
-void RecorderSyncQueue::setAudioClockDelayUs(int64_t delayUs)
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_audioClockDelayUs = std::max<int64_t>(0, delayUs);
-}
-
-void RecorderSyncQueue::onPauseChanged(bool paused, int64_t tsUs)
-{
-    Q_UNUSED(tsUs);
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_paused = paused;
 }
 
 void RecorderSyncQueue::configureAudio(AVSampleFormat sampleFmt,
@@ -80,15 +61,15 @@ void RecorderSyncQueue::configureAudio(AVSampleFormat sampleFmt,
     std::lock_guard<std::mutex> lock(m_mutex);
     clearReadyFramesLocked();
     av_channel_layout_uninit(&m_audioChannelLayout);
-    av_channel_layout_copy(&m_audioChannelLayout, &channelLayout);
+    const int copiedLayout = av_channel_layout_copy(&m_audioChannelLayout, &channelLayout);
 
     m_audioSampleFmt = sampleFmt;
     m_audioSampleRate = sampleRate;
-    m_audioChannels = channelLayout.nb_channels;
+    m_audioChannels = copiedLayout < 0 ? 0 : channelLayout.nb_channels;
     m_audioFrameSamples = std::max(1, frameSamples);
-    m_audioTimeBase = timeBase.num > 0 && timeBase.den > 0
-                          ? timeBase
-                          : AVRational{1, std::max(1, sampleRate)};
+    m_audioTimeBase = timeBase;
+    if (sampleRate <= 0 || av_cmp_q(timeBase, AVRational{1, std::max(1, sampleRate)}) != 0 ||
+        !av_channel_layout_check(&channelLayout)) m_audioTimeBase = AVRational{0,1};
     m_audioPlanar = av_sample_fmt_is_planar(sampleFmt) != 0;
     m_audioBytesPerSample = av_get_bytes_per_sample(sampleFmt);
     m_audioBufferedSamples = 0;
@@ -100,39 +81,23 @@ void RecorderSyncQueue::configureAudio(AVSampleFormat sampleFmt,
     m_audioBuffers.assign(std::max(planes, 1), {});
 }
 
-void RecorderSyncQueue::configureVideo(AVRational frameRate, AVRational timeBase)
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (frameRate.num <= 0 || frameRate.den <= 0) {
-        frameRate = AVRational{30, 1};
-    }
-
-    m_videoFrames = 0;
-    m_videoFrameRate = frameRate;
-    m_videoTimeBase = timeBase;
-    m_videoFrameDurationUs = av_rescale_q(1, av_inv_q(frameRate), kUsecTimeBase);
-    if (m_videoFrameDurationUs <= 0) {
-        m_videoFrameDurationUs = 33333;
-    }
-    m_maxVideoLeadUs = std::max<int64_t>(m_videoFrameDurationUs * 2, 80000);
-    m_targetVideoLagUs = std::max<int64_t>(m_videoFrameDurationUs, 20000);
-    m_nextVideoTick = 0;
-    m_droppedVideoFrames = 0;
-    m_videoCatchupCount = 0;
-}
-
 MediaQueueResult RecorderSyncQueue::pushAudioFrame(AVFrame *frame)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (!frame) {
         return MediaQueueResult::Again;
     }
-    if (m_paused) {
-        return MediaQueueResult::Again;
-    }
-    if (!audioConfiguredLocked()) {
+    if (!audioConfiguredLocked() || m_audioFinished || !m_audioEnabled ||
+        frame->format != m_audioSampleFmt || frame->sample_rate != m_audioSampleRate ||
+        frame->nb_samples <= 0 || frame->nb_samples > INT_MAX - m_audioBufferedSamples ||
+        !av_channel_layout_check(&frame->ch_layout) ||
+        av_channel_layout_compare(&frame->ch_layout, &m_audioChannelLayout) != 0) {
         return MediaQueueResult::Error;
     }
+    const int planes = audioPlaneCountLocked();
+    if (!frame->extended_data) return MediaQueueResult::Error;
+    for (int plane = 0; plane < planes; ++plane)
+        if (!frame->extended_data[plane]) return MediaQueueResult::Error;
 
     appendAudioFrameLocked(frame);
 
@@ -146,6 +111,7 @@ MediaQueueResult RecorderSyncQueue::pushAudioFrame(AVFrame *frame)
         m_readyAudioFrames.push_back(readyFrame);
     }
 
+    logDeltaLocked();
     return MediaQueueResult::Ok;
 }
 
@@ -190,100 +156,39 @@ MediaQueueReadResult<AVFrame> RecorderSyncQueue::takeReadyAudioFrame()
         MediaQueueResult::Again, nullptr, MediaQueueCloseReason::None, 0};
 }
 
-RecorderSyncVideoDecision RecorderSyncQueue::reserveVideoFrame()
+void RecorderSyncQueue::observeVideoTick(int64_t tick, AVRational fps)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    RecorderSyncVideoDecision decision;
+    if (tick < 0 || fps.num <= 0 || fps.den <= 0) return;
+    m_videoUs = av_rescale_q(tick, av_inv_q(fps), kUsecTimeBase);
+    logDeltaLocked();
+}
 
-    if (m_paused) {
-        decision.drop = true;
-        return decision;
-    }
+int64_t RecorderSyncQueue::avDeltaUs() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return !m_audioEnabled || m_audioClockUs == AV_NOPTS_VALUE || m_videoUs == AV_NOPTS_VALUE
+        ? AV_NOPTS_VALUE : m_audioClockUs - m_videoUs;
+}
 
-    decision.audioClockUs = m_audioClockUs;
-    decision.audioClockReady = m_audioClockUs != AV_NOPTS_VALUE;
-
-    if (m_videoTimeBase.num <= 0 || m_videoTimeBase.den <= 0) {
-        decision.drop = true;
-        return decision;
-    }
-
-    if (!m_audioEnabled) {
-        // Exact rational frame counting avoids rounding drift and has no absent audio clock
-        // to wait on. Paused frames were rejected above, so resume is contiguous.
-        decision.pts = av_rescale_q(m_videoFrames, av_inv_q(m_videoFrameRate), m_videoTimeBase);
-        decision.ptsUs = av_rescale_q(m_videoFrames++, av_inv_q(m_videoFrameRate), kUsecTimeBase);
-        return decision;
-    }
-
-    // The mixed output cursor trails capture by a known holdback. Pace current
-    // video against the capture position, without shifting AAC samples/priming.
-    // Before audio arrives retain the existing startup bound; no invented clock.
-    const int64_t pacingClockUs = decision.audioClockReady
-        ? decision.audioClockUs + m_audioClockDelayUs : AV_NOPTS_VALUE;
-    int64_t candidateTick = m_nextVideoTick;
-    if (decision.audioClockReady) {
-        const int64_t minPtsUs =
-            std::max<int64_t>(0, pacingClockUs - m_targetVideoLagUs);
-        const int64_t targetTick = av_rescale_rnd(
-            minPtsUs, m_videoFrameRate.num,
-            int64_t(AV_TIME_BASE) * m_videoFrameRate.den, AV_ROUND_UP);
-        if (candidateTick < targetTick) {
-            candidateTick = targetTick;
-            ++m_videoCatchupCount;
-            if (m_videoCatchupCount == 1 || m_videoCatchupCount % 30 == 0) {
-                qDebug() << "[RecorderSyncQueue] catch up video pts count="
-                         << m_videoCatchupCount
-                         << "candidateUs=" << av_rescale_q(candidateTick, av_inv_q(m_videoFrameRate), kUsecTimeBase)
-                         << "audioClockUs=" << decision.audioClockUs
-                         << "audioClockDelayUs=" << m_audioClockDelayUs
-                         << "targetLagUs=" << m_targetVideoLagUs;
-            }
-        }
-    }
-
-    decision.ptsUs = av_rescale_q(candidateTick, av_inv_q(m_videoFrameRate), kUsecTimeBase);
-
-    if (!decision.audioClockReady) {
-        if (decision.ptsUs > m_startupMaxLeadUs) {
-            decision.drop = true;
-            ++m_droppedVideoFrames;
-            return decision;
-        }
-    } else if (decision.ptsUs > pacingClockUs + m_maxVideoLeadUs) {
-        decision.drop = true;
-        ++m_droppedVideoFrames;
-        if (m_droppedVideoFrames == 1 || m_droppedVideoFrames % 30 == 0) {
-            qDebug() << "[RecorderSyncQueue] drop video frame count="
-                     << m_droppedVideoFrames
-                     << "candidateUs=" << decision.ptsUs
-                     << "audioClockUs=" << decision.audioClockUs
-                     << "leadUs=" << (decision.ptsUs - pacingClockUs);
-        }
-        return decision;
-    }
-
-    decision.pts = av_rescale_q(candidateTick, av_inv_q(m_videoFrameRate), m_videoTimeBase);
-    m_nextVideoTick = candidateTick + 1;
-    return decision;
+void RecorderSyncQueue::logDeltaLocked()
+{
+    if (!m_audioEnabled || m_audioClockUs == AV_NOPTS_VALUE || m_videoUs == AV_NOPTS_VALUE) return;
+    const int64_t now = av_gettime_relative(); // Log cadence only, never a timestamp source.
+    if (m_lastDiagnosticUs != AV_NOPTS_VALUE && now - m_lastDiagnosticUs < 1000000) return;
+    m_lastDiagnosticUs = now;
+    const auto delta = m_audioClockUs - m_videoUs;
+    // This compares production cursors; the mixer's holdback can show here even
+    // with perfectly aligned capture timestamps. It is NOT a beacon offset.
+    if (delta > 100000 || delta < -100000)
+        qWarning() << "[AVSync] Degraded avDeltaUs=" << delta << "audioUs=" << m_audioClockUs << "videoUs=" << m_videoUs;
+    else qInfo() << "[AVSync] avDeltaUs=" << delta << "audioUs=" << m_audioClockUs << "videoUs=" << m_videoUs;
 }
 
 int64_t RecorderSyncQueue::audioClockUs() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_audioClockUs;
-}
-
-uint64_t RecorderSyncQueue::droppedVideoFrames() const
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_droppedVideoFrames;
-}
-
-uint64_t RecorderSyncQueue::videoCatchupCount() const
-{
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_videoCatchupCount;
 }
 
 void RecorderSyncQueue::clearReadyFramesLocked()
@@ -400,6 +305,7 @@ AVFrame *RecorderSyncQueue::makeAudioFrameLocked(int validSamples)
         }
     }
 
+    frame->time_base = m_audioTimeBase;
     frame->pts = m_nextAudioPts;
     m_nextAudioPts += m_audioFrameSamples;
     m_audioClockUs = av_rescale_q(m_nextAudioPts, m_audioTimeBase, kUsecTimeBase);

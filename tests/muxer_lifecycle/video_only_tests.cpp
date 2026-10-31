@@ -1,12 +1,12 @@
 #include "aac_priming_fixture.h"
-#include "queue/recordersyncqueue.h"
+#include "queue/video_tick_scheduler.h"
 #include "queue/ffvpacketqueue.h"
 #include "thread/ffmuxerthread.h"
 
 namespace {
-void run(const std::filesystem::path &path, FFMuxer &mux, RecorderSyncQueue &clock) {
-    clock.reset(false);
-    clock.configureVideo({30,1}, {1,30});
+void run(const std::filesystem::path &path, FFMuxer &mux, MediaClock &clock) {
+    clock.start(1000000);
+    VideoTickScheduler ticks; CHECK(ticks.configure());
     FFVPacketQueue video;
     video.start();
     Codec v(avcodec_alloc_context3(avcodec_find_decoder(AV_CODEC_ID_H264)));
@@ -27,17 +27,17 @@ void run(const std::filesystem::path &path, FFMuxer &mux, RecorderSyncQueue &clo
     } cleanup{worker};
     for (int n = 0; n < 90; ++n) {
         if (n == 45) {
-            clock.onPauseChanged(true, 1500000);
-            for (int i = 0; i < 30; ++i) CHECK(clock.reserveVideoFrame().drop);
-            clock.onPauseChanged(false, 2500000);
+            clock.pause(2500000); clock.resume(3500000);
+            CHECK(ticks.beginSegment(clock.mediaUs(3500000)));
         }
-        const auto timing = clock.reserveVideoFrame();
-        CHECK(!timing.drop && !timing.audioClockReady && timing.pts == n);
+        const auto captureUs = 1000000 + av_rescale_q(n, AVRational{1,30}, AVRational{1,1000000}) + (n>=45 ? 1000000 : 0);
+        const auto timing = ticks.decide(clock.mediaUs(captureUs));
+        CHECK(timing.accepted() && timing.tick == n);
         Packet packet(av_packet_alloc());
         CHECK(packet && av_new_packet(packet.get(), sizeof(h264)) == 0);
         std::memcpy(packet->data, h264, sizeof(h264));
         packet->stream_index = mux.getVStreamIndex();
-        packet->pts = packet->dts = timing.pts;
+        packet->pts = packet->dts = timing.tick;
         packet->duration = 1; packet->flags = AV_PKT_FLAG_KEY;
         video.enqueue(packet.get());
     }
@@ -79,11 +79,9 @@ void run(const std::filesystem::path &path, FFMuxer &mux, RecorderSyncQueue &clo
     CHECK(ret == AVERROR_EOF);
     CHECK(avcodec_send_packet(decoder.get(), nullptr) == 0); drain();
     CHECK(count == 90 && decoded == 90);
-    // A later audio-enabled session must regain its absent-audio startup limit.
-    clock.reset(); clock.configureVideo({30,1}, {1,30});
-    bool limited = false;
-    for (int n = 0; n < 30; ++n) limited |= clock.reserveVideoFrame().drop;
-    CHECK(limited);
+    // Session restart never acquires an absent-audio startup bound.
+    ticks.reset(); CHECK(ticks.decide(2000000).tick == 60);
+
 }
 }
 int main() {
@@ -91,7 +89,7 @@ int main() {
         const auto root = std::filesystem::temp_directory_path() / ("subrec-video-only-" +
             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         CHECK(std::filesystem::create_directory(root));
-        FFMuxer mux; RecorderSyncQueue clock;
+        FFMuxer mux; MediaClock clock;
         run(root / "first.mp4", mux, clock);
         run(root / "restart.mp4", mux, clock);
         std::cout << "PASS: video-only MP4, 90 decoded frames per session, pause/resume and restart\n";

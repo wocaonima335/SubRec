@@ -81,7 +81,7 @@ add_test(NAME capture_diagnostics COMMAND capture_diagnostics_tests)
 set_tests_properties(capture_diagnostics PROPERTIES TIMEOUT 10)
 
 add_executable(video_only_tests video_only_tests.cpp
-    ../../queue/recordersyncqueue.cpp ../../queue/ffapacketqueue.cpp ../../queue/ffvpacketqueue.cpp
+    ../../queue/media_clock.cpp ../../queue/video_tick_scheduler.cpp ../../queue/ffapacketqueue.cpp ../../queue/ffvpacketqueue.cpp
     ../../thread/ffthread.cpp ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp)
 target_compile_features(video_only_tests PRIVATE cxx_std_17)
 target_include_directories(video_only_tests PRIVATE ui_stubs ../.. "${FFMPEG_ROOT}/include")
@@ -90,19 +90,8 @@ target_link_libraries(video_only_tests PRIVATE Qt6::Core
 add_test(NAME video_only_pipeline COMMAND video_only_tests)
 set_tests_properties(video_only_pipeline PROPERTIES TIMEOUT 15 LABELS "video;sync;muxer")
 
-add_executable(sync_tick_tests sync_tick_tests.cpp ../../queue/recordersyncqueue.cpp)
-target_compile_features(sync_tick_tests PRIVATE cxx_std_17)
-target_include_directories(sync_tick_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
-target_link_libraries(sync_tick_tests PRIVATE Qt6::Core "${FFMPEG_ROOT}/lib/avutil.lib")
-add_test(NAME recorder_sync_ticks COMMAND sync_tick_tests)
-set_tests_properties(recorder_sync_ticks PROPERTIES TIMEOUT 30 LABELS "sync")
-
-add_executable(mixed_audio_clock_tests mixed_audio_clock_tests.cpp ../../queue/recordersyncqueue.cpp)
-target_compile_features(mixed_audio_clock_tests PRIVATE cxx_std_17)
-target_include_directories(mixed_audio_clock_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
-target_link_libraries(mixed_audio_clock_tests PRIVATE Qt6::Core "${FFMPEG_ROOT}/lib/avutil.lib")
-add_test(NAME mixed_audio_clock_delay COMMAND mixed_audio_clock_tests)
-set_tests_properties(mixed_audio_clock_delay PROPERTIES TIMEOUT 30 LABELS "sync")
+# P0 video-following-audio tests are superseded by tests/media_clock:
+# exact million-tick scheduling and validation/diagnostic-only sync queue tests.
 
 add_executable(aac_packet_ownership_tests aac_packet_ownership_tests.cpp ../../queue/ffapacketqueue.cpp)
 target_compile_features(aac_packet_ownership_tests PRIVATE cxx_std_17)

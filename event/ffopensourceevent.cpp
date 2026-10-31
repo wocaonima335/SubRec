@@ -1,5 +1,5 @@
 #include "ffopensourceevent.h"
-#include "capture/audio_timing.h"
+#include "queue/media_clock.h"
 #include "queue/recordersyncqueue.h"
 
 #include "thread/ffscreengrabthread.h"
@@ -102,13 +102,9 @@ CaptureStartResult FFOpenSourceEvent::openAndStartResult(const std::function<boo
   if (!initVideo(shouldStart)) return startupResult;
   if (!checkContinue(videoInput, shouldStart)) return startupResult;
   const int64_t t0 = av_gettime_relative();
-  const bool mixedAudio = audioEnabled && microphoneMixInput.has_value();
-  const int64_t clockDelayUs = mixedAudio ? capture::audio::mixHoldbackUs : 0;
-  recoderContext->getSyncQueue()->setAudioClockDelayUs(clockDelayUs);
-  qInfo() << "[RecorderSyncQueue] audioClockDelayUs=" << clockDelayUs;
-  aFilterThread->configureMix(mixedAudio, t0);
-  aEncoderThread->setStartTimeUs(t0);
-  vEncoderThread->setStartTimeUs(t0);
+  recoderContext->mediaClock().start(t0);
+  aFilterThread->configureMix(audioEnabled, t0, &recoderContext->mediaClock());
+  vEncoderThread->setMediaClock(&recoderContext->mediaClock());
   startAudio();
   if (!checkContinue(videoInput, shouldStart)) return startupResult;
   startVideo();
@@ -164,7 +160,7 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
     context->systemAudioSink.reset();
   }
   if (audioEnabled && audioSourceType == AUDIO && audioInput.backend == CaptureBackend::Wasapi) {
-    context->systemAudioSink = std::make_shared<capture::wasapi::QueueAudioSink>(*aFrmQueue[A_AUDIO], microphoneMixInput.has_value());
+    context->systemAudioSink = std::make_shared<capture::wasapi::QueueAudioSink>(*aFrmQueue[A_AUDIO], true);
     context->systemAudioCapture = std::make_unique<capture::wasapi::LoopbackCapture>(capture::wasapi::LoopbackConfig{});
     // The relay is owned by the task. Inspect the weak receiver only on its UI
     // thread, avoiding the QPointer-check/invoke race with recorder destruction.
@@ -196,6 +192,7 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
 #endif
   if (!audioEnabled) return true; // Previous audio resources have been closed above.
   if (!usingWasapi) {
+  aDemuxer[audioIndex]->enableCaptureClock(true);
   aDemuxer[audioIndex]->init(audioUrl, audioFormat, aPktQueue[audioIndex], nullptr,
                              audioSourceType, true, shouldStart);
   aDemuxerThread[audioIndex]->init(aDemuxer[audioIndex]);
@@ -208,6 +205,7 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
                 QStringLiteral("The selected input has no audio stream."));
   aDecoder[audioIndex]->init(aDemuxer[audioIndex]->getAStream(),
                              aFrmQueue[audioIndex]);
+  aDecoder[audioIndex]->setCaptureTimestampOutput(true);
   aDecoderThread[audioIndex]->init(aDecoder[audioIndex], aPktQueue[audioIndex]);
   }
 
@@ -445,8 +443,8 @@ void FFOpenSourceEvent::startAudio()
     aDecoderThread[audioIndex]->start();
   }
 
-  aFilterThread->start();
   aFilterThread->startEncoder();
+  aFilterThread->start();
   aEncoderThread->start();
 }
 

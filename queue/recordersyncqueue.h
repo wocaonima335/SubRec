@@ -14,15 +14,6 @@ extern "C" {
 #include <mutex>
 #include <vector>
 
-struct RecorderSyncVideoDecision
-{
-    bool drop = false;
-    int64_t pts = AV_NOPTS_VALUE;
-    int64_t ptsUs = AV_NOPTS_VALUE;
-    bool audioClockReady = false;
-    int64_t audioClockUs = AV_NOPTS_VALUE;
-};
-
 class RecorderSyncQueue
 {
 public:
@@ -30,25 +21,25 @@ public:
     ~RecorderSyncQueue();
 
     void reset(bool audioEnabled = true);
-    void setAudioClockDelayUs(int64_t delayUs);
-    void onPauseChanged(bool paused, int64_t tsUs);
 
     void configureAudio(AVSampleFormat sampleFmt,
                         int sampleRate,
                         const AVChannelLayout &channelLayout,
                         int frameSamples,
                         AVRational timeBase);
-    void configureVideo(AVRational frameRate, AVRational timeBase);
+    // Diagnostic only; never changes video or audio timestamps.
+    void observeVideoTick(int64_t tick, AVRational frameRate);
+    int64_t avDeltaUs() const;
 
     MediaQueueResult pushAudioFrame(AVFrame *frame);
     MediaQueueResult finishAudio();
     MediaQueueReadResult<AVFrame> takeReadyAudioFrame();
 
-    RecorderSyncVideoDecision reserveVideoFrame();
 
     int64_t audioClockUs() const;
-    uint64_t droppedVideoFrames() const;
-    uint64_t videoCatchupCount() const;
+    // Legacy P0 stop-summary ABI; policy moved to VideoTickScheduler.
+    uint64_t droppedVideoFrames() const { return 0; }
+    uint64_t videoCatchupCount() const { return 0; }
 
 private:
     void clearReadyFramesLocked();
@@ -62,8 +53,9 @@ private:
     mutable std::mutex m_mutex;
 
     bool m_audioEnabled = true;
-    int64_t m_videoFrames = 0;
-    bool m_paused = false;
+    int64_t m_videoUs = AV_NOPTS_VALUE;
+    int64_t m_lastDiagnosticUs = AV_NOPTS_VALUE;
+    void logDeltaLocked();
 
     AVSampleFormat m_audioSampleFmt = AV_SAMPLE_FMT_NONE;
     int m_audioSampleRate = 0;
@@ -76,20 +68,10 @@ private:
     int m_audioBufferedSamples = 0;
     int64_t m_nextAudioPts = 0;
     int64_t m_audioClockUs = AV_NOPTS_VALUE;
-    int64_t m_audioClockDelayUs = 0;
     bool m_audioFinished = false;
     std::vector<std::vector<uint8_t>> m_audioBuffers;
     std::deque<AVFrame *> m_readyAudioFrames;
 
-    AVRational m_videoFrameRate{0, 1};
-    AVRational m_videoTimeBase{0, 1};
-    int64_t m_videoFrameDurationUs = 0;
-    int64_t m_nextVideoTick = 0;
-    int64_t m_startupMaxLeadUs = 150000;
-    int64_t m_maxVideoLeadUs = 80000;
-    int64_t m_targetVideoLagUs = 33333;
-    uint64_t m_droppedVideoFrames = 0;
-    uint64_t m_videoCatchupCount = 0;
 };
 
 #endif // RECORDERSYNCQUEUE_H

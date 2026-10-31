@@ -10,6 +10,7 @@ extern "C" {
 }
 
 class AudioMixDump;
+class MediaClock;
 
 // Single worker owns this graph. Input PTS/time_base describes capture time on the
 // av_gettime_relative clock, NOT arrival at this queue. Output PTS starts at zero.
@@ -36,6 +37,11 @@ public:
         double compensationPpm[2]{}, phaseErrorUs[2]{};
     };
     explicit AudioTimelineMixer(int64_t startUs);
+    // Production mode: defer timestamp mapping until renderAt's capture cutoff,
+    // so pause transitions are known before queued PCM is mapped/trimmed.
+    explicit AudioTimelineMixer(const MediaClock &clock);
+    Frame renderAt(int64_t captureThroughUs, double systemGain = 1, double micGain = 1);
+    int64_t captureEndUs() const { return captureEndUs_; }
     ~AudioTimelineMixer();
     void push(unsigned source, const AVFrame &frame);
     void finish(unsigned source);
@@ -45,7 +51,7 @@ public:
     Frame render(int64_t target, double systemGain = 1, double micGain = 1, bool retainedOutput = true);
     int64_t position() const { return cursor_; }
     int64_t end() const { return end_; }
-    size_t pendingFrames(unsigned source) const { return inputs_.at(source).frames.size(); }
+    size_t pendingFrames(unsigned source) const { return inputs_.at(source).frames.size() + captured_.at(source).size(); }
     const Stats &stats() const { return stats_; }
 private:
     struct Input {
@@ -60,6 +66,14 @@ private:
         bool finished = false;
         std::deque<Frame> frames;
     };
+    void pushTimeline(unsigned source, const AVFrame &frame);
+    void finishTimeline(unsigned source);
+    void mapCaptured(unsigned source, const AVFrame &frame, int begin, int end);
+    Frame slice(const AVFrame &frame, int begin, int count);
+    const MediaClock *clock_ = nullptr;
+    std::array<std::deque<Frame>, 2> captured_;
+    bool ended_[2]{};
+    int64_t captureEndUs_ = 0;
     Frame allocate(int samples, int64_t pts);
     void append(unsigned source, Frame frame);
     void compensate(unsigned source, double errorUs, double durationUs);

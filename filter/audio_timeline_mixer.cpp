@@ -1,5 +1,6 @@
 #include "audio_timeline_mixer.h"
 #include "audio_mix_dump.h"
+#include "queue/media_clock.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -9,6 +10,7 @@ extern "C" {
 #include <libavfilter/buffersink.h>
 #include <libavfilter/buffersrc.h>
 #include <libavutil/opt.h>
+#include <libavutil/time.h>
 }
 namespace {
 constexpr int kCompensationDistance = 48000 * 10;
@@ -63,7 +65,7 @@ void AudioTimelineMixer::append(unsigned source, Frame frame) {
     end_ = std::max(end_, frameEnd);
     inputs_[source].tailPts = frameEnd;
 }
-void AudioTimelineMixer::push(unsigned source, const AVFrame &frame) {
+void AudioTimelineMixer::pushTimeline(unsigned source, const AVFrame &frame) {
     if (source > 1 || frame.pts == AV_NOPTS_VALUE || frame.time_base.num <= 0 || frame.time_base.den <= 0 ||
         frame.nb_samples <= 0 || frame.sample_rate <= 0 || !av_channel_layout_check(&frame.ch_layout))
         throw std::invalid_argument("Missing audio capture timestamp/format");
@@ -87,7 +89,7 @@ void AudioTimelineMixer::push(unsigned source, const AVFrame &frame) {
     // position. Keep every converted block adjacent to the previous one.
     if (changed || input.finished || discontinuity) {
         if (input.swr && !input.finished && (changed || discontinuity)) ++stats_.resyncs[source];
-        finish(source);
+        finishTimeline(source);
         swr_free(&input.swr); av_channel_layout_uninit(&input.layout);
         check(av_channel_layout_copy(&input.layout, &frame.ch_layout));
         input.rate = frame.sample_rate; input.format = frame.format;
@@ -146,7 +148,7 @@ void AudioTimelineMixer::compensate(unsigned source, double errorUs, double dura
     input.observationUs = input.weightedError = 0;
 }
 
-void AudioTimelineMixer::finish(unsigned source) {
+void AudioTimelineMixer::finishTimeline(unsigned source) {
     auto &input = inputs_.at(source);
     if (!input.swr || input.finished) return;
     for (;;) {
@@ -230,4 +232,92 @@ AudioTimelineMixer::Frame AudioTimelineMixer::render(int64_t target, double syst
         stats_.maxGainReductionDb = std::max(stats_.maxGainReductionDb, -20 * std::log10(minimumGain));
     out->time_base = {1,48000}; cursor_ += count;
     return out;
+}
+
+
+AudioTimelineMixer::AudioTimelineMixer(const MediaClock &clock) : AudioTimelineMixer(int64_t{0}) {
+    clock_ = &clock;
+}
+
+AudioTimelineMixer::Frame AudioTimelineMixer::slice(const AVFrame &frame, int begin, int count) {
+    Frame result(av_frame_alloc()); if (!result) throw std::bad_alloc();
+    result->format = frame.format; result->sample_rate = frame.sample_rate; result->nb_samples = count;
+    check(av_channel_layout_copy(&result->ch_layout, &frame.ch_layout));
+    check(av_frame_get_buffer(result.get(), 0));
+    check(av_samples_copy(result->extended_data, frame.extended_data, 0, begin, count,
+                          frame.ch_layout.nb_channels, static_cast<AVSampleFormat>(frame.format)));
+    result->pts = frame.pts + av_rescale_q(begin, {1,frame.sample_rate}, {1,1000000});
+    result->time_base = {1,1000000};
+    return result;
+}
+
+void AudioTimelineMixer::push(unsigned source, const AVFrame &frame) {
+    if (!clock_) { pushTimeline(source, frame); return; }
+    if (source > 1 || frame.pts == AV_NOPTS_VALUE || frame.time_base.num <= 0 || frame.time_base.den <= 0 ||
+        frame.nb_samples <= 0 || frame.sample_rate <= 0 || !av_channel_layout_check(&frame.ch_layout) ||
+        av_get_bytes_per_sample(static_cast<AVSampleFormat>(frame.format)) <= 0 || !frame.extended_data)
+        throw std::invalid_argument("Missing audio capture timestamp/format");
+    const int planes = av_sample_fmt_is_planar(static_cast<AVSampleFormat>(frame.format)) ? frame.ch_layout.nb_channels : 1;
+    for (int i = 0; i < planes; ++i) if (!frame.extended_data[i]) throw std::invalid_argument("Missing audio plane");
+    const auto us = av_rescale_q(frame.pts, frame.time_base, {1,1000000});
+    const auto duration = av_rescale_q(frame.nb_samples, {1,frame.sample_rate}, {1,1000000});
+    if (us < 0 || duration <= 0 || us > INT64_MAX-duration) throw std::invalid_argument("Audio timestamp overflow");
+    // Validation only, never a substitute timestamp. Bound raw pause-time input
+    // too: mapping a future stamp during an open pause would otherwise hide it.
+    if (us > av_gettime_relative() + 2000000) { ++stats_.futurePacketsDropped[source]; return; }
+    Frame copy(av_frame_clone(&frame)); if (!copy) throw std::bad_alloc();
+    copy->pts = us; copy->time_base = {1,1000000};
+    captureEndUs_ = std::max(captureEndUs_, us+duration);
+    captured_[source].push_back(std::move(copy));
+}
+
+void AudioTimelineMixer::finish(unsigned source) {
+    if (clock_) ended_[source] = true;
+    else finishTimeline(source);
+}
+
+void AudioTimelineMixer::mapCaptured(unsigned source, const AVFrame &frame, int begin, int end) {
+    if (begin >= end) return;
+    const auto rawBegin = frame.pts + av_rescale_q(begin, {1,frame.sample_rate}, {1,1000000});
+    const auto rawEnd = frame.pts + av_rescale_q(end, {1,frame.sample_rate}, {1,1000000});
+    const auto first = clock_->mediaUs(rawBegin), last = clock_->mediaUs(rawEnd);
+    if (first == AV_NOPTS_VALUE || last == AV_NOPTS_VALUE) throw std::runtime_error("Audio session clock not started");
+    if (last <= first) return; // Entirely paused or before the session origin.
+    if (last-first == rawEnd-rawBegin || end-begin == 1) {
+        auto part = slice(frame, begin, end-begin);
+        part->pts = first; // Slice remains at its capture position on the media axis.
+        pushTimeline(source, *part);
+        return;
+    }
+    // Only boundary-crossing blocks recurse; ordinary blocks take two clock
+    // reads. Sample-level boundary uncertainty is <= one input sample.
+    const int middle = begin + (end-begin)/2;
+    mapCaptured(source, frame, begin, middle);
+    mapCaptured(source, frame, middle, end);
+}
+
+AudioTimelineMixer::Frame AudioTimelineMixer::renderAt(int64_t captureThroughUs, double systemGain, double micGain) {
+    if (!clock_) throw std::logic_error("renderAt requires a session clock");
+    const auto media = clock_->mediaUs(captureThroughUs);
+    if (media == AV_NOPTS_VALUE) throw std::runtime_error("Audio session clock not started");
+    for (unsigned source = 0; source < 2; ++source) {
+        auto &pending = captured_[source];
+        while (!pending.empty()) {
+            const auto &frame = *pending.front();
+            if (frame.pts >= captureThroughUs) break;
+            const auto endUs = frame.pts + av_rescale_q(frame.nb_samples, {1,frame.sample_rate}, {1,1000000});
+            const auto available = endUs <= captureThroughUs ? int64_t(frame.nb_samples) :
+                av_rescale_rnd(captureThroughUs-frame.pts, frame.sample_rate, 1000000, AV_ROUND_DOWN);
+            const int count = static_cast<int>(std::min<int64_t>(frame.nb_samples, available));
+            if (count <= 0) break;
+            mapCaptured(source, frame, 0, count);
+            if (count < frame.nb_samples) {
+                auto rest = slice(frame, count, frame.nb_samples-count);
+                pending.front() = std::move(rest); break;
+            }
+            pending.pop_front();
+        }
+        if (ended_[source] && pending.empty()) finishTimeline(source);
+    }
+    return render(av_rescale_q(media, {1,1000000}, {1,48000}), systemGain, micGain);
 }
