@@ -6,6 +6,7 @@
 #include "filter/audio_timeline_mixer.h"
 #include "queue/ffaframequeue.h"
 #include "queue/media_clock.h"
+#include "recorder/ffrecorder_p.h"
 #include "thread/ffafilterthread.h"
 
 #include <cmath>
@@ -277,6 +278,12 @@ void mixedWorkerDrainsBothSources(bool paused = false, bool injectFuture = false
     FFAFilterThread worker;
     worker.init(&microphone, &system, &filter);
     worker.configureMix(true, epoch, &sessionClock);
+    // Production opens each selected source before starting the mixer. The
+    // worker uses these flags to decide which input queues are live; without
+    // them it correctly treats both sources as already finished and drains
+    // zero frames.
+    worker.openAudioSource(FFRecordContextType::demuxerType::AUDIO);
+    worker.openAudioSource(FFRecordContextType::demuxerType::MICROPHONE);
     worker.startEncoder();
     if (paused) {
         sessionClock.pause(epoch + 5000);
