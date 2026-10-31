@@ -87,6 +87,7 @@ int FFAEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
             }
 
             pkt->stream_index = streamIndex;
+            if (pkt->duration <= 0) pkt->duration = std::max(1, codecCtx->frame_size);
             pktQueue->enqueue(pkt);
         }
         return 0;
@@ -167,8 +168,9 @@ int FFAEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
             }
 
             pkt->stream_index = streamIndex;
-
-            pkt->stream_index = streamIndex;
+            if (pkt->duration <= 0) {
+                pkt->duration = std::max(1, codecCtx->frame_size);
+            }
             pktQueue->enqueue(pkt);
         }
     }
@@ -186,12 +188,13 @@ int FFAEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
     return 0;
 }
 
-void FFAEncoder::finish(int streamIndex)
+int FFAEncoder::finish(int streamIndex)
 {
-    encode(nullptr, streamIndex, AV_NOPTS_VALUE, codecCtx ? codecCtx->time_base : AVRational{0, 1});
+    const int result = encode(nullptr, streamIndex, AV_NOPTS_VALUE, codecCtx ? codecCtx->time_base : AVRational{0, 1});
     if (pktQueue) {
         pktQueue->sendFinish();
     }
+    return result;
 }
 
 FFAEncoderPars *FFAEncoder::getEncoderPars()
@@ -271,6 +274,9 @@ void FFAEncoder::initAudio(AVFrame *frame)
     if (ret < 0) {
         printError(ret);
         return;
+    }
+    if (codecCtx->frame_size <= 0) {
+        codecCtx->frame_size = 1024;
     }
 
     // qDebug() << "[AEnc] opened: frame_size=" << codecCtx->frame_size

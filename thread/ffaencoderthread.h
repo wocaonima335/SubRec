@@ -17,6 +17,7 @@ class FFAFrameQueue;
 class FFMuxer;
 class FFAFilter;
 class RecorderSyncQueue;
+class FFRecorder;
 
 class FFAEncoderThread : public FFThread
 {
@@ -28,7 +29,8 @@ public:
               FFAEncoder *aEncoder_,
               FFMuxer *muxer_,
               FFAFrameQueue *frmQueue_,
-              RecorderSyncQueue *syncQueue_);
+              RecorderSyncQueue *syncQueue_,
+              FFRecorder *recorder_ = nullptr);
 
     void requestDrainStop();
     void requestAbort();
@@ -43,6 +45,7 @@ protected:
 
 private:
     void initEncoder(AVFrame *frame);
+    void failEncoding(int error);
     void drainReadyAudioFrames();
 
 private:
@@ -53,6 +56,7 @@ private:
     int streamIndex = -1;
     FFAFilter *aFilter = nullptr;
     RecorderSyncQueue *syncQueue = nullptr;
+    FFRecorder *recorder = nullptr;
     int64_t start_time_us = 0;
     int64_t last_apts = AV_NOPTS_VALUE;
     int64_t next_apts = AV_NOPTS_VALUE;

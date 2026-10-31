@@ -10,6 +10,7 @@
 #include <cassert>
 #include <memory>
 #include <vector>
+#include "queue/recordersyncqueue.h"
 
 namespace FFRecordContextType {
 enum demuxerType { AUDIO, MICROPHONE, SCREEN, CAMERA };
@@ -37,6 +38,7 @@ public:
     void wakeAllThread() { requestAbort(); }
     void finishQueuedPackets() { requestAbort(); }
     void close() { assert(exited || !entered); closed = true; }
+    int lastError() const { return 0; }
     void stopEncoder() {}
     void closeAudioSource(int) { close(); }
     void closeVideoSource(int) {}
@@ -77,6 +79,8 @@ public:
         pipeline.screenGrabThread = &screen;
         pipeline.vDecoderFrmQueue[0] = &videoQueue;
     }
+    void setCaptureError(const QString &, const QString &) {}
+    RecorderSyncQueue *getSyncQueue() { return nullptr; }
     void initialize() {}
     void startRecord(const CaptureConfig &) { recording = true; }
     void stopRecord() { recording = false; }

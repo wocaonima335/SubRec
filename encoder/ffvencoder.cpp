@@ -150,6 +150,12 @@ int FFVEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
             }
 
             pkt->stream_index = streamIndex;
+            if (pkt->duration <= 0) {
+                pkt->duration = (codecCtx->framerate.num > 0 && codecCtx->framerate.den > 0)
+                                    ? av_rescale_q(1, av_inv_q(codecCtx->framerate), codecCtx->time_base)
+                                    : 1;
+                if (pkt->duration <= 0) pkt->duration = 1;
+            }
             pktQueue->enqueue(pkt);
             av_packet_unref(pkt);
         }
@@ -213,6 +219,12 @@ int FFVEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
         }
 
         pkt->stream_index = streamIndex;
+        if (pkt->duration <= 0) {
+            pkt->duration = (codecCtx->framerate.num > 0 && codecCtx->framerate.den > 0)
+                                ? av_rescale_q(1, av_inv_q(codecCtx->framerate), codecCtx->time_base)
+                                : 1;
+            if (pkt->duration <= 0) pkt->duration = 1;
+        }
         pktQueue->enqueue(pkt);
         av_packet_unref(pkt);
     }
@@ -222,12 +234,13 @@ int FFVEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
     return 0;
 }
 
-void FFVEncoder::finish(int streamIndex)
+int FFVEncoder::finish(int streamIndex)
 {
-    encode(nullptr, streamIndex, AV_NOPTS_VALUE, codecCtx ? codecCtx->time_base : AVRational{0, 1});
+    const int result = encode(nullptr, streamIndex, AV_NOPTS_VALUE, codecCtx ? codecCtx->time_base : AVRational{0, 1});
     if (pktQueue) {
         pktQueue->sendFinish();
     }
+    return result;
 }
 
 AVCodecContext *FFVEncoder::getCodecCtx()

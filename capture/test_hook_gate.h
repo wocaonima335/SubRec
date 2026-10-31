@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdlib>
+#include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #ifdef _WIN32
@@ -95,6 +97,7 @@ inline bool autoTestScenarioActive()
 inline constexpr bool hooksEnabled() { return false; }
 inline const char *hookEnvironment(const char *) { return nullptr; }
 inline constexpr bool videoOpenTimeoutRequested() { return false; }
+inline constexpr uint64_t muxFailAtPacket() { return 0; }
 #else
 // Standalone test targets may opt in at compile time. Production modules retain
 // the runtime AutoTest gate even when the top-level test option is ON.
@@ -109,6 +112,15 @@ inline bool hooksEnabled()
 inline const char *hookEnvironment(const char *name)
 {
     return hooksEnabled() ? std::getenv(name) : nullptr;
+}
+inline uint64_t muxFailAtPacket()
+{
+    const char *value = hookEnvironment("SUBREC_TEST_MUX_FAIL_AT_PACKET");
+    if (!value || *value < '1' || *value > '9') return 0;
+    char *end = nullptr;
+    errno = 0;
+    const auto target = std::strtoull(value, &end, 10);
+    return errno == 0 && end != value && *end == '\0' ? target : 0;
 }
 inline bool videoOpenTimeoutRequested()
 {

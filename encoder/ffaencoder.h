@@ -40,7 +40,7 @@ public:
     void wakeAllThread();
 
     int encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational timeBase);
-    void finish(int streamIndex);
+    int finish(int streamIndex);
 
     FFAEncoderPars *getEncoderPars();
     AVCodecContext *getCodecCtx();

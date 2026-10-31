@@ -46,6 +46,7 @@ protected:
 
 private:
     bool initEncoder(AVFrame *frame);
+    void failEncoding(int error);
     void publishEncoderSelection(const VideoEncoderSelection &selection);
     void sendPreviewData(AVFrame *frame);
 

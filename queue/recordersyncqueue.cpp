@@ -51,7 +51,7 @@ void RecorderSyncQueue::reset(bool audioEnabled)
     m_videoFrameRate = AVRational{0, 1};
     m_videoTimeBase = AVRational{0, 1};
     m_videoFrameDurationUs = 0;
-    m_nextVideoPtsUs = 0;
+    m_nextVideoTick = 0;
     m_droppedVideoFrames = 0;
     m_videoCatchupCount = 0;
     m_paused = false;
@@ -109,8 +109,7 @@ void RecorderSyncQueue::configureVideo(AVRational frameRate, AVRational timeBase
     }
     m_maxVideoLeadUs = std::max<int64_t>(m_videoFrameDurationUs * 2, 80000);
     m_targetVideoLagUs = std::max<int64_t>(m_videoFrameDurationUs, 20000);
-    m_maxBufferedVideoUs = std::max<int64_t>(m_videoFrameDurationUs * 6, 250000);
-    m_nextVideoPtsUs = 0;
+    m_nextVideoTick = 0;
     m_droppedVideoFrames = 0;
     m_videoCatchupCount = 0;
 }
@@ -210,47 +209,49 @@ RecorderSyncVideoDecision RecorderSyncQueue::reserveVideoFrame()
         return decision;
     }
 
-    const int64_t nominalStepUs = std::max<int64_t>(m_videoFrameDurationUs, 1);
-    int64_t candidatePtsUs = m_nextVideoPtsUs;
+    int64_t candidateTick = m_nextVideoTick;
     if (decision.audioClockReady) {
         const int64_t minPtsUs =
             std::max<int64_t>(0, decision.audioClockUs - m_targetVideoLagUs);
-        if (candidatePtsUs < minPtsUs) {
-            candidatePtsUs = minPtsUs;
+        const int64_t targetTick = av_rescale_rnd(
+            minPtsUs, m_videoFrameRate.num,
+            int64_t(AV_TIME_BASE) * m_videoFrameRate.den, AV_ROUND_UP);
+        if (candidateTick < targetTick) {
+            candidateTick = targetTick;
             ++m_videoCatchupCount;
             if (m_videoCatchupCount == 1 || m_videoCatchupCount % 30 == 0) {
                 qDebug() << "[RecorderSyncQueue] catch up video pts count="
                          << m_videoCatchupCount
-                         << "candidateUs=" << candidatePtsUs
+                         << "candidateUs=" << av_rescale_q(candidateTick, av_inv_q(m_videoFrameRate), kUsecTimeBase)
                          << "audioClockUs=" << decision.audioClockUs
                          << "targetLagUs=" << m_targetVideoLagUs;
             }
         }
     }
 
-    decision.ptsUs = candidatePtsUs;
+    decision.ptsUs = av_rescale_q(candidateTick, av_inv_q(m_videoFrameRate), kUsecTimeBase);
 
     if (!decision.audioClockReady) {
-        if (candidatePtsUs > m_startupMaxLeadUs) {
+        if (decision.ptsUs > m_startupMaxLeadUs) {
             decision.drop = true;
             ++m_droppedVideoFrames;
             return decision;
         }
-    } else if (candidatePtsUs > decision.audioClockUs + m_maxVideoLeadUs) {
+    } else if (decision.ptsUs > decision.audioClockUs + m_maxVideoLeadUs) {
         decision.drop = true;
         ++m_droppedVideoFrames;
         if (m_droppedVideoFrames == 1 || m_droppedVideoFrames % 30 == 0) {
             qDebug() << "[RecorderSyncQueue] drop video frame count="
                      << m_droppedVideoFrames
-                     << "candidateUs=" << candidatePtsUs
+                     << "candidateUs=" << decision.ptsUs
                      << "audioClockUs=" << decision.audioClockUs
-                     << "leadUs=" << (candidatePtsUs - decision.audioClockUs);
+                     << "leadUs=" << (decision.ptsUs - decision.audioClockUs);
         }
         return decision;
     }
 
-    m_nextVideoPtsUs = candidatePtsUs + nominalStepUs;
-    decision.pts = av_rescale_q(candidatePtsUs, kUsecTimeBase, m_videoTimeBase);
+    decision.pts = av_rescale_q(candidateTick, av_inv_q(m_videoFrameRate), m_videoTimeBase);
+    m_nextVideoTick = candidateTick + 1;
     return decision;
 }
 
@@ -258,6 +259,18 @@ int64_t RecorderSyncQueue::audioClockUs() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_audioClockUs;
+}
+
+uint64_t RecorderSyncQueue::droppedVideoFrames() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_droppedVideoFrames;
+}
+
+uint64_t RecorderSyncQueue::videoCatchupCount() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_videoCatchupCount;
 }
 
 void RecorderSyncQueue::clearReadyFramesLocked()

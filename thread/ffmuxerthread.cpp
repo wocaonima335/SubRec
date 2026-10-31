@@ -9,6 +9,8 @@
 #include "queue/ffvpacketqueue.h"
 
 #include <QtCore/QtGlobal>
+#include <QMetaObject>
+#include <QString>
 #include <QDebug>
 
 #include <algorithm>
@@ -16,6 +18,7 @@
 #include <cmath>
 #include <chrono>
 #include <deque>
+#include <memory>
 #include <thread>
 
 namespace {
@@ -89,7 +92,8 @@ void FFMuxerThread::close()
         qInfo() << "[MuxThread] closed bootstrap_max_packets=" << s.bootstrapMaxPackets
                 << "bootstrap_hold_ms=" << s.bootstrapHoldNs / 1000000.0
                 << "enqueue_backpressure_total_ms=" << s.enqueueBlockedNs / 1000000.0
-                << "dropped_packets=" << s.droppedPackets;
+                << "dropped_packets=" << s.droppedPackets
+                << "skipped_packets=" << (muxer ? muxer->skippedPackets() : 0);
         diagnosticsLogged = true;
     }
     lastProcessTime = 0;
@@ -177,13 +181,17 @@ void FFMuxerThread::requestAbort()
 void FFMuxerThread::fail(int error)
 {
     if (error == AVERROR_EXIT && m_stop.load()) {
-        requestAbort();
         return;
     }
     int expected = 0;
     errorCode.compare_exchange_strong(expected, error);
     m_stop.store(true);
-    if (muxer) muxer->requestAbort();
+    if (recorderCtx) {
+        QMetaObject::invokeMethod(recorderCtx, "setCaptureError", Qt::QueuedConnection,
+                                  Q_ARG(QString, QStringLiteral("Muxer write failed; recording stopped.")),
+                                  Q_ARG(QString, QStringLiteral("Recording stopped; attempting to finalize the file.")));
+        QMetaObject::invokeMethod(recorderCtx, "stopOnCaptureError", Qt::QueuedConnection);
+    }
     // close() wakes both blocked producers and consumers, unlike a plain notify.
     auto closeQueue = [error](auto *queue) {
         if (queue) queue->close(MediaQueueCloseReason::Error, error);
@@ -211,6 +219,11 @@ void FFMuxerThread::run()
     if (m_stop.load()) { requestAbort(); return; }
     const int headerResult = muxer->writeHeader();
     if (headerResult < 0) { fail(headerResult); return; }
+    const auto finalize = [this](void *) {
+        const int ret = muxer->writeTrailer();
+        if (ret < 0) fail(ret);
+    };
+    std::unique_ptr<void, decltype(finalize)> trailerGuard(this, finalize);
     AVRational aTB{}, vTB{};
     int timingResult = aPktQueue ? muxer->getStreamTiming(AVMEDIA_TYPE_AUDIO, &aTB) : 0;
     if (timingResult >= 0)
@@ -219,11 +232,7 @@ void FFMuxerThread::run()
     auto queueFailure = [this](const MediaQueueReadResult<FFPacket> &result) {
         if (result.result == MediaQueueResult::Error)
             fail(result.errorCode < 0 ? result.errorCode : AVERROR(EIO));
-        else requestAbort();
-    };
-    auto finish = [this]() {
-        const int ret = muxer->writeTrailer();
-        if (ret < 0) fail(ret);
+        else m_stop.store(true);
     };
 
     std::deque<FFPacket *> bootstrapAudioPackets;
@@ -342,7 +351,6 @@ void FFMuxerThread::run()
     }
     if (!audioPkt && !videoPkt) {
         clearBootstrapAudio();
-        finish();
         return;
     }
 
@@ -455,8 +463,7 @@ void FFMuxerThread::run()
     if (audioPkt) { ++droppedPackets; FFPacketTraits::release(audioPkt); }
     if (videoPkt) { ++droppedPackets; FFPacketTraits::release(videoPkt); }
     clearBootstrapAudio();
-    qDebug() << "[MuxThread] loop end; trailer only on normal drain.";
-    if (!m_stop.load()) finish();
+    qDebug() << "[MuxThread] loop end; writing trailer.";
 }
 
 void FFMuxerThread::sendCaptureProcessEvent(double seconds)

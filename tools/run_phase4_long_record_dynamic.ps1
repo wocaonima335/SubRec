@@ -4,6 +4,7 @@
     [int]$RecordDurationSec = 60,
     [string]$OutputDir = [Environment]::GetFolderPath("MyVideos"),
     [string]$OutputFileName = "output.mp4",
+    [string]$OutputRoot = "",
     [string]$FfprobePath = "",
     [double]$MinOutputDurationSec = 45.0,
     [double]$MaxAvDurationDeltaSec = 0.5,
@@ -87,8 +88,13 @@ $buildPath = Resolve-Path $BuildDir
 $exePath = Join-Path $buildPath $ExeName
 $logPath = Join-Path $buildPath "SubRec.log"
 $runTag = Get-Date -Format "yyyyMMdd-HHmmss"
-$artifactDir = Join-Path $buildPath ("test-logs\\phase4-long-record-" + $runTag)
-$outputPath = Join-Path $OutputDir $OutputFileName
+$artifactDir = if ($OutputRoot) {
+    Join-Path $OutputRoot ("phase4-long-record-" + $runTag)
+} else {
+    Join-Path $buildPath ("test-logs\\phase4-long-record-" + $runTag)
+}
+New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null
+$outputPath = Join-Path $(if ($OutputRoot) { $OutputRoot } else { $OutputDir }) $OutputFileName
 $capturedOutputPath = Join-Path $artifactDir ("captured-" + $OutputFileName)
 $backupOutputPath = Join-Path $artifactDir ("backup-before-run-" + $OutputFileName)
 
@@ -154,6 +160,9 @@ try {
     $startCount = @($logLines | Select-String -Pattern 'state "Idle" -> "Preparing"').Count
     $idleCount = @($logLines | Select-String -Pattern 'state "Stopping" -> "Idle"').Count
     $quitCount = @($logLines | Select-String -Pattern '\[AutoTest\] quit').Count
+    $captureErrors = @($logLines | Select-String -Pattern '\[CaptureError\]|captureError=' | ForEach-Object { $_.Line.Trim() })
+    $autoTestResult = @($logLines | Select-String -Pattern '\[AutoTest\] result=' | ForEach-Object { $_.Line.Trim() } | Select-Object -Last 1)
+    $autoTestExit = @($logLines | Select-String -Pattern '\[AutoTest\] (exit code|quit exit code)' | ForEach-Object { $_.Line.Trim() } | Select-Object -Last 1)
 
     $outputCopied = $false
     if (Test-Path $outputPath) {
@@ -194,6 +203,7 @@ try {
 
     $checks = @(
         [pscustomobject]@{ Label = "process exited"; Passed = ($exited -and $process.ExitCode -eq 0); Detail = ("exited={0} exitCode={1}" -f $exited, $process.ExitCode) }
+        [pscustomobject]@{ Label = "autotest exit/verdict"; Passed = ($process.ExitCode -eq 0 -and $captureErrors.Count -eq 0 -and $autoTestResult -match 'result=PASS'); Detail = ("exit={0} verdict={1} captureError={2}" -f $process.ExitCode, ($autoTestResult -join ' '), ($captureErrors -join ' | ')) }
         [pscustomobject]@{ Label = "scheduler start once"; Passed = ($startCount -ge 1); Detail = ("actual={0}" -f $startCount) }
         [pscustomobject]@{ Label = "scheduler back idle"; Passed = ($idleCount -ge 1); Detail = ("actual={0}" -f $idleCount) }
         [pscustomobject]@{ Label = "autotest quit"; Passed = ($quitCount -ge 1); Detail = ("actual={0}" -f $quitCount) }
@@ -224,6 +234,9 @@ try {
     Write-Host ("demux_hashes={0}" -f ($demuxHashes -join ","))
     Write-Host ("encoder_hashes={0}" -f ($encoderHashes -join ","))
     Write-Host ("preview_render_hashes={0}" -f ($previewHashes -join ","))
+    Write-Host ("autotest_result={0}" -f ($autoTestResult -join " | "))
+    Write-Host ("autotest_exit={0}" -f ($autoTestExit -join " | "))
+    Write-Host ("capture_error={0}" -f ($captureErrors -join " | "))
     if ($null -ne $formatDuration) {
         Write-Host ("format_duration={0:N3}s" -f $formatDuration)
     }

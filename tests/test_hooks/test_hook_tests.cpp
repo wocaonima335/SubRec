@@ -56,6 +56,7 @@ bool environmentIsSet(const char *name, bool *empty = nullptr) {
 }
 void checkHooks(bool expected) {
     CHECK(capture::test::hooksEnabled() == expected);
+    CHECK(capture::test::muxFailAtPacket() == (expected ? 17 : 0));
     CHECK(capture::test::videoOpenTimeoutRequested() == expected);
     capture::test::VideoStartDelay delay;
     int waits = 0, logs = 0;
@@ -77,6 +78,7 @@ int main() {
 #else
         constexpr bool testBuild = false;
 #endif
+        environment("SUBREC_TEST_MUX_FAIL_AT_PACKET", "17");
         environment("SUBREC_TEST_VIDEO_START_DELAY_MS", "2000");
         environment("SUBREC_TEST_VIDEO_OPEN_TIMEOUT", "1");
         environment("SUBREC_AUTOTEST_SCENARIO", nullptr);
@@ -105,6 +107,10 @@ int main() {
         capture::test::VideoStartDelay unset;
         CHECK(unset.beforeFirstPacket([](auto) { throw std::runtime_error("unexpected wait"); return false; },
                                      [](auto) { throw std::runtime_error("unexpected log"); }));
+        for (const char *invalid : {"", "0", "-1", "bogus", "17x", "18446744073709551616"}) {
+            environment("SUBREC_TEST_MUX_FAIL_AT_PACKET", invalid);
+            CHECK(capture::test::muxFailAtPacket() == 0);
+        }
         std::printf("PASS hook gate: test_build=%d, normal/empty/whitespace/AutoTest/unset/invalid/one-shot\n", testBuild);
     } catch (const std::exception &error) {
         std::fprintf(stderr, "FAIL %s\n", error.what());

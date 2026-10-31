@@ -47,5 +47,10 @@ endif()
 add_test(NAME runtime_hook_gate COMMAND runtime_hook_gate_tests)
 set_tests_properties(runtime_hook_gate PROPERTIES TIMEOUT 10)
 
+add_executable(autotest_result_tests autotest_result_tests.cpp)
+target_compile_features(autotest_result_tests PRIVATE cxx_std_17)
+target_include_directories(autotest_result_tests PRIVATE ../..)
+add_test(NAME autotest_capture_error_verdict COMMAND autotest_result_tests)
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()

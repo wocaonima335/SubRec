@@ -1,9 +1,10 @@
 #pragma once
 #include "queue/ffapacketqueue.h"
 #include <cstdlib>
+#include <QObject>
 // This standalone test passes nullptr as the recorder. UI/error fan-out must
 // never execute; codec, packet queues, worker and muxer are production classes.
-class FFRecorder {
+class FFRecorder : public QObject {
 public:
     FFAPacketQueue *getAFilterEncoderFrmQueue() { std::abort(); }
     FFAPacketQueue *getVFilterEncoderFrmQueue() { std::abort(); }

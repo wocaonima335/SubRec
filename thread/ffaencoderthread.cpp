@@ -4,8 +4,10 @@
 #include "muxer/ffmuxer.h"
 #include "queue/ffaframequeue.h"
 #include "queue/recordersyncqueue.h"
+#include "recorder/ffrecorder.h"
 
 #include <QDebug>
+#include <QMetaObject>
 #include <algorithm>
 
 FFAEncoderThread::FFAEncoderThread() {}
@@ -16,13 +18,15 @@ void FFAEncoderThread::init(FFAFilter *aFilter_,
                             FFAEncoder *aEncoder_,
                             FFMuxer *muxer_,
                             FFAFrameQueue *frmQueue_,
-                            RecorderSyncQueue *syncQueue_)
+                            RecorderSyncQueue *syncQueue_,
+                            FFRecorder *recorder_)
 {
     aEncoder = aEncoder_;
     muxer = muxer_;
     frmQueue = frmQueue_;
     aFilter = aFilter_;
     syncQueue = syncQueue_;
+    recorder = recorder_;
 }
 
 void FFAEncoderThread::close()
@@ -92,10 +96,12 @@ void FFAEncoderThread::run()
             if (syncQueue) {
                 syncQueue->finishAudio();
                 drainReadyAudioFrames();
+                if (m_stop.load()) break;
             }
             if (aEncoder) {
                 qDebug() << "[AEncThread] frame queue finished, draining encoder";
-                aEncoder->finish(streamIndex);
+                const int flushed = aEncoder->finish(streamIndex);
+                if (flushed < 0) failEncoding(flushed);
             }
             break;
         }
@@ -138,7 +144,12 @@ void FFAEncoderThread::run()
         }
         last_apts = apts;
         next_apts = apts + step;
-        aEncoder->encode(frame, streamIndex, apts, audioTimeBase);
+        const int encoded = aEncoder->encode(frame, streamIndex, apts, audioTimeBase);
+        if (encoded < 0) {
+            AVFrameTraits::release(frame);
+            failEncoding(encoded);
+            break;
+        }
         AVFrameTraits::release(frame);
     }
 }
@@ -192,7 +203,26 @@ void FFAEncoderThread::drainReadyAudioFrames()
         AVFrame *readyFrame = ready.item;
         last_apts = readyFrame->pts;
         next_apts = readyFrame->pts + readyFrame->nb_samples;
-        aEncoder->encode(readyFrame, streamIndex, readyFrame->pts, audioTimeBase);
+        const int encoded = aEncoder->encode(readyFrame, streamIndex, readyFrame->pts, audioTimeBase);
+        if (encoded < 0) {
+            AVFrameTraits::release(readyFrame);
+            failEncoding(encoded);
+            return;
+        }
         AVFrameTraits::release(readyFrame);
     }
+}
+
+void FFAEncoderThread::failEncoding(int error)
+{
+    m_stop.store(true);
+    if (frmQueue) frmQueue->close(MediaQueueCloseReason::Error, error);
+    if (recorder) {
+        QMetaObject::invokeMethod(recorder, "setCaptureError", Qt::QueuedConnection,
+                                  Q_ARG(QString, QStringLiteral("Audio encoder failed (%1).").arg(error)),
+                                  Q_ARG(QString, QStringLiteral("Recording stopped; check the output file.")));
+        QMetaObject::invokeMethod(recorder, "stopOnCaptureError", Qt::QueuedConnection);
+    }
+    // Seal output even when the codec cannot flush; the muxer can drain prior packets.
+    if (aEncoder) aEncoder->finish(streamIndex);
 }

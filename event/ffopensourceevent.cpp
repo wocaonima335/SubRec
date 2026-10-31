@@ -248,7 +248,8 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
                        aEncoder,
                        muxer,
                        aFilterEncoderFrmQueue,
-                       recoderContext->getSyncQueue());
+                       recoderContext->getSyncQueue(),
+                       recoderContext);
   return true;
 }
 

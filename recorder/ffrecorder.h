@@ -150,6 +150,7 @@ public slots:
   void notifyCaptureStateChanged();
   void setCaptureError(const QString &message, const QString &remediation);
   void clearCaptureError();
+  void stopOnCaptureError();
   Q_INVOKABLE void refreshCaptureDevices();
   Q_INVOKABLE bool selectVideoCaptureDevice(const QString &deviceId);
   Q_INVOKABLE bool selectAudioCaptureDevice(const QString &deviceId);

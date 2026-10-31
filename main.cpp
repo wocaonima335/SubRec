@@ -1,5 +1,6 @@
 ﻿#include "thread/failure_cleanup_deadline.h"
 #include "capture/test_hook_gate.h"
+#include "capture/autotest_result.h"
 #include "logging/frame_log.h"
 #include "opengl/ffglitem.h"
 #include "recorder/capture_scheduler.h"
@@ -35,7 +36,8 @@ void qtLogHandler(QtMsgType type, const QMessageLogContext &,
   if (!logFile.isOpen())
   {
     // 使用绝对路径，确保日志文件可被找到
-    QString logPath = QCoreApplication::applicationDirPath() + "/SubRec.log";
+    QString logPath = qEnvironmentVariable("SUBREC_LOG_FILE").trimmed();
+    if (logPath.isEmpty()) logPath = QCoreApplication::applicationDirPath() + "/SubRec.log";
     logFile.setFileName(logPath);
 
     if (!logFile.open(QIODevice::Append | QIODevice::Text))
@@ -85,16 +87,6 @@ void openAudioByControl(bool useSystemAudio)
 {
   FFRecorder::getInstance().captureScheduler().changeAudioSource(useSystemAudio);
 }
-
-// Exit codes of autotest runs (tools/pc2_verify.ps1 checks them).
-enum AutoTestExit
-{
-  AutoTestOk = 0,
-  AutoTestBadEnvironment = 2, // SUBREC_AUTOTEST_MIC_DEVICE / _OUTPUT unusable
-  AutoTestNotRunning = 3,     // capture never reached Running (or went Failed)
-  AutoTestNoOutput = 4,       // stopped, but the output file is missing or empty
-  AutoTestStopTimeout = 5     // capture did not return to Idle after stop
-};
 
 // SUBREC_AUTOTEST_OUTPUT=<dir>/<name>.mp4: output folder and file name for this run.
 // SUBREC_AUTOTEST_MIC_DEVICE=<name or id>: switch the audio source to the microphone and select
@@ -459,7 +451,15 @@ void runAutoScenario(QObject *root)
                      scheduleWhenState(
                          CaptureSchedulerState::Idle,
                          15000,
-                         requestQuit,
+                         [] {
+                           auto &recorder = FFRecorder::getInstance();
+                           const QFileInfo file(recorder.outputPath() + "/" + recorder.outputFileName());
+                           const auto result = autoTestRecordingResult(file.exists(), file.size(), recorder.captureError().isEmpty());
+                           qInfo().noquote() << QStringLiteral("[AutoTest] result=%1 captureError=%2")
+                               .arg(result == AutoTestOk ? QStringLiteral("PASS") : QStringLiteral("FAIL"), recorder.captureError());
+                           qInfo() << "[AutoTest] quit exit code" << result;
+                           QCoreApplication::exit(result);
+                         },
                          QStringLiteral("idle-after-phase4-long-dynamic-stop"));
                    });
         },
@@ -574,7 +574,7 @@ void runAutoScenario(QObject *root)
             20000,
             [step, index, mode, fileName, recordMs, state, pollUntil, exitWith, &scheduler, &recorder] {
               if (state() != CaptureSchedulerState::Running) {
-                qWarning() << "[AutoTest] cycle start failed:" << scheduler.lastError();
+                qWarning() << "[AutoTest] result=FAIL cycle start failed:" << scheduler.lastError();
                 exitWith(AutoTestNotRunning);
                 return;
               }
@@ -593,11 +593,12 @@ void runAutoScenario(QObject *root)
                     20000,
                     [step, index, mode, fileName, exitWith, &recorder] {
                       const QFileInfo file(recorder.outputPath() + QLatin1Char('/') + fileName);
-                      const bool ok = file.exists() && file.size() > 0;
-                      qInfo().noquote() << QStringLiteral("[AutoTest] cycle %1 mode=%2 file=%3 result=%4")
+                  const auto result = autoTestRecordingResult(file.exists(), file.size(), recorder.captureError().isEmpty());
+                  const bool ok = result == AutoTestOk;
+                      qInfo().noquote() << QStringLiteral("[AutoTest] cycle %1 mode=%2 file=%3 result=%4 captureError=%5")
                                                .arg(index).arg(mode, file.absoluteFilePath(),
-                                                               ok ? QStringLiteral("PASS") : QStringLiteral("FAIL"));
-                      if (!ok) { exitWith(AutoTestNoOutput); return; }
+                                                               ok ? QStringLiteral("PASS") : QStringLiteral("FAIL"), recorder.captureError());
+                      if (!ok) { exitWith(result); return; }
                       (*step)(index + 1);
                     },
                     [exitWith] { exitWith(AutoTestStopTimeout); });
@@ -661,7 +662,8 @@ void runAutoScenario(QObject *root)
                 [exitWith] {
                   auto &recorder = FFRecorder::getInstance();
                   const QFileInfo file(recorder.outputPath() + "/" + recorder.outputFileName());
-                  const bool ok = file.exists() && file.size() > 0;
+                  const auto result = autoTestRecordingResult(file.exists(), file.size(), recorder.captureError().isEmpty());
+                      const bool ok = result == AutoTestOk;
                   qInfo().noquote()
                       << QStringLiteral("[AutoTest] result=%1 file=%2 bytes=%3 encoder=%4 "
                                         "hardware=%5 resolution=%6 encoderDetail=%7 captureError=%8")
@@ -674,7 +676,7 @@ void runAutoScenario(QObject *root)
                                   recorder.videoResolution(),
                                   recorder.selectedVideoEncoderDetail(),
                                   recorder.captureError());
-                  exitWith(ok ? AutoTestOk : AutoTestNoOutput);
+                  exitWith(result);
                 },
                 [exitWith] {
                   qWarning() << "[AutoTest] result=FAIL stage=stop (no Idle within 20 s)";

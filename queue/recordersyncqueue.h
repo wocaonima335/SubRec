@@ -46,6 +46,8 @@ public:
     RecorderSyncVideoDecision reserveVideoFrame();
 
     int64_t audioClockUs() const;
+    uint64_t droppedVideoFrames() const;
+    uint64_t videoCatchupCount() const;
 
 private:
     void clearReadyFramesLocked();
@@ -80,11 +82,10 @@ private:
     AVRational m_videoFrameRate{0, 1};
     AVRational m_videoTimeBase{0, 1};
     int64_t m_videoFrameDurationUs = 0;
-    int64_t m_nextVideoPtsUs = 0;
+    int64_t m_nextVideoTick = 0;
     int64_t m_startupMaxLeadUs = 150000;
     int64_t m_maxVideoLeadUs = 80000;
     int64_t m_targetVideoLagUs = 33333;
-    int64_t m_maxBufferedVideoUs = 250000;
     uint64_t m_droppedVideoFrames = 0;
     uint64_t m_videoCatchupCount = 0;
 };

@@ -9,7 +9,7 @@ endif()
 find_package(Threads REQUIRED)
 add_executable(startup_failure_tests startup_failure_tests.cpp
     ../../recorder/capture_session.cpp ../../thread/ffscreengrabthread.cpp
-    ../../thread/ffthread.cpp ../../queue/ffvframequeue.cpp)
+    ../../thread/ffthread.cpp ../../queue/ffvframequeue.cpp ../../queue/recordersyncqueue.cpp)
 target_compile_features(startup_failure_tests PRIVATE cxx_std_17)
 target_include_directories(startup_failure_tests PRIVATE fakes ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(startup_failure_tests PRIVATE Qt6::Core Threads::Threads

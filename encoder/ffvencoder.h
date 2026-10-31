@@ -46,7 +46,7 @@ public:
     void wakeAllThread();
 
     int encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational timeBase);
-    void finish(int streamIndex);
+    int finish(int streamIndex);
     AVCodecContext *getCodecCtx();
     FFVEncoderPars *getEncoderPars();
     // frame decides the input path: yuv420p system memory (dshow, ddagrab cpu mode) or

@@ -9,6 +9,7 @@
 #include "recorder/ffrecorder.h"
 
 #include <QMetaObject>
+#include <QString>
 
 extern "C" {
 #include <libavutil/pixfmt.h>
@@ -89,7 +90,8 @@ void FFVEncoderThread::run()
         if (received.result == MediaQueueResult::Eof) {
             if (vEncoder && streamIndex >= 0) {
                 qDebug() << "[FFVEncoderThread] frame queue finished, draining encoder";
-                vEncoder->finish(streamIndex);
+                const int flushed = vEncoder->finish(streamIndex);
+                if (flushed < 0) failEncoding(flushed);
             } else if (vEncoder) {
                 qWarning() << "[FFVEncoderThread] frame queue finished without an initialized encoder";
                 vEncoder->requestAbort();
@@ -142,7 +144,12 @@ void FFVEncoderThread::run()
         if (frame->format != AV_PIX_FMT_D3D11) {
             sendPreviewData(frame);
         }
-        vEncoder->encode(frame, streamIndex, vpts, timeBase);
+        const int encoded = vEncoder->encode(frame, streamIndex, vpts, timeBase);
+        if (encoded < 0) {
+            AVFrameTraits::release(frame);
+            failEncoding(encoded);
+            break;
+        }
         AVFrameTraits::release(frame);
     }
 }
@@ -192,4 +199,18 @@ void FFVEncoderThread::publishEncoderSelection(const VideoEncoderSelection &sele
                               Q_ARG(QString, selection.codecName),
                               Q_ARG(bool, selection.isHardware),
                               Q_ARG(QString, selection.detail));
+}
+
+void FFVEncoderThread::failEncoding(int error)
+{
+    m_stop.store(true);
+    if (frmQueue) frmQueue->close(MediaQueueCloseReason::Error, error);
+    if (recorder) {
+        QMetaObject::invokeMethod(recorder, "setCaptureError", Qt::QueuedConnection,
+                                  Q_ARG(QString, QStringLiteral("Video encoder failed (%1).").arg(error)),
+                                  Q_ARG(QString, QStringLiteral("Recording stopped; check the output file.")));
+        QMetaObject::invokeMethod(recorder, "stopOnCaptureError", Qt::QueuedConnection);
+    }
+    // Seal output even when the codec cannot flush; the muxer can drain prior packets.
+    if (vEncoder) vEncoder->finish(streamIndex);
 }

@@ -8,6 +8,8 @@
 static_assert(!capture::test::hooksEnabled(), "production hook gate was not stripped");
 static_assert(!capture::test::videoOpenTimeoutRequested(), "timeout hook was not stripped");
 
+static_assert(capture::test::muxFailAtPacket() == 0, "mux failure hook was not stripped");
+
 int main()
 {
     try {

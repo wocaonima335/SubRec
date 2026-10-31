@@ -3,8 +3,10 @@
 #include <libavutil/timestamp.h>
 #include <cerrno>
 #include <cstring>
+#include <cstdlib>
 #include <QDebug>
 #include <QString>
+#include "capture/test_hook_gate.h"
 
 FFMuxer::FFMuxer() {}
 FFMuxer::~FFMuxer() { close(); }
@@ -22,6 +24,8 @@ int FFMuxer::init(const std::string &url_, const std::string &format_, bool audi
   ++generation;
   abortRequested.store(false);
   terminalError = trailerResult = closeResult = 0;
+  lastAudioDts = lastVideoDts = AV_NOPTS_VALUE;
+  skippedPacketCount = skippedWarningCount = writtenPacketCount = 0;
   headerFlag = trailerFlag = false;
   url = url_;
   format = format_;
@@ -134,6 +138,26 @@ int FFMuxer::mux(AVPacket *packet) {
     return 0;
   }
 
+  int64_t *lastDts = streamIndex == aStreamIndex ? &lastAudioDts : &lastVideoDts;
+  if (*lastDts != AV_NOPTS_VALUE && packet->dts <= *lastDts) {
+    ++skippedPacketCount;
+    if (skippedWarningCount < 3 || skippedPacketCount % 100 == 0) {
+      ++skippedWarningCount;
+      qWarning() << "[Muxer] dropped non-increasing dts stream=" << streamType
+                 << "dts=" << packet->dts << "previous=" << *lastDts
+                 << "count=" << skippedPacketCount;
+    }
+    return 0;
+  }
+
+#if !defined(SUBREC_STRIP_TEST_HOOKS) || !SUBREC_STRIP_TEST_HOOKS
+  const auto target = capture::test::muxFailAtPacket();
+  if (target > 0 && writtenPacketCount + 1 == target) {
+    qWarning() << "[TestHook] SUBREC_TEST_MUX_FAIL_AT_PACKET enabled packet=" << target;
+    return failLocked(AVERROR(EIO));
+  }
+#endif
+
   // 写入操作（独占锁）
   {
     // === 步骤4：打印最终写入的包信息 ===
@@ -149,12 +173,15 @@ int FFMuxer::mux(AVPacket *packet) {
         << QString::number(av_q2d(dstTimeBase) * packet->dts, 'f', 6) << "s)"
         << "size=" << packet->size;
 
+    const int64_t packetDts = packet->dts;
     int ret = av_interleaved_write_frame(fmtCtx, packet);
     if (ret < 0) {
       qDebug().noquote() << "[Muxer] Mux Fail!";
       printError(ret);
       return failLocked(ret);
     }
+    *lastDts = packetDts;
+    ++writtenPacketCount;
   }
   return 0;
 }
@@ -181,7 +208,7 @@ int FFMuxer::writeHeader(std::chrono::milliseconds timeout) {
   AVDictionary *options = nullptr;
   const char *formatName = fmtCtx->oformat ? fmtCtx->oformat->name : nullptr;
   if (format == "mp4" || (formatName && std::strcmp(formatName, "mp4") == 0)) {
-    av_dict_set(&options, "movflags", "+faststart", 0);
+    av_dict_set(&options, "movflags", "+hybrid_fragmented", 0);
     // n8.0.3 mov_write_edts_tag derives media_time from start_dts/start_cts,
     // not codecpar->initial_padding (already copied by addStream). Keep the
     // session origin and let edit lists trim AAC priming / express video delay.
@@ -269,6 +296,11 @@ int FFMuxer::closeLocked() {
 int FFMuxer::close() {
   std::lock_guard<std::mutex> lock(mutex);
   return closeLocked();
+}
+
+uint64_t FFMuxer::skippedPackets() const {
+  std::lock_guard<std::mutex> lock(mutex);
+  return skippedPacketCount;
 }
 
 int FFMuxer::initMuxer() {

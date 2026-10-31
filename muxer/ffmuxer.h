@@ -33,6 +33,7 @@ public:
     int getStreamTiming(AVMediaType type, AVRational *timeBase,
                         AVRational *frameRate = nullptr);
     int close(); // Serialized with mux; idempotent. Callers own worker lifetime.
+    uint64_t skippedPackets() const;
 
 private:
     int initMuxer();
@@ -50,6 +51,11 @@ private:
     int terminalError = 0;
     int trailerResult = 0;
     int closeResult = 0;
+    int64_t lastAudioDts = AV_NOPTS_VALUE;
+    int64_t lastVideoDts = AV_NOPTS_VALUE;
+    uint64_t skippedPacketCount = 0;
+    uint64_t skippedWarningCount = 0;
+    uint64_t writtenPacketCount = 0;
     uint64_t generation = 0;
     std::atomic<bool> abortRequested{false};
     AVFormatContext *fmtCtx = nullptr;
@@ -60,7 +66,7 @@ private:
     AVRational vFrameRate{0, 1};
     int aStreamIndex = -1;
     int vStreamIndex = -1;
-    std::mutex mutex;
+    mutable std::mutex mutex;
     std::condition_variable streamsReady;
 };
 

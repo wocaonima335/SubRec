@@ -6,6 +6,11 @@
 #include "thread/ffmuxerthread.h"
 #include "thread/wincomscope.h"
 #include "thread/failure_cleanup_deadline.h"
+#include "queue/recordersyncqueue.h"
+
+extern "C" {
+#include <libavutil/error.h>
+}
 
 #include <QDebug>
 #include <memory>
@@ -282,7 +287,8 @@ bool CaptureSession::cleanup()
     if (!m_audioClosed) m_audioClosed = closeAudioSource();
     qDebug() << "[CaptureSession] audio source closed";
     qDebug() << "[CaptureSession] finalizing muxer";
-    if (!m_muxerClosed) m_muxerClosed = finalizeMuxer();
+    if (!m_muxerClosed && !finalizeMuxer())
+        qWarning() << "[CaptureSession] muxer finalization failed";
     qDebug() << "[CaptureSession] cleanup joined video/audio/muxer="
              << m_videoClosed << m_audioClosed << m_muxerClosed;
     if (!m_videoClosed || !m_audioClosed || !m_muxerClosed) return false;
@@ -350,6 +356,7 @@ bool CaptureSession::finalizeMuxer()
 {
     auto *muxerThread = m_recorder.getMuxerThread();
     if (!muxerThread) {
+        m_muxerClosed = true;
         return true;
     }
 
@@ -360,5 +367,16 @@ bool CaptureSession::finalizeMuxer()
         return false;
     qDebug() << "[CaptureSession] muxer close";
     muxerThread->close();
-    return true;
+    m_muxerClosed = true; // Joined/closed even if writing failed; release remains safe.
+    const int muxError = muxerThread->lastError();
+    if (muxError != 0) {
+        m_recorder.setCaptureError(
+            QStringLiteral("Muxer write failed; recording stopped."),
+            QStringLiteral("Recording stopped; check the output file."));
+    }
+    if (auto *syncQueue = m_recorder.getSyncQueue()) {
+        qInfo() << "[RecorderSyncQueue] summary dropped_video=" << syncQueue->droppedVideoFrames()
+                << "catchups=" << syncQueue->videoCatchupCount();
+    }
+    return muxError == 0;
 }

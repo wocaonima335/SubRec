@@ -10,6 +10,7 @@ add_executable(muxer_lifecycle_tests muxer_lifecycle_tests.cpp ../../muxer/ffmux
 target_compile_features(muxer_lifecycle_tests PRIVATE cxx_std_17)
 target_include_directories(muxer_lifecycle_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(muxer_lifecycle_tests PRIVATE Qt6::Core)
+target_compile_definitions(muxer_lifecycle_tests PRIVATE SUBREC_ENABLE_TEST_HOOKS=1)
 foreach(component IN ITEMS avformat avcodec avutil)
     target_link_libraries(muxer_lifecycle_tests PRIVATE "${FFMPEG_ROOT}/lib/${component}.lib")
 endforeach()
@@ -88,6 +89,13 @@ target_link_libraries(video_only_tests PRIVATE Qt6::Core
     "${FFMPEG_ROOT}/lib/avformat.lib" "${FFMPEG_ROOT}/lib/avcodec.lib" "${FFMPEG_ROOT}/lib/avutil.lib")
 add_test(NAME video_only_pipeline COMMAND video_only_tests)
 set_tests_properties(video_only_pipeline PROPERTIES TIMEOUT 15 LABELS "video;sync;muxer")
+
+add_executable(sync_tick_tests sync_tick_tests.cpp ../../queue/recordersyncqueue.cpp)
+target_compile_features(sync_tick_tests PRIVATE cxx_std_17)
+target_include_directories(sync_tick_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(sync_tick_tests PRIVATE Qt6::Core "${FFMPEG_ROOT}/lib/avutil.lib")
+add_test(NAME recorder_sync_ticks COMMAND sync_tick_tests)
+set_tests_properties(recorder_sync_ticks PROPERTIES TIMEOUT 30 LABELS "sync")
 
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()

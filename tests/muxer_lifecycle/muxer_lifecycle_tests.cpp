@@ -1,4 +1,5 @@
 #include "muxer/ffmuxer.h"
+#include "aac_priming_fixture.h"
 #include <QDir>
 #include <QUuid>
 #include <chrono>
@@ -10,7 +11,13 @@
 #include <cerrno>
 
 using namespace std::chrono_literals;
-#define CHECK(test) do { if (!(test)) throw std::runtime_error(#test); } while (false)
+#ifndef _WIN32
+static void setMuxFailHook(const char *value) { setenv("SUBREC_TEST_MUX_FAIL_AT_PACKET", value, 1); }
+static void clearMuxFailHook() { unsetenv("SUBREC_TEST_MUX_FAIL_AT_PACKET"); }
+#else
+static void setMuxFailHook(const char *value) { _putenv_s("SUBREC_TEST_MUX_FAIL_AT_PACKET", value); }
+static void clearMuxFailHook() { _putenv_s("SUBREC_TEST_MUX_FAIL_AT_PACKET", ""); }
+#endif
 
 static AVCodecContext *audio()
 {
@@ -153,6 +160,58 @@ static void freedContextsAndCloseRace(const QString &root)
     const int result = writer.get();
     CHECK(result == 0 || result == AVERROR(EINVAL));
 }
+static void duplicateDtsIsSkipped()
+{
+    FFMuxer mux;
+    CHECK(mux.init("unused", "null", false) == 0);
+    auto *v = video();
+    CHECK(mux.addStream(v) == 0);
+    avcodec_free_context(&v);
+    CHECK(mux.writeHeader() == 0);
+    for (int i = 0; i < 3; ++i) {
+        AVPacket *packet = av_packet_alloc();
+        CHECK(packet && av_new_packet(packet, 1) == 0);
+        packet->stream_index = mux.getVStreamIndex();
+        packet->pts = packet->dts = i == 1 ? 0 : i;
+        packet->duration = 1;
+        CHECK(mux.mux(packet) == 0);
+        av_packet_free(&packet);
+    }
+    CHECK(mux.skippedPackets() == 1);
+    CHECK(mux.writeTrailer() == 0);
+    CHECK(mux.close() == 0);
+}
+static void injectedFailureStillWritesTrailer(const QString &root)
+{
+    const QString path = root + "/injected-failure.mp4";
+    FFMuxer mux;
+    CHECK(mux.init(path.toStdString(), "mp4", false) == 0);
+    auto *ctx = avcodec_alloc_context3(avcodec_find_decoder(AV_CODEC_ID_H264));
+    CHECK(ctx && ctx->codec);
+    ctx->width = ctx->height = 16; ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+    ctx->time_base = {1,30}; ctx->framerate = {30,1};
+    ctx->extradata_size = sizeof(h264);
+    ctx->extradata = static_cast<uint8_t *>(av_mallocz(sizeof(h264) + AV_INPUT_BUFFER_PADDING_SIZE));
+    CHECK(ctx->extradata); std::memcpy(ctx->extradata, h264, sizeof(h264));
+    CHECK(mux.addStream(ctx) == 0); avcodec_free_context(&ctx);
+    CHECK(mux.writeHeader() == 0);
+    setMuxFailHook("2");
+    for (int n = 0; n < 2; ++n) {
+        AVPacket *packet = av_packet_alloc();
+        CHECK(packet && av_new_packet(packet, sizeof(h264)) == 0);
+        std::memcpy(packet->data, h264, sizeof(h264));
+        packet->stream_index = mux.getVStreamIndex(); packet->pts = packet->dts = n;
+        packet->duration = 1; packet->flags = AV_PKT_FLAG_KEY;
+        const int result = mux.mux(packet); av_packet_free(&packet);
+        CHECK(n == 0 ? result == 0 : result < 0);
+    }
+    clearMuxFailHook();
+    CHECK(mux.writeTrailer() == 0);
+    CHECK(mux.close() == 0);
+    AVFormatContext *input = nullptr;
+    CHECK(avformat_open_input(&input, path.toStdString().c_str(), nullptr, nullptr) == 0);
+    avformat_close_input(&input);
+}
 int main()
 {
     try {
@@ -160,7 +219,7 @@ int main()
         const QString root = QDir::currentPath() + "/muxer-output-" +
                              QUuid::createUuid().toString(QUuid::WithoutBraces);
         CHECK(QDir().mkpath(root));
-        emptyAndPreconditions(); waits(); failures(root); freedContextsAndCloseRace(root);
+        emptyAndPreconditions(); waits(); failures(root); freedContextsAndCloseRace(root); duplicateDtsIsSkipped(); injectedFailureStillWritesTrailer(root);
         std::cout << "PASS: muxer lifecycle; artifacts=" << root.toStdString() << '\n';
         return 0;
     } catch (const std::exception &error) {

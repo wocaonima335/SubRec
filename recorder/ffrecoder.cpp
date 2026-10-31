@@ -529,6 +529,11 @@ void FFRecorder::setCaptureError(const QString &message, const QString &remediat
   emit captureErrorChanged();
 }
 
+void FFRecorder::stopOnCaptureError() {
+  if (m_scheduler && !m_captureError.isEmpty() && isRecording())
+    m_scheduler->stop();
+}
+
 void FFRecorder::clearCaptureError() {
   if (m_captureError.isEmpty() && m_captureRemediation.isEmpty()) return;
   m_captureError.clear();

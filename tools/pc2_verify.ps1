@@ -23,7 +23,7 @@
     SUBREC_DDAGRAB_MODE=auto|gpu|cpu          ddagrab frames: D3D11 passthrough or system memory
     SUBREC_DDAGRAB_OUTPUT=<n>                 DXGI output index (default 0)
     SUBREC_FFMPEG_LOG=info|verbose|debug      FFmpeg messages into SubRec.log
-  App exit codes: 0 ok, 2 bad MIC_DEVICE/OUTPUT, 3 never Running, 4 no/empty file, 5 stop timeout.
+  App exit codes: 0 ok, 2 bad MIC_DEVICE/OUTPUT, 3 never Running, 4 no/empty file, 5 stop timeout, 7 captureError.
 
 .EXAMPLE
   powershell -NoProfile -File tools\pc2_verify.ps1 `
@@ -38,6 +38,8 @@ param(
     [string]$MicDevice = '',                             # empty: record without selecting a microphone
     [string]$SourceDir = (Split-Path -Parent $PSScriptRoot),
     [string]$BuildRoot = '',                             # default: <SourceDir>\build\pc2
+    [string]$OutputDir = '',                             # default: run directory (use D:\SubRec_test\out on PC3)
+    [string]$ArtifactRoot = '',                          # optional root for logs/results (use D:\SubRec_test\logs)
     [string]$CMakeBin = '',                              # folder with cmake.exe/ctest.exe if not on PATH
     [string]$NinjaBin = '',                              # folder with ninja.exe if not on PATH
     [int]$RecordMs = 5000,
@@ -55,8 +57,11 @@ $ErrorActionPreference = 'Continue'
 
 if (-not $BuildRoot) { $BuildRoot = Join-Path $SourceDir 'build\pc2' }
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$runDir = Join-Path $BuildRoot "pc2-run-$stamp"
+$artifactRoot = if ($ArtifactRoot) { $ArtifactRoot } else { $BuildRoot }
+$runDir = Join-Path $artifactRoot "pc2-run-$stamp"
 New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+if (-not $OutputDir) { $OutputDir = $runDir }
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $results = New-Object System.Collections.Generic.List[object]
 
 function Add-Result([string]$Step, [bool]$Ok, [string]$Detail) {
@@ -144,6 +149,7 @@ $appLog = Join-Path $mainBuild 'SubRec.log'   # main.cpp: <applicationDirPath>\S
 
 function Invoke-Recording([string]$Name, [hashtable]$Environment) {
     $out = Join-Path $runDir "$Name.mp4"
+    if ($OutputDir) { $out = Join-Path $OutputDir "$Name.mp4" }
     $vars = @{
         SUBREC_AUTOTEST_SCENARIO  = 'record_seconds'
         SUBREC_AUTOTEST_RECORD_MS = "$RecordMs"
@@ -185,10 +191,11 @@ function Invoke-Recording([string]$Name, [hashtable]$Environment) {
     }
     $summary = ''
     if (Test-Path $runLog) {
-        $summary = (Select-String -Path $runLog -Pattern '\[AutoTest\] result=|\[VEncSelection\] winner=|\[Ddagrab\] opened|\[initVideo\] (ddagrab|falling back)' |
+        $summary = (Select-String -Path $runLog -Pattern '\[AutoTest\] result=|\[AutoTest\] exit code|\[CaptureError\]|\[VEncSelection\] winner=|\[Ddagrab\] opened|\[initVideo\] (ddagrab|falling back)' |
                     ForEach-Object { $_.Line.Trim() }) -join ' | '
     }
-    Add-Result "record $Name (app exit code)" ($code -eq 0) "exit=$code $summary"
+    $captureErrors = if (Test-Path $runLog) { @(Select-String -Path $runLog -Pattern '\[CaptureError\]' | ForEach-Object { $_.Line.Trim() }) } else { @() }
+    Add-Result "record $Name (app exit code)" (($code -eq 0) -and $captureErrors.Count -eq 0) "exit=$code captureError=$($captureErrors -join ' | ') $summary"
     if ($Name -like 'rec-wasapi-*') {
         $nativeStarted = (Test-Path $runLog) -and [bool](Select-String -Path $runLog -SimpleMatch '[WASAPI] started')
         Add-Result "WASAPI source $Name" $nativeStarted 'Requires native source startup; a DirectShow fallback does not pass.'
