@@ -110,25 +110,6 @@ void Demuxer::init(const string &url_,
     }
 }
 
-namespace {
-// P1-Z: DirectShow video arrives as packets. Stamp packet->opaque_ref with the same
-// tagged CaptureStamp that setFrameCaptureUs() writes (queue/media_clock.h). A decoder
-// opened with AV_CODEC_FLAG_COPY_OPAQUE moves packet->opaque_ref to the decoded
-// frame->opaque_ref, where frameCaptureUs() reads it.
-int setPacketCaptureUs(AVPacket *packet, int64_t captureUs)
-{
-    using namespace media_clock_detail;
-    if (!packet || captureUs == AV_NOPTS_VALUE) return AVERROR(EINVAL);
-    if (packet->opaque_ref) return AVERROR(EEXIST); // never overwrite foreign metadata
-    AVBufferRef *buffer = av_buffer_alloc(sizeof(CaptureStamp));
-    if (!buffer) return AVERROR(ENOMEM);
-    const CaptureStamp stamp{captureStampTag, 1, 0, captureUs};
-    std::memcpy(buffer->data, &stamp, sizeof(stamp));
-    packet->opaque_ref = buffer;
-    return 0;
-}
-} // namespace
-
 int Demuxer::demux()
 {
     std::lock_guard<std::mutex> lock(mutex);

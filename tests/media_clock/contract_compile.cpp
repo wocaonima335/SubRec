@@ -27,6 +27,10 @@ using Frame = std::unique_ptr<AVFrame, FrameDelete>;
 // transport, using real FFmpeg: this is not a D3D11/filter-graph acceptance test.
 int main()
 {
+    AVPacket packet{};
+    CHECK(setPacketCaptureUs(&packet, 456) == 0);
+    CHECK(setPacketCaptureUs(&packet, 789) == AVERROR(EEXIST));
+    av_buffer_unref(&packet.opaque_ref);
     Frame source(av_frame_alloc()), referenced(av_frame_alloc()), props(av_frame_alloc());
     CHECK(source && referenced && props);
     int64_t stamp = 123;

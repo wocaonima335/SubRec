@@ -11,6 +11,7 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
 #include <libavutil/rational.h>
+#include <libavcodec/packet.h>
 }
 
 // Session-wide default; capture, filters and encoder must use this same rational.
@@ -85,6 +86,9 @@ static_assert(std::is_trivial<CaptureStamp>::value &&
 // - Preserve the original capture stamp through the recording graph; fail/report
 //   a missing stamp at the consumer, never substitute a later wall-clock time.
 //   Hold frames keep the source stamp; scheduler tick supplies their new PTS.
+// - Packet-based video inputs use setPacketCaptureUs() below. With
+//   AV_CODEC_FLAG_COPY_OPAQUE enabled, libavcodec transfers that packet stamp
+//   to the decoded frame.
 // - Mutating a frame needs exclusive ownership of the AVFrame shell. Separate
 //   referenced shells may be read concurrently; helpers do not synchronize them.
 // Returns false for absent/foreign/malformed metadata or a null output pointer;
@@ -117,5 +121,21 @@ inline int setFrameCaptureUs(AVFrame *frame, int64_t captureUs)
     std::memcpy(buffer->data, &stamp, sizeof(stamp));
     av_buffer_unref(&frame->opaque_ref);
     frame->opaque_ref = buffer;
+    return 0;
+}
+
+// Packet counterpart for packet-based inputs such as DirectShow. It uses the
+// same tagged representation so AV_CODEC_FLAG_COPY_OPAQUE can carry the value
+// into decoded AVFrames. Failures leave the packet unchanged.
+inline int setPacketCaptureUs(AVPacket *packet, int64_t captureUs)
+{
+    using namespace media_clock_detail;
+    if (!packet || captureUs == AV_NOPTS_VALUE) return AVERROR(EINVAL);
+    if (packet->opaque_ref) return AVERROR(EEXIST);
+    AVBufferRef *buffer = av_buffer_alloc(sizeof(CaptureStamp));
+    if (!buffer) return AVERROR(ENOMEM);
+    const CaptureStamp stamp{captureStampTag, 1, 0, captureUs};
+    std::memcpy(buffer->data, &stamp, sizeof(stamp));
+    packet->opaque_ref = buffer;
     return 0;
 }

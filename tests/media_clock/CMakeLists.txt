@@ -33,5 +33,18 @@ target_link_libraries(audio_chunk_tests PRIVATE Qt6::Core "${contract_avutil}")
 add_test(NAME media_clock_audio_chunks COMMAND audio_chunk_tests)
 set_tests_properties(media_clock_audio_chunks PROPERTIES LABELS "audio;sync" TIMEOUT 10)
 
+add_executable(media_clock_opaque_props_tests opaque_props_tests.cpp)
+target_compile_features(media_clock_opaque_props_tests PRIVATE cxx_std_17)
+target_include_directories(media_clock_opaque_props_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
+if(WIN32)
+    target_link_libraries(media_clock_opaque_props_tests PRIVATE
+        "${FFMPEG_ROOT}/lib/avfilter.lib" "${FFMPEG_ROOT}/lib/avutil.lib")
+else()
+    find_library(opaque_avfilter NAMES avfilter PATHS "${FFMPEG_ROOT}/lib" NO_DEFAULT_PATH REQUIRED)
+    target_link_libraries(media_clock_opaque_props_tests PRIVATE "${opaque_avfilter}" "${contract_avutil}")
+endif()
+add_test(NAME media_clock_opaque_props COMMAND media_clock_opaque_props_tests)
+set_tests_properties(media_clock_opaque_props PROPERTIES TIMEOUT 30 LABELS "ci;clock;metadata" SKIP_RETURN_CODE 77)
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()

@@ -197,6 +197,13 @@ void FFVDecoder::decode(AVPacket *packet)
                 AVFrame *swsFrame = nullptr;
                 resampler->resample(frame, &swsFrame);
                 qCDebug(subrec::logging::frameLog) << "[VDec] after resample";
+                if (!swsFrame) {
+                    qWarning() << "[VDec] video resample failed; closing frame queue";
+                    if (frmQueue)
+                        frmQueue->close(MediaQueueCloseReason::Error, AVERROR(ENOMEM));
+                    av_frame_unref(frame);
+                    break;
+                }
                 qCDebug(subrec::logging::frameLog) << "[VDecHash] raw=0x" << QString::number(frameFingerprint(frame), 16)
                          << " yuv=0x" << QString::number(frameFingerprint(swsFrame), 16)
                          << " pts=" << frame->pts;
@@ -333,6 +340,7 @@ void FFVDecoder::init(AVStream *stream_, FFVFrameQueue *frmQueue_)
         av_dict_set(&codec_options, "low_latency", "1", 0);
     }
 
+    codecCtx->flags |= AV_CODEC_FLAG_COPY_OPAQUE;
     ret = avcodec_open2(codecCtx, codec, &codec_options);
 
     if (ret < 0)

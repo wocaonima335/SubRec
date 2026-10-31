@@ -55,6 +55,17 @@ AVFrame *FFVResampler::allocFrame(FFVideoPars *vPars, AVFrame *srcFrame) {
   frame->format = vPars->pixFmtEnum;
   frame->pts = srcFrame ? srcFrame->pts : AV_NOPTS_VALUE;
 
+  // swscale allocates a new AVFrame shell. Preserve opaque_ref and the other
+  // frame properties before writing pixels into the destination.
+  if (srcFrame) {
+    const int propsRet = av_frame_copy_props(frame, srcFrame);
+    if (propsRet < 0) {
+      printError(propsRet);
+      av_frame_free(&frame);
+      return nullptr;
+    }
+  }
+
   int ret = av_frame_get_buffer(frame, 32);
   if (ret < 0) {
     printError(ret);
