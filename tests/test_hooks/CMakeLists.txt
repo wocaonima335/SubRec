@@ -52,5 +52,10 @@ target_compile_features(autotest_result_tests PRIVATE cxx_std_17)
 target_include_directories(autotest_result_tests PRIVATE ../..)
 add_test(NAME autotest_capture_error_verdict COMMAND autotest_result_tests)
 
+add_executable(capture_error_state_tests capture_error_state_tests.cpp)
+target_compile_features(capture_error_state_tests PRIVATE cxx_std_17)
+target_include_directories(capture_error_state_tests PRIVATE ../..)
+add_test(NAME capture_error_first_error_wins COMMAND capture_error_state_tests)
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()

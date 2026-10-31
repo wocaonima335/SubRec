@@ -15,3 +15,8 @@ inline AutoTestExit autoTestRecordingResult(bool exists, long long bytes, bool c
     if (!captureErrorEmpty) return AutoTestCaptureError;
     return exists && bytes > 0 ? AutoTestOk : AutoTestNoOutput;
 }
+
+inline bool autoTestCaptureFailureReady(bool finalized, bool captureErrorEmpty)
+{
+    return finalized && !captureErrorEmpty;
+}

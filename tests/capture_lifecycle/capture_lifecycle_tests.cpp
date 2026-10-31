@@ -718,6 +718,23 @@ bool realVideoTimeoutClosesOpenedAudio()
     return true;
 }
 
+bool firstCaptureErrorWins()
+{
+    auto &recorder = FFRecorder::getInstance();
+    recorder.clearCaptureError();
+    recorder.setCaptureError(QStringLiteral("Muxer write failed; recording stopped."),
+                             QStringLiteral("Finalize the output file."));
+    recorder.setCaptureError(QStringLiteral("Audio mix input queue failed"),
+                             QStringLiteral("Check the audio devices."));
+    CHECK(recorder.captureError() == QStringLiteral("Muxer write failed; recording stopped."));
+    CHECK(recorder.captureRemediation() == QStringLiteral("Finalize the output file."));
+    recorder.clearCaptureError();
+    recorder.setCaptureError(QStringLiteral("next session error"), QStringLiteral("retry"));
+    CHECK(recorder.captureError() == QStringLiteral("next session error"));
+    recorder.clearCaptureError();
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -738,6 +755,7 @@ int main(int argc, char **argv)
         {"destructor_discards_posted_callbacks", destructorDiscardsPostedCallbacks},
         {"real_session_input_format_failure_twice", realSessionInputFormatFailureTwice},
         {"real_video_timeout_closes_opened_audio", realVideoTimeoutClosesOpenedAudio},
+        {"first_capture_error_wins", firstCaptureErrorWins},
     };
     if (argc > 1 && std::string(argv[1]) == "--audio-modes") {
         groups = {{"audio_mode_transitions", audioModeTransitions},

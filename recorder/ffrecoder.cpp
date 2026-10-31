@@ -521,9 +521,11 @@ void FFRecorder::notifyDeviceConfigurationChanged() { emit captureDevicesChanged
 void FFRecorder::notifyCaptureStateChanged() { emit captureStateChanged(); }
 
 void FFRecorder::setCaptureError(const QString &message, const QString &remediation) {
-  if (m_captureError == message && m_captureRemediation == remediation) return;
-  m_captureError = message;
-  m_captureRemediation = remediation;
+  if (!m_captureError.setFirst(message, remediation)) {
+    qWarning().noquote() << QStringLiteral("[CaptureError] secondary=true message=%1 remediation=%2")
+                                  .arg(message, remediation);
+    return;
+  }
   qWarning().noquote() << QStringLiteral("[CaptureError] message=%1 remediation=%2")
                                 .arg(message, remediation);
   emit captureErrorChanged();
@@ -535,9 +537,8 @@ void FFRecorder::stopOnCaptureError() {
 }
 
 void FFRecorder::clearCaptureError() {
-  if (m_captureError.isEmpty() && m_captureRemediation.isEmpty()) return;
+  if (m_captureError.isEmpty()) return;
   m_captureError.clear();
-  m_captureRemediation.clear();
   emit captureErrorChanged();
 }
 

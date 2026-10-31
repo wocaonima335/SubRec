@@ -137,6 +137,13 @@ bool CaptureScheduler::start()
         return false;
     }
     auto *session = next.get();
+    // Reset fatal diagnostics for the next accepted recording before it can
+    // publish Running. This also avoids a stale queued clear erasing a new
+    // session's first error.
+    m_recorder.clearCaptureError();
+    // Flush any worker error notifications that were queued before this new
+    // start, while keeping the clear ahead of notifications from this run.
+    QMetaObject::invokeMethod(&m_recorder, "clearCaptureError", Qt::QueuedConnection);
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_session = std::move(next);
@@ -697,7 +704,6 @@ void CaptureScheduler::onSessionStarted(std::uint64_t sessionId, const CaptureSt
     }
     if (result.ok) {
         setStateLocked(CaptureSchedulerState::Running, QStringLiteral("session started"));
-        QMetaObject::invokeMethod(&m_recorder, "clearCaptureError", Qt::QueuedConnection);
         return;
     }
     CaptureError error = result.error.value_or(CaptureError{});

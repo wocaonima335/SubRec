@@ -2,6 +2,7 @@
 #define FFRECORDER_H
 
 #include "ffrecorder_p.h"
+#include "capture/capture_error_state.h"
 
 #include <QObject>
 #include <QVariantList>
@@ -134,8 +135,8 @@ public:
   QString selectedVideoDeviceId() const;
   QString selectedAudioDeviceId() const;
   QString captureState() const;
-  QString captureError() const { return m_captureError; }
-  QString captureRemediation() const { return m_captureRemediation; }
+  QString captureError() const { return m_captureError.message(); }
+  QString captureRemediation() const { return m_captureError.remediation(); }
   bool canStartCapture() const;
   QString screenCaptureBackend() const;
   bool screenCaptureBackendFromEnvironment() const;
@@ -198,8 +199,7 @@ private:
   QString m_selectedVideoEncoder;
   bool m_selectedVideoEncoderIsHardware = false;
   QString m_selectedVideoEncoderDetail;
-  QString m_captureError;
-  QString m_captureRemediation;
+  CaptureErrorState<QString> m_captureError;
 };
 
 #endif

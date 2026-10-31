@@ -22,6 +22,7 @@
 #include <QStringList>
 #include <cstdlib>
 #include <cstdio>
+#include <chrono>
 #include <memory>
 
 QFile logFile;
@@ -240,6 +241,37 @@ void runAutoScenario(QObject *root)
       ::_Exit(0);
     });
   };
+
+  // A fatal worker error can stop a recording before its configured duration.
+  // Keep watching independently of the duration timers and report it as soon
+  // as cleanup reaches Idle/Failed (the output trailer has then been handled).
+  if (scenario == QLatin1String("record_seconds") ||
+      scenario == QLatin1String("mode_cycle")) {
+    auto sawRunning = std::make_shared<bool>(false);
+    auto watchFatal = std::make_shared<std::function<void()>>();
+    *watchFatal = [watchFatal, sawRunning, quitIssued]() {
+      auto &recorder = FFRecorder::getInstance();
+      const auto state = recorder.captureScheduler().state();
+      if (state == CaptureSchedulerState::Running || state == CaptureSchedulerState::Paused)
+        *sawRunning = true;
+      const bool finalized = state == CaptureSchedulerState::Idle ||
+                             state == CaptureSchedulerState::Failed;
+      if (*sawRunning && autoTestCaptureFailureReady(finalized,
+                                                     recorder.captureError().isEmpty())) {
+        if (!quitIssued->exchange(true, std::memory_order_acq_rel)) {
+          qInfo().noquote() << QStringLiteral("[AutoTest] result=FAIL captureError=%1")
+                                    .arg(recorder.captureError());
+          qInfo() << "[AutoTest] exit code" << AutoTestCaptureError;
+          const auto grace = capture_stop::timeout() + std::chrono::milliseconds(1500);
+          capture_stop::armAutoTestExitWatchdog(AutoTestCaptureError, grace);
+          QCoreApplication::exit(AutoTestCaptureError);
+        }
+        return;
+      }
+      QTimer::singleShot(100, [watchFatal] { (*watchFatal)(); });
+    };
+    QTimer::singleShot(0, [watchFatal] { (*watchFatal)(); });
+  }
 
   auto scheduleWhenState =
       [autoStateName](CaptureSchedulerState targetState,
