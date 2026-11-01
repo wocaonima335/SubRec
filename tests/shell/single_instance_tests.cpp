@@ -78,6 +78,38 @@ int main(int argc, char **argv)
     // 6. listen() is idempotent.
     CHECK(primary.listen());
 
+    // 7. Race (#5): the secondary starts before the primary listens. It must keep
+    //    retrying and still get its ack once the primary comes up within the timeout.
+    {
+        qputenv("USERNAME", QByteArray("subrec_race_") + QByteArray::number(QCoreApplication::applicationPid()));
+        SingleInstance late;
+        int lateShows = 0;
+        QObject::connect(&late, &SingleInstance::showRequested, [&] { ++lateShows; });
+        QTimer::singleShot(200, [&] { late.listen(); });
+        qint64 ms = 0;
+        CHECK(notifyFromWorker(SingleInstance::Request::Show, 1500, &ms));
+        CHECK(ms >= 150);
+        CHECK(lateShows == 1);
+    }
+
+    // 8. #5 on Windows: the primary's GUI thread is still busy starting up (no event
+    //    loop yet) when the secondary connects. The ack must not depend on it; the
+    //    show request is delivered once the GUI thread spins.
+    {
+        qputenv("USERNAME", QByteArray("subrec_busy_") + QByteArray::number(QCoreApplication::applicationPid()));
+        SingleInstance busy;
+        CHECK(busy.listen());
+        int busyShows = 0;
+        QObject::connect(&busy, &SingleInstance::showRequested, [&] { ++busyShows; });
+        bool acked = false;
+        std::thread worker([&] { SingleInstance s; acked = s.notifyPrimary(SingleInstance::Request::Show, 1000); });
+        worker.join();               // GUI thread blocked: no processEvents meanwhile
+        CHECK(acked);
+        CHECK(busyShows == 0);       // not delivered until the event loop runs
+        QCoreApplication::processEvents();
+        CHECK(busyShows == 1);
+    }
+
     if (failures == 0) std::printf("single_instance_tests: all passed\n");
     return failures == 0 ? 0 : 1;
 }

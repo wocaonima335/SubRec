@@ -6,7 +6,6 @@
 #include <QObject>
 #include <QString>
 
-class QLocalServer;
 
 namespace subrec::shell {
 
@@ -39,7 +38,10 @@ public:
     // than refusing to start) and logs "[Shell]". Call once.
     Role acquire();
 
-    // Primary only. Starts the local server (removing a stale server name first).
+    // Primary only. Starts the local server (removing a stale server name first) on a
+    // dedicated thread, so a secondary is acknowledged even while the primary's GUI
+    // thread is still busy starting up (fix for #5); showRequested is queued to the
+    // GUI thread and delivered once its event loop runs.
     // Returns false if listening failed; the app still runs, but a later second launch
     // will time out and show its "not responding" message box.
     bool listen();
@@ -58,8 +60,9 @@ signals:
     void showRequested();
 
 private:
+    struct Worker;                    // server thread; answers without the GUI event loop
     void *m_mutex = nullptr;          // HANDLE; void* keeps <windows.h> out of the header
-    QLocalServer *m_server = nullptr; // child of this
+    Worker *m_worker = nullptr;
 };
 
 } // namespace subrec::shell

@@ -6,6 +6,10 @@
 #include <QDebug>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QThread>
+
+#include <atomic>
+#include <future>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -18,6 +22,12 @@ namespace subrec::shell {
 
 namespace proto = single_instance_protocol;
 
+struct SingleInstance::Worker {
+    std::atomic<bool> stop{false};
+    std::atomic<bool> listening{false};
+    QThread *thread = nullptr;
+};
+
 SingleInstance::SingleInstance(QObject *parent)
     : QObject(parent)
 {
@@ -25,7 +35,15 @@ SingleInstance::SingleInstance(QObject *parent)
 
 SingleInstance::~SingleInstance()
 {
-    if (m_server) m_server->close();
+    if (m_worker) {
+        m_worker->stop = true;
+        if (m_worker->thread) {
+            m_worker->thread->wait();
+            delete m_worker->thread;
+        }
+        delete m_worker;
+        m_worker = nullptr;
+    }
 #ifdef _WIN32
     if (m_mutex) CloseHandle(static_cast<HANDLE>(m_mutex));
 #endif
@@ -63,43 +81,62 @@ SingleInstance::Role SingleInstance::acquire()
 
 bool SingleInstance::listen()
 {
-    if (m_server) return m_server->isListening();
-    m_server = new QLocalServer(this);
-    // Only the current user may connect.
-    m_server->setSocketOptions(QLocalServer::UserAccessOption);
+    if (m_worker) return m_worker->listening;
+    m_worker = new Worker;
     const QString name = serverName();
-    // We own the mutex, so any existing pipe/socket with this name is stale.
-    QLocalServer::removeServer(name);
-    if (!m_server->listen(name)) {
-        qWarning().noquote() << QStringLiteral("[Shell] single-instance listen failed: %1")
-                                    .arg(m_server->errorString());
-        return false;
-    }
-    connect(m_server, &QLocalServer::newConnection, this, [this] {
-        while (QLocalSocket *socket = m_server->nextPendingConnection()) {
-            connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
-            connect(socket, &QLocalSocket::readyRead, this, [this, socket] {
-                if (!socket->canReadLine()) {
-                    if (socket->bytesAvailable() > qint64(proto::kMaxLine)) socket->abort();
-                    return;
+    std::promise<bool> started;
+    std::future<bool> startedFuture = started.get_future();
+    Worker *w = m_worker;
+    w->thread = QThread::create([this, w, name, &started] {
+        // All server objects live on this thread and use blocking calls only, so no
+        // event loop is needed here and the GUI thread may be busy (#5).
+        QLocalServer server;
+        server.setSocketOptions(QLocalServer::UserAccessOption); // current user only
+        // We own the mutex, so any existing pipe/socket with this name is stale.
+        QLocalServer::removeServer(name);
+        const bool ok = server.listen(name);
+        if (!ok)
+            qWarning().noquote() << QStringLiteral("[Shell] single-instance listen failed: %1")
+                                        .arg(server.errorString());
+        w->listening = ok;
+        started.set_value(ok);
+        if (!ok) return;
+        while (!w->stop) {
+            if (!server.waitForNewConnection(100)) continue;
+            while (QLocalSocket *socket = server.nextPendingConnection()) {
+                QDeadlineTimer deadline(1000);
+                while (!socket->canReadLine() && !deadline.hasExpired()
+                       && socket->bytesAvailable() <= qint64(proto::kMaxLine)
+                       && socket->state() == QLocalSocket::ConnectedState) {
+                    socket->waitForReadyRead(int(qMax<qint64>(1, deadline.remainingTime())));
                 }
-                const QByteArray line = socket->readLine(qint64(proto::kMaxLine) + 1);
-                const proto::Parsed req = proto::parseRequest(
-                    std::string_view(line.constData(), size_t(line.size())));
+                proto::Parsed req = proto::Parsed::Invalid;
+                if (socket->canReadLine()) {
+                    const QByteArray line = socket->readLine(qint64(proto::kMaxLine) + 1);
+                    req = proto::parseRequest(std::string_view(line.constData(), size_t(line.size())));
+                }
                 if (req == proto::Parsed::Invalid) {
                     qWarning().noquote() << "[Shell] single-instance: invalid request ignored";
                     socket->abort();
-                    return;
+                } else {
+                    const std::string ack = proto::ackLine();
+                    socket->write(ack.data(), qint64(ack.size()));
+                    socket->waitForBytesWritten(500);
+                    socket->disconnectFromServer();
+                    if (socket->state() != QLocalSocket::UnconnectedState)
+                        socket->waitForDisconnected(200);
+                    if (req == proto::Parsed::Show)
+                        QMetaObject::invokeMethod(this, [this] { emit showRequested(); },
+                                                  Qt::QueuedConnection);
                 }
-                const std::string ack = proto::ackLine();
-                socket->write(ack.data(), qint64(ack.size()));
-                socket->flush();
-                socket->disconnectFromServer();
-                if (req == proto::Parsed::Show) emit showRequested();
-            });
+                delete socket;
+            }
         }
+        server.close();
     });
-    return true;
+    w->thread->setObjectName(QStringLiteral("SubRecSingleInstance"));
+    w->thread->start();
+    return startedFuture.get();
 }
 
 bool SingleInstance::notifyPrimary(Request request, int timeoutMs)
@@ -110,11 +147,23 @@ bool SingleInstance::notifyPrimary(Request request, int timeoutMs)
 #endif
     QDeadlineTimer deadline(timeoutMs < 0 ? 0 : timeoutMs);
     QLocalSocket socket;
-    socket.connectToServer(serverName());
-    if (!socket.waitForConnected(int(deadline.remainingTime()))) {
-        qWarning().noquote() << QStringLiteral("[Shell] single-instance connect failed: %1")
-                                    .arg(socket.errorString());
-        return false;
+    // Race (#5): a secondary that loses the mutex race can run before the primary has
+    // called listen(). The pipe then does not exist yet, so keep retrying until the
+    // deadline instead of failing on the first ServerNotFound/ConnectionRefused.
+    for (;;) {
+        socket.connectToServer(serverName());
+        if (socket.waitForConnected(int(deadline.remainingTime()))) break;
+        const auto err = socket.error();
+        const bool retryable = err == QLocalSocket::ServerNotFoundError
+                            || err == QLocalSocket::ConnectionRefusedError
+                            || err == QLocalSocket::SocketTimeoutError;
+        if (!retryable || deadline.hasExpired()) {
+            qWarning().noquote() << QStringLiteral("[Shell] single-instance connect failed: %1")
+                                        .arg(socket.errorString());
+            return false;
+        }
+        socket.abort();
+        QThread::msleep(25);
     }
     const std::string line = proto::requestLine(request == Request::Show);
     socket.write(line.data(), qint64(line.size()));
