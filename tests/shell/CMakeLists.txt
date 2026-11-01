@@ -36,6 +36,29 @@ target_compile_features(window_controller_tests PRIVATE cxx_std_17)
 target_include_directories(window_controller_tests BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/fakes" ${shell_root})
 target_link_libraries(window_controller_tests PRIVATE Qt6::Widgets Qt6::Quick)
 
+# Neither test accepts mode arguments. The protocol test is plain C++ (no Qt).
+add_executable(single_instance_protocol_tests single_instance_protocol_tests.cpp)
+set_target_properties(single_instance_protocol_tests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+target_compile_features(single_instance_protocol_tests PRIVATE cxx_std_17)
+target_include_directories(single_instance_protocol_tests PRIVATE ${shell_root})
+# Minimal equivalent of shell_module: only SingleInstance + AUTOMOC, Core,
+# Network and Threads (std::thread in the harness), plus user32 on Windows.
+# Linking shell_module would also pull its combined moc object and engine APIs.
+find_package(Threads REQUIRED)
+add_executable(single_instance_tests single_instance_tests.cpp
+    ${shell_root}/shell/single_instance.cpp ${shell_root}/shell/single_instance.h)
+set_target_properties(single_instance_tests PROPERTIES AUTOMOC ON)
+target_compile_features(single_instance_tests PRIVATE cxx_std_17)
+target_include_directories(single_instance_tests PRIVATE ${shell_root})
+target_link_libraries(single_instance_tests PRIVATE Qt6::Core Qt6::Network Threads::Threads)
+if(WIN32)
+    target_link_libraries(single_instance_tests PRIVATE user32)
+endif()
+foreach(suite IN ITEMS single_instance_protocol single_instance)
+    add_test(NAME ${suite} COMMAND ${suite}_tests)
+    set_tests_properties(${suite} PROPERTIES TIMEOUT 15 LABELS "shell")
+endforeach()
+
 function(shell_test_modes suite)
     foreach(mode IN LISTS ARGN)
         add_test(NAME ${suite}_${mode} COMMAND ${suite}_tests ${mode})
