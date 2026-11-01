@@ -64,7 +64,10 @@ int main(int argc, char **argv)
                     CHECK(icon.availableSizes().contains(QSize(size, size)));
                     const auto pixels = icon.pixmap(size, size).toImage();
                     CHECK(pixels.pixelColor(0, 0).alpha() == 0);
-                    const auto color = pixels.pixelColor(3, size / 2);
+                    // Sample the block's top row at the center: inside the rounded rect but
+                    // above the glyph, whose width depends on the installed font.
+                    const int inset = size <= 20 ? 1 : size <= 40 ? 2 : 3;
+                    const auto color = pixels.pixelColor(size / 2, inset);
                     CHECK(color == QColor(kind == TrayIconKind::Recording ? "#EF4444" : kind == TrayIconKind::Paused ? "#F59E0B" : "#5B6475"));
                 }
             }
