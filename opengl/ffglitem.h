@@ -33,6 +33,10 @@ struct PreviewDebugSnapshot
     quint64 appliedCount = 0;
     quint64 synchronizedCount = 0;
     quint64 renderedCount = 0;
+    // Frames skipped because the main window was not shown (setPreviewWanted(false)).
+    // An intentional skip, never counted as a drop; cumulative, not reset by
+    // setPreviewItem(nullptr).
+    quint64 skippedHiddenCount = 0;
 
     quint64 latestVersion = 0;
     quint64 latestAppliedVersion = 0;
@@ -116,12 +120,14 @@ public:
     FFGLItem *get() const { return m_item; }
     // false counts a discarded input or an overwritten pending frame. Never waits on UI.
     bool submitFrame(const AVFrame *frame);
-    // S0b contract (MINIMIZE_DESIGN.md §4.7). Set by WindowController on the GUI thread:
-    // true when the main window is shown (W1), false when minimized/hidden (W2/W3).
-    // submitFrame() checks it first with a relaxed atomic load and returns false
-    // immediately when false (no copy, no lock, no wait on the encoder/GPU threads).
-    // Default true, so behavior is unchanged until something calls this. The next
-    // frame after it becomes true is previewed again. Callable from any thread.
+    // S0b contract (MINIMIZE_DESIGN.md §4.7, §8 alignment). Set by WindowController on
+    // the GUI thread: true only when the main window is shown (W1); false when
+    // minimized (W2) or hidden to tray (W3). submitFrame() checks it first with a
+    // relaxed atomic load; when false it does no copy, takes no lock, increments
+    // skippedHiddenCount and returns TRUE, so callers (GpuPreview, the encoder thread)
+    // do not count the frame as dropped. Default true: behavior is unchanged until
+    // something calls this. The next frame after it becomes true is previewed again.
+    // Callable from any thread.
     void setPreviewWanted(bool wanted) noexcept;
     bool previewWanted() const noexcept;
     bool takeLatestFrame(PreviewFrameData &frame, quint64 &version);
@@ -139,6 +145,7 @@ private:
 private:
     mutable std::mutex m_mutex;
     std::atomic<bool> m_previewWanted{true};
+    std::atomic<quint64> m_skippedHidden{0};
     QPointer<FFGLItem> m_item;
     PreviewFrameData m_latestFrame;
     quint64 m_latestVersion = 0;
