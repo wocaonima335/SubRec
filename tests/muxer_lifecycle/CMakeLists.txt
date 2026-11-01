@@ -111,6 +111,16 @@ endif()
 add_test(NAME packet_guard COMMAND packet_guard_tests)
 set_tests_properties(packet_guard PROPERTIES TIMEOUT 10 LABELS "muxer;sync")
 
+add_executable(interleaver_tests interleaver_tests.cpp ../../queue/packet_interleaver.cpp)
+target_compile_features(interleaver_tests PRIVATE cxx_std_17)
+target_include_directories(interleaver_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(interleaver_tests PRIVATE "${FFMPEG_ROOT}/lib/avcodec.lib" "${FFMPEG_ROOT}/lib/avutil.lib")
+if(MINGW)
+    target_compile_options(interleaver_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME packet_interleaver COMMAND interleaver_tests)
+set_tests_properties(packet_interleaver PROPERTIES TIMEOUT 30 LABELS "muxer;sync")
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()
 # NUT/null/PCM encoders and MOV demuxing are absent in release FFmpeg.
