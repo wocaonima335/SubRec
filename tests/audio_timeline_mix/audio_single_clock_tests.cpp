@@ -1,5 +1,6 @@
 #include "filter/audio_timeline_mixer.h"
 #include "queue/media_clock.h"
+#include "queue/video_tick_scheduler.h"
 #include <iostream>
 #include <stdexcept>
 #include <cmath>
@@ -89,5 +90,46 @@ void streamingTail(int rate, unsigned source) {
     CHECK(mixer.stats().silence[source] == 0);
     CHECK(mixer.stats().resyncs[source] == 0);
 }
-int main(){try{streamingTail(48000,1);streamingTail(44100,0);single(0);single(1);pauses();std::cout<<"PASS single-source silence, sample timeline and queued pause boundaries\n";}
+// Actual PCM beacon positions through the production mixer, compared with the
+// production paced video scheduler after ten five-second pauses.
+void avResumeBeacons() {
+    MediaClock clock; clock.start(1000000);
+    AudioTimelineMixer mixer(clock); mixer.finish(1);
+    VideoTickScheduler video; CHECK(video.configure());
+    int64_t samples=0;
+    for (int cycle=0;cycle<=10;++cycle) {
+        const int64_t wall=1000000+cycle*6000000LL;
+        auto f=input(wall,48000);
+        for(int ch=0;ch<2;++ch) for(int i=0;i<48000;++i)
+            reinterpret_cast<float*>(f->extended_data[ch])[i]=(i>=1920 && i<2400) ? .5f : 0.f;
+        mixer.push(0,*f);
+        // Omit the last capture before pause, matching the field failure.
+        int64_t beaconTick=-1;
+        for(int n=0;n<29;++n) {
+            const auto media=clock.mediaUs(wall+40000+av_rescale_q(n,AVRational{1,30},AVRational{1,1000000}));
+            const auto d=video.decidePaced(media,cycle>0 && n==0);
+            CHECK(d.accepted()); if(n==0) beaconTick=d.tick;
+        }
+        clock.pause(wall+1000000);
+        int64_t onset=-1;
+        while(auto out=mixer.renderAt(wall+1000000)) {
+            CHECK(out->pts==samples); samples+=out->nb_samples;
+            for(int i=0;i<out->nb_samples;++i)
+                if(onset<0 && reinterpret_cast<float*>(out->extended_data[0])[i]>.25f) onset=out->pts+i;
+        }
+        // A live resampler can retain a sub-block tail until the next input.
+        CHECK(samples <= (cycle+1)*48000LL && (cycle+1)*48000LL-samples < 480);
+        CHECK(onset==cycle*48000LL+1920);
+        const auto delta=av_rescale_q(onset,AVRational{1,48000},AVRational{1,1000000})
+            -av_rescale_q(beaconTick,AVRational{1,30},AVRational{1,1000000});
+        CHECK(std::abs(delta-6667)<=1);
+        clock.resume(wall+6000000);
+    }
+    mixer.finish(0);
+    while(auto out=mixer.renderAt(62000000)) {
+        CHECK(out->pts==samples); samples+=out->nb_samples;
+    }
+    CHECK(samples==11*48000LL);
+}
+int main(int argc,char **argv){try{if(argc>1 && std::string(argv[1])=="resume_beacons") { avResumeBeacons(); std::cout<<"PASS PCM/video resume beacons\n"; return 0; }streamingTail(48000,1);streamingTail(44100,0);single(0);single(1);pauses();std::cout<<"PASS single-source silence, sample timeline and queued pause boundaries\n";}
 catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

@@ -35,12 +35,14 @@ target_link_libraries(audio_mix_drift_tests PRIVATE
 add_test(NAME audio_mix_drift COMMAND audio_mix_drift_tests)
 set_tests_properties(audio_mix_drift PROPERTIES TIMEOUT 120 LABELS "audio;mix;drift;synthetic")
 
-add_executable(audio_single_clock_tests audio_single_clock_tests.cpp ../../queue/media_clock.cpp
+add_executable(audio_single_clock_tests audio_single_clock_tests.cpp ../../queue/media_clock.cpp ../../queue/video_tick_scheduler.cpp
     ../../filter/audio_timeline_mixer.cpp ../../filter/audio_mix_dump.cpp)
 target_compile_features(audio_single_clock_tests PRIVATE cxx_std_17)
 target_include_directories(audio_single_clock_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(audio_single_clock_tests PRIVATE
     "${FFMPEG_ROOT}/lib/avfilter.lib" "${FFMPEG_ROOT}/lib/avutil.lib" "${FFMPEG_ROOT}/lib/swresample.lib")
+add_test(NAME audio_video_resume_beacons COMMAND audio_single_clock_tests resume_beacons)
+set_tests_properties(audio_video_resume_beacons PROPERTIES TIMEOUT 30 LABELS "ci;audio;clock;regression")
 add_test(NAME audio_single_source_clock COMMAND audio_single_clock_tests)
 set_tests_properties(audio_single_source_clock PROPERTIES TIMEOUT 30 LABELS "audio;mix;clock;synthetic")
 

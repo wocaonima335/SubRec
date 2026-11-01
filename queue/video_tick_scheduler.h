@@ -75,6 +75,18 @@ public:
     // (negative/NOPTS/before baseUs or overflow) has tick=NOPTS, no state changes.
     TickDecision decide(int64_t mediaUs);
 
+    // For an already frame-rate-paced capture source (ddagrab): retain the next
+    // consecutive tick while its timestamp error is less than one frame. This
+    // hysteresis prevents receive-time jitter around a half-frame boundary from
+    // alternating gaps and collisions. Larger errors still skip/drop to track
+    // the session clock; duplicate/backwards capture times are rejected.
+    // First capture and firstAfterResume use nearest SESSION tick, preserving
+    // startup/resume delay without accumulating a new segment's rounding error.
+    // Use instead of decide/beginSegment for the entire session. Holds share
+    // lastTick and keep the session origin. Timestamp error is bounded by one
+    // frame (apart from a resume forced forward to maintain monotonic PTS).
+    TickDecision decidePaced(int64_t mediaUs, bool firstAfterResume = false);
+
     void setHoldFrameCallback(HoldFrameCallback callback);
     // Explicit stalled-capture drive; not used to fill ordinary Lagged decisions.
     // Caller requests this only while capture is stalled, session running, and

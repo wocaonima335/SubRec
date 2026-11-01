@@ -155,13 +155,16 @@ void FFVEncoderThread::run()
             continue;
         }
         const int64_t mediaUs = mediaClock ? mediaClock->mediaUs(captureUs) : AV_NOPTS_VALUE;
-        if (first_after_resume.exchange(false, std::memory_order_acquire)) {
-            if (!ticks.beginSegment(mediaUs)) {
-                AVFrameTraits::release(frame); failTimestamp("Invalid video resume timestamp."); break;
-            }
+        const bool resumed = first_after_resume.exchange(false, std::memory_order_acquire);
+        if (resumed) {
             frame->pict_type = AV_PICTURE_TYPE_I;
         }
-        const auto decision = ticks.decide(mediaUs);
+        const auto decision = ticks.decidePaced(mediaUs, resumed);
+        if (diagnosticIndex == 1 || diagnosticIndex % 300 == 0 || resumed) {
+            qInfo() << "[VideoClock] tick_diagnostic index=" << diagnosticIndex
+                    << "mediaUs=" << mediaUs << "tick=" << decision.tick
+                    << "resumed=" << resumed << "skipped=" << decision.skippedTicks;
+        }
         if (!decision.accepted()) {
             AVFrameTraits::release(frame);
             if (decision.kind == TickDecision::Kind::SlotCollision) continue;
@@ -191,9 +194,9 @@ void FFVEncoderThread::run()
             minimumCaptureUs.store(AV_NOPTS_VALUE, std::memory_order_release);
         }
         if (syncQueue) syncQueue->observeVideoTick(vpts, kRecordFrameRate);
-        av_frame_free(&lastFrame);
-        lastFrame = av_frame_clone(frame);
-        if (!lastFrame) {
+        if (!lastFrame) lastFrame = av_frame_alloc();
+        else av_frame_unref(lastFrame);
+        if (!lastFrame || av_frame_ref(lastFrame, frame) < 0) {
             AVFrameTraits::release(frame); failTimestamp("Could not retain the last video frame."); break;
         }
         AVFrameTraits::release(frame);

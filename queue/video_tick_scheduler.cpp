@@ -6,6 +6,7 @@
 struct VideoTickScheduler::Impl {
     AVRational fps{0,1};
     int64_t baseTick = 0, baseUs = 0, last = -1;
+    int64_t lastCaptureUs = AV_NOPTS_VALUE;
     VideoTickCounters counts;
     HoldFrameCallback hold;
     bool configured() const { return fps.num > 0 && fps.den > 0; }
@@ -24,6 +25,7 @@ bool VideoTickScheduler::configure(AVRational fps) {
 }
 void VideoTickScheduler::reset() {
     impl_->baseTick = impl_->baseUs = 0; impl_->last = -1; impl_->counts = {};
+    impl_->lastCaptureUs = AV_NOPTS_VALUE;
 }
 bool VideoTickScheduler::beginSegment(int64_t us) {
     if (!impl_->configured() || us < impl_->baseUs || impl_->last == INT64_MAX) return false;
@@ -37,6 +39,35 @@ TickDecision VideoTickScheduler::decide(int64_t us) {
         ++impl_->counts.slotCollisions; return {TickDecision::Kind::SlotCollision, tick, 0};
     }
     const auto skipped = tick - (impl_->last + 1);
+    impl_->last = tick; ++impl_->counts.frames; impl_->counts.laggedTicks += skipped;
+    return {skipped ? TickDecision::Kind::Lagged : TickDecision::Kind::Accept, tick, skipped};
+}
+TickDecision VideoTickScheduler::decidePaced(int64_t us, bool firstAfterResume) {
+    if (!impl_->configured()) return {};
+    auto tick = impl_->tickAt(us, AV_ROUND_NEAR_INF);
+    if (tick == AV_NOPTS_VALUE || impl_->last == INT64_MAX)
+        return {TickDecision::Kind::InvalidTime, AV_NOPTS_VALUE, 0};
+    if (impl_->lastCaptureUs != AV_NOPTS_VALUE && us <= impl_->lastCaptureUs) {
+        ++impl_->counts.slotCollisions;
+        return {TickDecision::Kind::SlotCollision, tick, 0};
+    }
+    impl_->lastCaptureUs = us;
+    const auto next = impl_->last + 1;
+    if (firstAfterResume) {
+        // MediaClock has already removed exactly the same pause as audio.
+        // Never compress the uncaptured time on either side of that pause.
+        tick = std::max(next, tick);
+    } else if (impl_->last >= 0) {
+        const auto nextUs = av_rescale_q(next, av_inv_q(impl_->fps), AVRational{1,1000000});
+        const auto periodUs = av_rescale_q(1, av_inv_q(impl_->fps), AVRational{1,1000000});
+        if (nextUs >= 0 && us - nextUs > -periodUs && us - nextUs < periodUs)
+            tick = next;
+    }
+    if (tick <= impl_->last) {
+        ++impl_->counts.slotCollisions;
+        return {TickDecision::Kind::SlotCollision, tick, 0};
+    }
+    const auto skipped = tick - next;
     impl_->last = tick; ++impl_->counts.frames; impl_->counts.laggedTicks += skipped;
     return {skipped ? TickDecision::Kind::Lagged : TickDecision::Kind::Accept, tick, skipped};
 }
