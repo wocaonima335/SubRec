@@ -44,6 +44,7 @@ void run(const std::filesystem::path &path, FFMuxer &mux, MediaClock &clock) {
     CHECK(video.sendFinish() == MediaQueueResult::Eof);
     CHECK(worker.waitFor(std::chrono::seconds(3)));
     CHECK(worker.lastError() == 0 && !worker.drainTimedOut());
+    CHECK(worker.finalizeState() == FinalizeState::Finalized);   // P2: the worker finalizes
     CHECK(mux.close() == 0);
 
     AVFormatContext *input = nullptr;
