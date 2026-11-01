@@ -1,6 +1,7 @@
 qt_add_library(muxer_module STATIC
     ffmuxer.h
     ffmuxer.cpp
+    mux_sink.h
   
 )
 target_link_libraries(muxer_module PRIVATE

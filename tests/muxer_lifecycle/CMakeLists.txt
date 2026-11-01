@@ -6,7 +6,7 @@ endif()
 find_package(Qt6 REQUIRED COMPONENTS Core)
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecFFmpeg.cmake")
 subrec_require_ffmpeg_root()
-add_executable(muxer_lifecycle_tests muxer_lifecycle_tests.cpp ../../muxer/ffmuxer.cpp)
+add_executable(muxer_lifecycle_tests muxer_lifecycle_tests.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp)
 target_compile_features(muxer_lifecycle_tests PRIVATE cxx_std_17)
 target_include_directories(muxer_lifecycle_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(muxer_lifecycle_tests PRIVATE Qt6::Core)
@@ -21,7 +21,7 @@ add_test(NAME muxer_lifecycle COMMAND muxer_lifecycle_tests)
 set_tests_properties(muxer_lifecycle PROPERTIES TIMEOUT 20)
 # Runtime DLLs are resolved using PATH; no install, deployment, or artifact deletion.
 
-add_executable(aac_priming_tests aac_priming_tests.cpp ../../muxer/ffmuxer.cpp)
+add_executable(aac_priming_tests aac_priming_tests.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp)
 target_compile_features(aac_priming_tests PRIVATE cxx_std_17)
 target_include_directories(aac_priming_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(aac_priming_tests PRIVATE Qt6::Core)
@@ -47,7 +47,7 @@ endif()
 add_executable(aac_pipeline_priming_tests aac_pipeline_priming_tests.cpp
     ../../encoder/ffaencoder.cpp ../../queue/ffapacketqueue.cpp ../../queue/ffaframequeue.cpp
     ../../queue/ffvpacketqueue.cpp ../../thread/ffthread.cpp
-    ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp)
+    ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp)
 target_compile_features(aac_pipeline_priming_tests PRIVATE cxx_std_17)
 target_include_directories(aac_pipeline_priming_tests PRIVATE
     ui_stubs ../.. "${FFMPEG_ROOT}/include")
@@ -72,7 +72,7 @@ set_tests_properties(stop_deadline PROPERTIES TIMEOUT 10)
 
 add_executable(capture_diagnostics_tests capture_diagnostics_tests.cpp
     ../../queue/ffapacketqueue.cpp ../../queue/ffvpacketqueue.cpp ../../queue/ffaframequeue.cpp
-    ../../thread/ffthread.cpp ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp)
+    ../../thread/ffthread.cpp ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp)
 target_compile_features(capture_diagnostics_tests PRIVATE cxx_std_17)
 target_include_directories(capture_diagnostics_tests PRIVATE ui_stubs ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(capture_diagnostics_tests PRIVATE Qt6::Core
@@ -82,7 +82,7 @@ set_tests_properties(capture_diagnostics PROPERTIES TIMEOUT 10)
 
 add_executable(video_only_tests video_only_tests.cpp
     ../../queue/media_clock.cpp ../../queue/video_tick_scheduler.cpp ../../queue/ffapacketqueue.cpp ../../queue/ffvpacketqueue.cpp
-    ../../thread/ffthread.cpp ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp)
+    ../../thread/ffthread.cpp ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp)
 target_compile_features(video_only_tests PRIVATE cxx_std_17)
 target_include_directories(video_only_tests PRIVATE ui_stubs ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(video_only_tests PRIVATE Qt6::Core
@@ -121,10 +121,23 @@ endif()
 add_test(NAME packet_interleaver COMMAND interleaver_tests)
 set_tests_properties(packet_interleaver PROPERTIES TIMEOUT 30 LABELS "muxer;sync")
 
+add_executable(finalize_state_tests finalize_state_tests.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp)
+target_compile_features(finalize_state_tests PRIVATE cxx_std_17)
+target_include_directories(finalize_state_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(finalize_state_tests PRIVATE Qt6::Core)
+foreach(component IN ITEMS avformat avcodec avutil)
+    target_link_libraries(finalize_state_tests PRIVATE "${FFMPEG_ROOT}/lib/${component}.lib")
+endforeach()
+if(MINGW)
+    target_compile_options(finalize_state_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME finalize_state COMMAND finalize_state_tests)
+set_tests_properties(finalize_state PROPERTIES TIMEOUT 60 LABELS "muxer")
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()
 # NUT/null/PCM encoders and MOV demuxing are absent in release FFmpeg.
-set_property(TEST muxer_lifecycle aac_priming aac_pipeline_priming video_only_pipeline APPEND PROPERTY LABELS needs_ffmpeg_test_components)
+set_property(TEST muxer_lifecycle aac_priming aac_pipeline_priming video_only_pipeline finalize_state APPEND PROPERTY LABELS needs_ffmpeg_test_components)
 if(SUBREC_POWERSHELL)
     set_property(TEST mp4_edit_list_parser APPEND PROPERTY LABELS needs_powershell needs_ffmpeg_test_components)
 endif()
