@@ -5,6 +5,7 @@
 #include <QMutex>
 #include <QPointer>
 #include <QQuickFramebufferObject>
+#include <atomic>
 #include <mutex>
 
 extern "C" {
@@ -115,6 +116,14 @@ public:
     FFGLItem *get() const { return m_item; }
     // false counts a discarded input or an overwritten pending frame. Never waits on UI.
     bool submitFrame(const AVFrame *frame);
+    // S0b contract (MINIMIZE_DESIGN.md §4.7). Set by WindowController on the GUI thread:
+    // true when the main window is shown (W1), false when minimized/hidden (W2/W3).
+    // submitFrame() checks it first with a relaxed atomic load and returns false
+    // immediately when false (no copy, no lock, no wait on the encoder/GPU threads).
+    // Default true, so behavior is unchanged until something calls this. The next
+    // frame after it becomes true is previewed again. Callable from any thread.
+    void setPreviewWanted(bool wanted) noexcept;
+    bool previewWanted() const noexcept;
     bool takeLatestFrame(PreviewFrameData &frame, quint64 &version);
     void finishDispatch(quint64 appliedVersion);
     void markApplied(quint64 version, int width, int height, quint64 fingerprint);
@@ -129,6 +138,7 @@ private:
 
 private:
     mutable std::mutex m_mutex;
+    std::atomic<bool> m_previewWanted{true};
     QPointer<FFGLItem> m_item;
     PreviewFrameData m_latestFrame;
     quint64 m_latestVersion = 0;
