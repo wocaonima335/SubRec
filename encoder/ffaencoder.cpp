@@ -37,7 +37,49 @@ void FFAEncoder::close()
         pendingFrame.data[ch].clear();
         pendingFrame.data[ch].shrink_to_fit();
     }
+    if (guardConfigured) {
+        const auto &s = guard.stats();
+        qInfo() << "[AEnc] packet guard accepted=" << s.accepted << "dropped=" << s.droppedTotal()
+                << "duration_filled=" << s.durationFilled;
+    }
+    guard.reset();
+    guardConfigured = false;
     qDebug() << "[AEnc] close";
+}
+
+int FFAEncoder::drainPackets(int streamIndex)
+{
+    if (!guardConfigured) {
+        // AAC packets are all keyframes; durations default to one codec frame.
+        guard.configure(PacketGuardConfig{std::max(1, codecCtx->frame_size), false, 30});
+        guardConfigured = true;
+    }
+    for (;;) {
+        AVPacket *pkt = av_packet_alloc();
+        if (!pkt) return AVERROR(ENOMEM);
+        const int ret = avcodec_receive_packet(codecCtx, pkt);
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
+            av_packet_free(&pkt);
+            return 0;
+        }
+        if (ret < 0) {
+            av_packet_free(&pkt);
+            printError(ret);
+            return -1;
+        }
+        pkt->stream_index = streamIndex;
+        GuardReason reason = GuardReason::None;
+        const GuardVerdict verdict = guard.check(*pkt, &reason);
+        if (verdict == GuardVerdict::Accept) {
+            pktQueue->enqueue(pkt);
+        } else {
+            qWarning() << "[AEnc] dropped packet reason=" << guardReasonName(reason)
+                       << "dts=" << pkt->dts << "count=" << guard.stats().droppedTotal();
+        }
+        // enqueue moves the references, but the caller still owns the shell.
+        av_packet_free(&pkt);
+        if (verdict == GuardVerdict::Fatal) return AVERROR(EINVAL);
+    }
 }
 
 void FFAEncoder::wakeAllThread()
@@ -73,27 +115,7 @@ int FFAEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
             return -1;
         }
 
-        while (true) {
-            AVPacket *pkt = av_packet_alloc();
-            if (!pkt) return AVERROR(ENOMEM);
-            int ret = avcodec_receive_packet(codecCtx, pkt);
-            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
-                av_packet_free(&pkt);
-                break;
-            }
-            if (ret < 0) {
-                av_packet_free(&pkt);
-                printError(ret);
-                return -1;
-            }
-
-            pkt->stream_index = streamIndex;
-            if (pkt->duration <= 0) pkt->duration = std::max(1, codecCtx->frame_size);
-            pktQueue->enqueue(pkt);
-            // enqueue moves the references, but the caller still owns the shell.
-            av_packet_free(&pkt);
-        }
-        return 0;
+        return drainPackets(streamIndex);
     }
 
     qCDebug(subrec::logging::frameLog) << "[AEnc] encode enter: in_nb_samples=" << frame->nb_samples
@@ -158,27 +180,8 @@ int FFAEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
         }
         av_frame_free(&sub_frame);
 
-        while (1) {
-            AVPacket *pkt = av_packet_alloc();
-            if (!pkt) return AVERROR(ENOMEM);
-            int ret = avcodec_receive_packet(codecCtx, pkt);
-
-            if (ret == AVERROR(EAGAIN)) {
-                av_packet_free(&pkt);
-                break;
-            } else if (ret < 0) {
-                av_packet_free(&pkt);
-                return -1;
-            }
-
-            pkt->stream_index = streamIndex;
-            if (pkt->duration <= 0) {
-                pkt->duration = std::max(1, codecCtx->frame_size);
-            }
-            pktQueue->enqueue(pkt);
-            // enqueue moves the references, but the caller still owns the shell.
-            av_packet_free(&pkt);
-        }
+        const int drained = drainPackets(streamIndex);
+        if (drained < 0) return drained;
     }
 
     pendingFrame.next_pts = pendingFrame.next_pts + total_full_frames * frame_size;

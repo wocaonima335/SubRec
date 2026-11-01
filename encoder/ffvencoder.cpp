@@ -89,6 +89,57 @@ void FFVEncoder::close()
     m_downloadHwFrames = false;
     sws_freeContext(m_downloadSws);
     m_downloadSws = nullptr;
+    if (guardConfigured) {
+        const auto &s = guard.stats();
+        qInfo() << "[FFVEncoder] packet guard accepted=" << s.accepted << "dropped=" << s.droppedTotal()
+                << "duration_filled=" << s.durationFilled;
+    }
+    guard.reset();
+    guardConfigured = false;
+}
+
+int FFVEncoder::drainPackets(int streamIndex)
+{
+    if (!guardConfigured) {
+        // Nominal duration is one frame in the encoder time base; the interleaver
+        // replaces it with the real distance to the next packet. The keyframe rule
+        // lives in the interleaver, so a codec that never flags keys is not dropped here.
+        int64_t nominal = 1;
+        if (codecCtx->framerate.num > 0 && codecCtx->framerate.den > 0)
+            nominal = av_rescale_q(1, av_inv_q(codecCtx->framerate), codecCtx->time_base);
+        guard.configure(PacketGuardConfig{nominal > 0 ? nominal : 1, false, 30});
+        guardConfigured = true;
+    }
+    AVPacket *pkt = av_packet_alloc();
+    if (!pkt)
+        return -1;
+    for (;;) {
+        const int ret = avcodec_receive_packet(codecCtx, pkt);
+        qCDebug(subrec::logging::frameLog) << "[VEnc] receive_packet ret=" << ret;
+        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+            break;
+        if (ret < 0) {
+            printError(ret);
+            av_packet_free(&pkt);
+            return -1;
+        }
+        pkt->stream_index = streamIndex;
+        GuardReason reason = GuardReason::None;
+        const GuardVerdict verdict = guard.check(*pkt, &reason);
+        if (verdict == GuardVerdict::Accept) {
+            pktQueue->enqueue(pkt);
+        } else {
+            qWarning() << "[FFVEncoder] dropped packet reason=" << guardReasonName(reason)
+                       << "dts=" << pkt->dts << "count=" << guard.stats().droppedTotal();
+        }
+        av_packet_unref(pkt);
+        if (verdict == GuardVerdict::Fatal) {
+            av_packet_free(&pkt);
+            return AVERROR(EINVAL);
+        }
+    }
+    av_packet_free(&pkt);
+    return 0;
 }
 
 void FFVEncoder::wakeAllThread()
@@ -129,39 +180,7 @@ int FFVEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
             return -1;
         }
 
-        AVPacket *pkt = av_packet_alloc();
-        if (!pkt)
-        {
-            return -1;
-        }
-
-        while (true)
-        {
-            ret = avcodec_receive_packet(codecCtx, pkt);
-            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-            {
-                break;
-            }
-            if (ret < 0)
-            {
-                printError(ret);
-                av_packet_free(&pkt);
-                return -1;
-            }
-
-            pkt->stream_index = streamIndex;
-            if (pkt->duration <= 0) {
-                pkt->duration = (codecCtx->framerate.num > 0 && codecCtx->framerate.den > 0)
-                                    ? av_rescale_q(1, av_inv_q(codecCtx->framerate), codecCtx->time_base)
-                                    : 1;
-                if (pkt->duration <= 0) pkt->duration = 1;
-            }
-            pktQueue->enqueue(pkt);
-            av_packet_unref(pkt);
-        }
-
-        av_packet_free(&pkt);
-        return 0;
+        return drainPackets(streamIndex);
     }
 
     // // 鎬ц兘鐩戞帶寮€濮?
@@ -197,39 +216,9 @@ int FFVEncoder::encode(AVFrame *frame, int streamIndex, int64_t pts, AVRational 
         return -1;
     }
 
-    AVPacket *pkt = av_packet_alloc();
-    if (!pkt)
-    {
-        return -1;
-    }
-
-    while (true)
-    {
-        ret = avcodec_receive_packet(codecCtx, pkt);
-        qCDebug(subrec::logging::frameLog) << "[VEnc] receive_packet ret=" << ret;
-        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-        {
-            break;
-        }
-        if (ret < 0)
-        {
-            printError(ret);
-            av_packet_free(&pkt);
-            return -1;
-        }
-
-        pkt->stream_index = streamIndex;
-        if (pkt->duration <= 0) {
-            pkt->duration = (codecCtx->framerate.num > 0 && codecCtx->framerate.den > 0)
-                                ? av_rescale_q(1, av_inv_q(codecCtx->framerate), codecCtx->time_base)
-                                : 1;
-            if (pkt->duration <= 0) pkt->duration = 1;
-        }
-        pktQueue->enqueue(pkt);
-        av_packet_unref(pkt);
-    }
-
-    av_packet_free(&pkt);
+    const int drained = drainPackets(streamIndex);
+    if (drained < 0)
+        return drained;
 
     return 0;
 }

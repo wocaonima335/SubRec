@@ -5,6 +5,9 @@
 #include <mutex>
 
 #include <QString>
+
+#include "queue/packet_guard.h"
+
 extern "C"
 {
 #include <libavcodec/avcodec.h>
@@ -60,6 +63,10 @@ public:
 private:
     void printError(int ret);
     AVFrame *downloadToYuv420p(const AVFrame *hwFrame);
+    // Receive every available packet, check it (second timestamp line) and queue it.
+    // 0 on success, -1 on codec error, AVERROR(EINVAL) when the guard declares the
+    // stream broken.
+    int drainPackets(int streamIndex);
 
 private:
     FFVPacketQueue *pktQueue = nullptr;
@@ -69,6 +76,8 @@ private:
     FFVEncoderPars *vPars = nullptr;
     VideoEncoderSelection m_selection;
     int64_t lastPts = -1;
+    PacketGuard guard;
+    bool guardConfigured = false;
 
     mutable std::mutex mutex;
 

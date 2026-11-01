@@ -76,6 +76,11 @@ FFMuxer::~FFMuxer() = default;
 int FFMuxer::addStream(const AVCodecContext *) { return 0; }
 int FFMuxer::getAStreamIndex() { return 0; }
 int FFMuxer::getVStreamIndex() { return 0; }
+// IMuxSink overrides: FFMuxer's vtable must be emitted by this fake as well.
+MuxWriteResult FFMuxer::write(AVPacket *) { return MuxWriteResult::Ok; }
+FinalizeState FFMuxer::finalize(std::chrono::milliseconds) { return FinalizeState::NotFinalized; }
+FinalizeState FFMuxer::finalizeState() const { return FinalizeState::NotFinalized; }
+uint64_t FFMuxer::writtenPackets() const { return 0; }
 
 namespace {
 void joinWorker(FFThread &worker) {

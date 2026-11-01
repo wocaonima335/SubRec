@@ -4,6 +4,8 @@
 #include <mutex>
 #include <vector>
 
+#include "queue/packet_guard.h"
+
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -51,11 +53,17 @@ public:
 
 private:
     void printError(int ret);
+    // Receive every available packet, check it (second timestamp line) and queue it.
+    // 0 on success, -1 on codec error, AVERROR(EINVAL) when the guard declares the
+    // stream broken. Called with mutex held.
+    int drainPackets(int streamIndex);
 
 private:
     FFAPacketQueue *pktQueue = nullptr;
     AVCodecContext *codecCtx = nullptr;
     FFAEncoderPars *aPars = nullptr;
+    PacketGuard guard;
+    bool guardConfigured = false;
 
     std::mutex mutex;
     PendingFrame pendingFrame;

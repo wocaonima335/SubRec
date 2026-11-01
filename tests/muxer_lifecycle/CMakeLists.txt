@@ -93,7 +93,7 @@ set_tests_properties(video_only_pipeline PROPERTIES TIMEOUT 15 LABELS "video;syn
 # P0 video-following-audio tests are superseded by tests/media_clock:
 # exact million-tick scheduling and validation/diagnostic-only sync queue tests.
 
-add_executable(aac_packet_ownership_tests aac_packet_ownership_tests.cpp ../../queue/ffapacketqueue.cpp)
+add_executable(aac_packet_ownership_tests aac_packet_ownership_tests.cpp ../../queue/ffapacketqueue.cpp ../../queue/packet_guard.cpp)
 target_compile_features(aac_packet_ownership_tests PRIVATE cxx_std_17)
 target_include_directories(aac_packet_ownership_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(aac_packet_ownership_tests PRIVATE Qt6::Core
