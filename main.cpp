@@ -6,6 +6,7 @@
 #include "opengl/ffglitem.h"
 #include "recorder/capture_scheduler.h"
 #include "recorder/ffrecorder.h"
+#include "autotest_shell_settings.h"
 #include "shell/capture_exclusion.h"
 #include "shell/power_request.h"
 #include "shell/shell_settings.h"
@@ -23,6 +24,7 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QPointer>
+#include <QTemporaryDir>
 #include <QUrl>
 #include <QApplication>
 #include <QObject>
@@ -908,7 +910,21 @@ int main(int argc, char *argv[])
   // Shell objects (GUI thread). Declared before the QML engine so they outlive it.
   subrec::shell::CaptureExclusion exclusion;
   subrec::shell::PowerRequest power;
-  subrec::shell::ShellSettings shellSettings(subrec::shell::CaptureExclusion::supported());
+  // M2: AutoTest uses a fresh temporary INI store (defaults, never touches HKCU ...\ui),
+  // so a tester's manual C4/C6/C7 choices cannot change AutoTest results.
+  std::unique_ptr<QTemporaryDir> autoTestSettingsDir;
+  if (autoTestMode) {
+    autoTestSettingsDir = std::make_unique<QTemporaryDir>();
+    if (!autoTestSettingsDir->isValid()) {
+      qCritical() << "[Shell] AutoTest: cannot create temporary settings dir; refusing to use user settings";
+      return 3;
+    }
+    qInfo() << "[Shell] AutoTest shell settings store:" << autoTestSettingsDir->path();
+  }
+  const auto shellSettingsOwner = subrec::app::makeShellSettings(
+      subrec::shell::CaptureExclusion::supported(),
+      autoTestSettingsDir ? autoTestSettingsDir->path() : QString());
+  subrec::shell::ShellSettings &shellSettings = *shellSettingsOwner;
   std::unique_ptr<subrec::shell::TrayController> tray;
   if (!autoTestMode && subrec::shell::TrayController::systemTrayAvailable())
     tray = std::make_unique<subrec::shell::TrayController>();
@@ -1008,6 +1024,7 @@ int main(int argc, char *argv[])
     {
       logFile.flush();
     }
+    if (autoTestSettingsDir) autoTestSettingsDir->remove(); // _Exit skips destructors
     ::_Exit(exitCode);
   }
 

@@ -1,6 +1,9 @@
 #include "shell/shell_settings.h"
+#include "autotest_shell_settings.h"
 #include "test_support.h"
 #include <QCoreApplication>
+#include <QFileInfo>
+#include <QTemporaryDir>
 using namespace subrec::shell;
 
 int main(int argc, char **argv)
@@ -79,6 +82,36 @@ int main(int argc, char **argv)
             }
             s.setExcludeText("always");
             ShellSettings supported(true); CHECK(supported.excludeMode() == ExcludeMode::Always);
+        } else if (mode == "autotest_isolated") {
+            // M2: the "user" store holds C4/C6/C7 choices; the AutoTest store must ignore
+            // them, keep defaults, never write back, and leave the default format restored.
+            {
+                QSettings user(QSettings::IniFormat, QSettings::UserScope, "SubRec", "SubRec");
+                user.setValue("ui/hideOnRecordStart", true); user.setValue("ui/startMinimized", true);
+                user.setValue("ui/excludeFromCapture", "always"); user.sync();
+            }
+            const QString userFile = QSettings(QSettings::IniFormat, QSettings::UserScope, "SubRec", "SubRec").fileName();
+            QSettings::setDefaultFormat(QSettings::NativeFormat);
+            QTemporaryDir sandbox; CHECK(sandbox.isValid());
+            {
+                auto s = subrec::app::makeShellSettings(true, sandbox.path());
+                CHECK(QSettings::defaultFormat() == QSettings::NativeFormat);
+                CHECK(!s->hideOnRecordStart() && !s->startMinimized());
+                CHECK(s->excludeMode() == ExcludeMode::RecordingOnly);
+                s->setHideOnRecordStart(true); s->setTrayEnabled(false);
+            }
+            CHECK(!userFile.startsWith(sandbox.path()));
+            QSettings user(userFile, QSettings::IniFormat);
+            CHECK(user.value("ui/trayEnabled", true).toBool()); // never written
+            CHECK(user.value("ui/excludeFromCapture") == "always");
+            CHECK(QFileInfo::exists(sandbox.filePath("SubRec/SubRec.ini")));
+            // Empty dir = the normal store (here the test's INI user store).
+            // (makeShellSettings leaves the IniFormat path pointing at the sandbox; Qt has
+            // no getter to restore it. Point it back at the test's user store.)
+            QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, isolated.directory.path());
+            QSettings::setDefaultFormat(QSettings::IniFormat);
+            auto normal = subrec::app::makeShellSettings(true, QString());
+            CHECK(normal->hideOnRecordStart() && normal->startMinimized());
         } else CHECK(false);
         return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
