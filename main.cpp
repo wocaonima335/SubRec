@@ -13,7 +13,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
-#include <QGuiApplication>
+#include <QApplication>
 #include <QObject>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -847,7 +847,7 @@ int main(int argc, char *argv[])
 {
   qInstallMessageHandler(qtLogHandler);
   const bool debugLog = subrec::logging::configure(argc, argv);
-  QGuiApplication app(argc, argv);
+  QApplication app(argc, argv); // Widgets: QSystemTrayIcon/QMenu need QApplication (§4.1, R9)
   subrec::logging::reportLevel(debugLog);
   int exitCode = 0;
   const bool autoTestMode = capture::test::autoTestScenarioActive();
