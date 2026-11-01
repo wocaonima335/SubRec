@@ -5,7 +5,11 @@
 #include "shell/shell_settings.h"
 #include "shell/shell_state_source.h"
 #include "shell/tray_controller.h"
+#ifdef SUBREC_SHELL_CONTROLLER_TEST_DOUBLES
+#include "fakes/preview_bridge_double.h"
+#else
 #include "opengl/ffglitem.h"
+#endif
 
 #include <QCoreApplication>
 #include <QFileInfo>

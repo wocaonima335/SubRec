@@ -4,8 +4,8 @@
 #include "shell/tray_controller.h"
 #include "shell/capture_exclusion.h"
 #include "shell/power_request.h"
-#include "opengl/ffglitem.h"
-#include "recorder/ffrecorder.h"
+#include "fakes/preview_bridge_double.h"
+#include "fakes/observable_recorder.h"
 #include "test_support.h"
 #include <QApplication>
 #include <QQuickWindow>
@@ -20,19 +20,30 @@ int main(int argc, char **argv)
         const QString mode = QString::fromLocal8Bit(argv[1]);
         FFRecorder recorder;
         ShellStateSource source(recorder);
-        ShellSettings settings(true);
+        ShellSettings settings(CaptureExclusion::supported());
         CaptureExclusion exclusion;
         PowerRequest power;
+        // Observe the real platform APIs. Linux deliberately reports no exclusion
+        // or power request; activation ordering still needs a Windows run.
+        auto checkActive = [&](bool active) {
+            CHECK(exclusion.effective() == (active && CaptureExclusion::supported()));
+#ifdef _WIN32
+            CHECK(power.active() == active);
+#else
+            CHECK(!CaptureExclusion::supported());
+            CHECK(!power.active());
+#endif
+        };
         TrayController tray;
         WindowController *controller = nullptr;
         int starts = 0, stops = 0, pauses = 0, resumes = 0;
         std::function<bool()> start = [&] { recorder.setState("Preparing"); return true; };
         WindowController shell(settings, source, mode == "no-tray" ? nullptr : &tray, exclusion, power,
             RecordingActions([&] {
-                CHECK(exclusion.capturing && power.active()); ++starts;
+                checkActive(true); ++starts;
                 controller->requestStart(); // Reentrant entry must not start or roll back.
                 emit recorder.outputFileNameChanged(); // Unrelated Idle signal during startup.
-                CHECK(exclusion.capturing);
+                checkActive(true);
                 return start();
             }, [&] { ++stops; recorder.setState("Stopping"); },
             [&] { ++pauses; recorder.setState("Paused"); }, [&] { ++resumes; recorder.setState("Running"); }, [] {}));
@@ -43,19 +54,19 @@ int main(int argc, char **argv)
         CHECK(shell.windowShown()); CHECK(PreviewBridge::instance().previewWanted());
         if (mode == "start") {
             start = [&] { return false; };
-            shell.requestStart(); CHECK(starts == 1); CHECK(!exclusion.capturing && !power.active());
+            shell.requestStart(); CHECK(starts == 1); checkActive(false);
             start = [&] { recorder.setState("Preparing"); recorder.setState("Failed"); return false; };
-            shell.requestStart(); CHECK(starts == 2); CHECK(!exclusion.capturing && !power.active());
+            shell.requestStart(); CHECK(starts == 2); checkActive(false);
             start = [&] { recorder.setState("Preparing"); return true; };
-            shell.requestStartStop(); CHECK(starts == 3); CHECK(exclusion.capturing && power.active());
+            shell.requestStartStop(); CHECK(starts == 3); checkActive(true);
             shell.requestStart(); shell.requestStartStop(); CHECK(starts == 3 && stops == 0);
             recorder.setState("Running"); shell.requestStart(); CHECK(starts == 3);
-            shell.requestStop(); CHECK(exclusion.capturing && power.active());
-            recorder.setState("Idle"); CHECK(!exclusion.capturing && !power.active());
+            shell.requestStop(); checkActive(true);
+            recorder.setState("Idle"); checkActive(false);
             // An accepted asynchronous start must reject duplicates until state arrives.
             start = [] { return true; };
-            shell.requestStart(); shell.requestStart(); CHECK(starts == 4 && exclusion.capturing);
-            recorder.setState("Preparing"); recorder.setState("Failed"); CHECK(!exclusion.capturing && !power.active());
+            shell.requestStart(); shell.requestStart(); CHECK(starts == 4); checkActive(true);
+            recorder.setState("Preparing"); recorder.setState("Failed"); checkActive(false);
         } else if (mode == "actions") {
             shell.requestPause(); shell.requestResume(); shell.requestStop(); CHECK(pauses == 0 && resumes == 0 && stops == 0);
             shell.requestStart(); recorder.setState("Running");
@@ -65,7 +76,7 @@ int main(int argc, char **argv)
             shell.requestPauseResume(); CHECK(pauses == 2);
             shell.requestStartStop(); CHECK(stops == 1);
             shell.requestStartStop(); shell.requestPauseResume(); CHECK(stops == 1 && pauses == 2);
-            recorder.setState("Failed"); CHECK(!exclusion.capturing && !power.active());
+            recorder.setState("Failed"); checkActive(false);
         } else if (mode == "visibility") {
             const auto geometry = window.geometry();
             shell.requestMinimize(); CHECK(window.visibility() == QWindow::Minimized);
@@ -98,7 +109,7 @@ int main(int argc, char **argv)
             shell.startHidden(); CHECK(shell.windowShown());
             settings.setMinimizeToTray(true); shell.requestMinimize(); CHECK(window.visibility() == QWindow::Minimized);
             shell.showMainWindow(); settings.setHideOnRecordStart(true); shell.requestStart();
-            CHECK(window.visibility() == QWindow::Minimized && power.active());
+            CHECK(window.visibility() == QWindow::Minimized); checkActive(true);
             int choices = 0, confirms = 0;
             QObject::connect(&shell, &WindowController::closeChoiceRequested, [&] { ++choices; });
             QObject::connect(&shell, &WindowController::exitConfirmRequested, [&] { ++confirms; });
@@ -118,7 +129,7 @@ int main(int argc, char **argv)
             recorder.path = "/tmp"; emit recorder.outputPathChanged();
             recorder.file = "new.mp4"; emit recorder.outputFileNameChanged(); CHECK(source.snapshot().outputFile == "/tmp/new.mp4");
             recorder.setState("Failed"); CHECK(changes == 7 && source.snapshot().state == RecState::Failed);
-            settings.setExcludeText("always"); CHECK(exclusion.mode == ExcludeMode::Always);
+            settings.setExcludeText("always"); CHECK(exclusion.effective() == CaptureExclusion::supported());
         } else CHECK(false);
         return 0;
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }

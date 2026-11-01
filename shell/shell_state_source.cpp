@@ -1,6 +1,10 @@
 #include "shell/shell_state_source.h"
 #include "shell/shell_logic.h"
+#ifdef SUBREC_SHELL_CONTROLLER_TEST_DOUBLES
+#include "fakes/observable_recorder.h"
+#else
 #include "recorder/ffrecorder.h"
+#endif
 
 #include <QDir>
 #include <QVariantMap>

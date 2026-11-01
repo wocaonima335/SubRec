@@ -6,7 +6,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 
 # Like the other in-tree harnesses, compile the production units directly.
-# This keeps pure tests independent of the recording engine and pending S0b.
+# This keeps pure tests independent of the recording engine.
 set(shell_root "${CMAKE_CURRENT_LIST_DIR}/../..")
 add_library(shell_test_ui STATIC
     ${shell_root}/shell/shell_logic.cpp
@@ -22,10 +22,15 @@ foreach(suite IN ITEMS shell_logic tray_menu_model shell_settings)
     target_link_libraries(${suite}_tests PRIVATE shell_test_ui)
 endforeach()
 
-# Fakes are private to this executable. In particular no ZCode class definition
-# or fake implementation is ever added to shell_module.
+# Compile real exclusion/power units so their public API and shouldExclude link
+# are exercised. Only recorder/preview use explicit test-only include seams in
+# our .cpp files: unique fakes/*.h names, never repo-path header shadowing.
+# The tray double implements the real header to provide an offscreen tray.
+# This private definition/include root never propagates to shell_module.
 add_executable(window_controller_tests window_controller_tests.cpp
-    fakes/tray_controller.cpp fakes/recorder/ffrecorder.h
+    fakes/tray_controller.cpp fakes/observable_recorder.h
+    ${shell_root}/shell/capture_exclusion.cpp ${shell_root}/shell/capture_exclusion.h
+    ${shell_root}/shell/power_request.cpp ${shell_root}/shell/power_request.h
     ${shell_root}/shell/shell_logic.cpp
     ${shell_root}/shell/shell_settings.cpp ${shell_root}/shell/shell_settings.h
     ${shell_root}/shell/shell_state_source.cpp ${shell_root}/shell/shell_state_source.h
@@ -33,8 +38,13 @@ add_executable(window_controller_tests window_controller_tests.cpp
     ${shell_root}/shell/tray_controller.h)
 set_target_properties(window_controller_tests PROPERTIES AUTOMOC ON)
 target_compile_features(window_controller_tests PRIVATE cxx_std_17)
-target_include_directories(window_controller_tests BEFORE PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/fakes" ${shell_root})
+target_compile_definitions(window_controller_tests PRIVATE SUBREC_SHELL_CONTROLLER_TEST_DOUBLES=1)
+target_include_directories(window_controller_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" ${shell_root})
 target_link_libraries(window_controller_tests PRIVATE Qt6::Widgets Qt6::Quick)
+
+if(WIN32)
+    target_link_libraries(window_controller_tests PRIVATE user32)
+endif()
 
 # Neither test accepts mode arguments. The protocol test is plain C++ (no Qt).
 add_executable(single_instance_protocol_tests single_instance_protocol_tests.cpp)
@@ -57,6 +67,23 @@ endif()
 foreach(suite IN ITEMS single_instance_protocol single_instance)
     add_test(NAME ${suite} COMMAND ${suite}_tests)
     set_tests_properties(${suite} PROPERTIES TIMEOUT 15 LABELS "shell")
+endforeach()
+
+# Reject any test header whose path relative to any tests/shell subdirectory
+# matches a production include path, even if that directory is not yet included.
+file(GLOB_RECURSE shell_test_headers CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
+foreach(header IN LISTS shell_test_headers)
+    get_filename_component(include_root "${header}" DIRECTORY)
+    while(TRUE)
+        file(RELATIVE_PATH include_path "${include_root}" "${header}")
+        if(EXISTS "${shell_root}/${include_path}")
+            message(FATAL_ERROR "Shell test header shadows production: ${header} as ${include_path}")
+        endif()
+        if(include_root STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+            break()
+        endif()
+        get_filename_component(include_root "${include_root}" DIRECTORY)
+    endwhile()
 endforeach()
 
 function(shell_test_modes suite)
