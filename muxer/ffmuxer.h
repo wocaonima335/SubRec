@@ -54,6 +54,8 @@ public:
     uint64_t rejectedWrites() const;
     // Streams whose container time base cannot represent every encoder tick.
     uint64_t timescaleMismatches() const;
+    // Result of the trailer write + AVIO close performed by finalize()/close().
+    int lastCloseResult() const;
     uint64_t skippedPackets() const;
     // Missing timestamps rejected by the pre-write guard. Duplicate DTS remains
     // exclusively skippedPackets(), so these counters are disjoint.

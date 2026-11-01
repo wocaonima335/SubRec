@@ -426,6 +426,11 @@ uint64_t FFMuxer::rejectedWrites() const {
   return rejectedWriteCount;
 }
 
+int FFMuxer::lastCloseResult() const {
+  std::lock_guard<std::mutex> lock(mutex);
+  return closeResult;
+}
+
 uint64_t FFMuxer::timescaleMismatches() const {
   std::lock_guard<std::mutex> lock(mutex);
   return timescaleMismatchCount;

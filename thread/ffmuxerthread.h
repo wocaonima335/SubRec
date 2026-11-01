@@ -3,6 +3,7 @@
 
 #include "ffthread.h"
 #include "stop_deadline.h"
+#include "muxer/mux_sink.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -38,10 +39,13 @@ public:
     struct Diagnostics {
         uint64_t bootstrapMaxPackets = 0, bootstrapHoldNs = 0;
         uint64_t enqueueBlockedNs = 0, droppedPackets = 0;
-        uint64_t guardDropped = 0, interleaveStalls = 0;
+        uint64_t guardDropped = 0, interleaveStalls = 0; // interleaveStalls = stall releases
+        uint64_t durationAdjusted = 0, droppedBeforeKeyframe = 0;
     };
     Diagnostics diagnostics() const;
     int lastError() const { return errorCode.load(); }
+    // Result of the worker's finalize (P2); P4 reports it to the session/UI.
+    FinalizeState finalizeState() const { return finalizeResult.load(); }
 
 protected:
     virtual void run() override;
@@ -50,7 +54,7 @@ private:
     void sendCaptureProcessEvent(double seconds);
     void fail(int error);
     void checkDrainDeadline();
-    template<class Queue> auto receivePacket(Queue *queue, bool opposingPending = false);
+    void finalizeOutput();
 
 private:
     FFAPacketQueue *aPktQueue = nullptr;
@@ -63,7 +67,8 @@ private:
     std::atomic<bool> drainExpired{false};
 
     std::atomic<uint64_t> bootstrapMaxPackets{0}, bootstrapHoldNs{0}, droppedPackets{0};
-    std::atomic<uint64_t> interleaveStalls{0};
+    std::atomic<uint64_t> interleaveStalls{0}, durationAdjusted{0}, droppedBeforeKeyframe{0};
+    std::atomic<FinalizeState> finalizeResult{FinalizeState::NotFinalized};
     bool diagnosticsLogged = false; // control thread, close after join
     double lastProcessTime = 0;
 

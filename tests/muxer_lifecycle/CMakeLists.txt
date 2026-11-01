@@ -47,7 +47,7 @@ endif()
 add_executable(aac_pipeline_priming_tests aac_pipeline_priming_tests.cpp
     ../../encoder/ffaencoder.cpp ../../queue/ffapacketqueue.cpp ../../queue/ffaframequeue.cpp
     ../../queue/ffvpacketqueue.cpp ../../thread/ffthread.cpp
-    ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp)
+    ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp ../../queue/packet_interleaver.cpp)
 target_compile_features(aac_pipeline_priming_tests PRIVATE cxx_std_17)
 target_include_directories(aac_pipeline_priming_tests PRIVATE
     ui_stubs ../.. "${FFMPEG_ROOT}/include")
@@ -72,7 +72,7 @@ set_tests_properties(stop_deadline PROPERTIES TIMEOUT 10)
 
 add_executable(capture_diagnostics_tests capture_diagnostics_tests.cpp
     ../../queue/ffapacketqueue.cpp ../../queue/ffvpacketqueue.cpp ../../queue/ffaframequeue.cpp
-    ../../thread/ffthread.cpp ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp)
+    ../../thread/ffthread.cpp ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp ../../queue/packet_interleaver.cpp)
 target_compile_features(capture_diagnostics_tests PRIVATE cxx_std_17)
 target_include_directories(capture_diagnostics_tests PRIVATE ui_stubs ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(capture_diagnostics_tests PRIVATE Qt6::Core
@@ -82,7 +82,7 @@ set_tests_properties(capture_diagnostics PROPERTIES TIMEOUT 10)
 
 add_executable(video_only_tests video_only_tests.cpp
     ../../queue/media_clock.cpp ../../queue/video_tick_scheduler.cpp ../../queue/ffapacketqueue.cpp ../../queue/ffvpacketqueue.cpp
-    ../../thread/ffthread.cpp ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp)
+    ../../thread/ffthread.cpp ../../thread/ffmuxerthread.cpp ../../muxer/ffmuxer.cpp ../../queue/packet_guard.cpp ../../queue/packet_interleaver.cpp)
 target_compile_features(video_only_tests PRIVATE cxx_std_17)
 target_include_directories(video_only_tests PRIVATE ui_stubs ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(video_only_tests PRIVATE Qt6::Core
