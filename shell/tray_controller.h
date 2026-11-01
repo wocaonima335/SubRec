@@ -1,7 +1,7 @@
 #ifndef SUBREC_SHELL_TRAY_CONTROLLER_H
 #define SUBREC_SHELL_TRAY_CONTROLLER_H
 
-#include "shell_types.h"
+#include "shell/shell_types.h"
 
 #include <QObject>
 #include <QSystemTrayIcon>

@@ -1,7 +1,7 @@
 #ifndef SUBREC_SHELL_SETTINGS_H
 #define SUBREC_SHELL_SETTINGS_H
 
-#include "shell_types.h"
+#include "shell/shell_types.h"
 
 #include <QObject>
 #include <memory>

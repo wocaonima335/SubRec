@@ -77,7 +77,12 @@ public:
     ~WindowController() override;
     bool windowShown() const; // True only for W1, not minimized.
     // Observe visibility/geometry; disable quit-on-last-window-closed. Visibility
-    // drives PreviewBridge::setPreviewWanted(true for W1, false for W2/W3).
+    // drives PreviewBridge::instance().setPreviewWanted(): true only for W1;
+    // false for W2 (minimized to taskbar) AND W3 (hidden to tray). The
+    // controller calls it on every visibility transition (S0b ffglitem API).
+    // Preview-off frames are an intentional skip, not a drop: see S0b note in
+    // section 8 alignment (submitFrame should return true and must not raise
+    // GpuPreview's dropped counter).
     void attachMainWindow(QQuickWindow *window);
     void startHidden(); // C4/--minimized; ignored without an enabled, available tray.
 

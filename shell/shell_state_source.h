@@ -1,7 +1,7 @@
 #ifndef SUBREC_SHELL_STATE_SOURCE_H
 #define SUBREC_SHELL_STATE_SOURCE_H
 
-#include "shell_types.h"
+#include "shell/shell_types.h"
 
 #include <QObject>
 #include <memory>
