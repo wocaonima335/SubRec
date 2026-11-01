@@ -6,13 +6,24 @@
 #include "opengl/ffglitem.h"
 #include "recorder/capture_scheduler.h"
 #include "recorder/ffrecorder.h"
+#include "shell/capture_exclusion.h"
+#include "shell/power_request.h"
+#include "shell/shell_settings.h"
+#include "shell/shell_state_source.h"
+#include "shell/single_instance.h"
+#include "shell/tray_controller.h"
+#include "shell/window_controller.h"
 
 
 #include <QDebug>
 #include <QDir>
+#include <QDesktopServices>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QMessageBox>
+#include <QPointer>
+#include <QUrl>
 #include <QApplication>
 #include <QObject>
 #include <QQmlApplicationEngine>
@@ -62,26 +73,46 @@ void qtLogHandler(QtMsgType type, const QMessageLogContext &,
 
 void init() { FFRecorder::getInstance().captureScheduler().initialize(); }
 
-void startRecording()
+// START INVARIANT (MINIMIZE_DESIGN.md §4.4 item 5, §8.4.5): every recording start —
+// QML record button, Retry, tray, AutoTest — goes through
+// WindowController::requestStart(), which turns capture exclusion on synchronously
+// before the engine grabs its first frame. Only the engine* functions below touch the
+// scheduler, and only RecordingActions (owned by WindowController) calls them.
+static QPointer<subrec::shell::WindowController> g_shell;
+
+static bool engineStart()
 {
   qDebug() << "开始录制...";
-  FFRecorder::getInstance().captureScheduler().start();
+  return FFRecorder::getInstance().captureScheduler().start();
 }
-
-void stopRecording()
+static void engineStop()
 {
   qDebug() << "停止录制...";
   FFRecorder::getInstance().captureScheduler().stop();
 }
+static void enginePause() { FFRecorder::getInstance().captureScheduler().pause(); }
+static void engineResume() { FFRecorder::getInstance().captureScheduler().resume(); }
+
+void startRecording()
+{
+  if (g_shell) g_shell->requestStart();
+  else qWarning() << "[Shell] startRecording before WindowController exists; ignored";
+}
+
+// Stop does not touch exclusion (it is released on Idle/Failed by the controller).
+// The controller's requestStop() only acts in Running/Paused; AutoTest scenarios may
+// stop at fixed times in other states, so AutoTest keeps the direct engine stop to
+// preserve its existing behavior. QML/tray stop goes through requestStop().
+void stopRecording() { engineStop(); }
 
 void pauseRecording()
 {
-  FFRecorder::getInstance().captureScheduler().pause();
+  if (g_shell) g_shell->requestPause();
 }
 
 void readyRecording()
 {
-  FFRecorder::getInstance().captureScheduler().resume();
+  if (g_shell) g_shell->requestResume();
 }
 
 // 点击屏幕/摄像头区域时触发的源打开控制事件
@@ -833,10 +864,10 @@ public:
   explicit QmlBridge(QObject *parent = nullptr) : QObject(parent) {}
 
 public slots:
-  void onStopRecording() { stopRecording(); }
-  void onPauseRecording() { pauseRecording(); }
-  void onStartRecording() { startRecording(); }
-  void onReadyRecording() { readyRecording(); }
+  void onStopRecording() { if (g_shell) g_shell->requestStop(); }
+  void onPauseRecording() { if (g_shell) g_shell->requestPause(); }
+  void onStartRecording() { if (g_shell) g_shell->requestStart(); }
+  void onReadyRecording() { if (g_shell) g_shell->requestResume(); }
   void onOpenScreen() { openSourceByControl(true); }
   void onOpenCamera() { openSourceByControl(false); }
   void onOpenSystemAudio() { openAudioByControl(true); }
@@ -851,8 +882,53 @@ int main(int argc, char *argv[])
   subrec::logging::reportLevel(debugLog);
   int exitCode = 0;
   const bool autoTestMode = capture::test::autoTestScenarioActive();
+  const bool startMinimizedArg = app.arguments().contains(QStringLiteral("--minimized"));
+
+  // Single instance: before any device, recorder or window is created (§3.8, §4.6).
+  // AutoTest skips it so parallel/automated runs are unaffected.
+  std::unique_ptr<subrec::shell::SingleInstance> singleInstance;
+  if (!autoTestMode) {
+    singleInstance = std::make_unique<subrec::shell::SingleInstance>();
+    if (singleInstance->acquire() == subrec::shell::SingleInstance::Role::Secondary) {
+      using Request = subrec::shell::SingleInstance::Request;
+      const bool acked = singleInstance->notifyPrimary(
+          startMinimizedArg ? Request::Noop : Request::Show, 1000);
+      if (!acked) {
+        qWarning() << "[Shell] primary instance did not respond";
+        QMessageBox::warning(nullptr, QStringLiteral("字录"),
+            QStringLiteral("字录已经在运行，但没有响应。请在任务管理器中结束后重试。"));
+      }
+      return 0;
+    }
+    singleInstance->listen();
+  }
 
   init();
+
+  // Shell objects (GUI thread). Declared before the QML engine so they outlive it.
+  subrec::shell::CaptureExclusion exclusion;
+  subrec::shell::PowerRequest power;
+  subrec::shell::ShellSettings shellSettings(subrec::shell::CaptureExclusion::supported());
+  std::unique_ptr<subrec::shell::TrayController> tray;
+  if (!autoTestMode && subrec::shell::TrayController::systemTrayAvailable())
+    tray = std::make_unique<subrec::shell::TrayController>();
+  subrec::shell::ShellStateSource shellState(FFRecorder::getInstance());
+  subrec::shell::WindowController windowController(
+      shellSettings, shellState, tray.get(), exclusion, power,
+      subrec::shell::RecordingActions(
+          engineStart, engineStop, enginePause, engineResume,
+          [] {
+            QDesktopServices::openUrl(
+                QUrl::fromLocalFile(FFRecorder::getInstance().outputPath()));
+          }));
+  g_shell = &windowController;
+  if (singleInstance)
+    QObject::connect(singleInstance.get(), &subrec::shell::SingleInstance::showRequested,
+                     &windowController, &subrec::shell::WindowController::showMainWindow);
+  // C4 / --minimized only with a usable tray (otherwise there is no way back).
+  const bool startHidden = (startMinimizedArg || shellSettings.startMinimized()) && tray
+                           && shellSettings.trayEnabled()
+                           && subrec::shell::TrayController::systemTrayAvailable();
 
   QObject::connect(&app, &QCoreApplication::aboutToQuit, [] {
     qDebug() << "[App] aboutToQuit";
@@ -873,6 +949,9 @@ int main(int argc, char *argv[])
     qmlRegisterType<FFGLItem>("GLPreview", 1, 0, "GLView");
     engine.rootContext()->setContextProperty("recorder",
                                              &FFRecorder::getInstance());
+    engine.rootContext()->setContextProperty("shell", &windowController);
+    engine.rootContext()->setContextProperty("shellSettings", &shellSettings);
+    engine.rootContext()->setContextProperty("shellStartHidden", startHidden);
     engine.loadFromModule("SubRec", "Main");
 
     if (!engine.rootObjects().isEmpty())
@@ -885,6 +964,14 @@ int main(int argc, char *argv[])
       auto previewItem = qobject_cast<FFGLItem *>(obj);
       PreviewBridge::instance().setPreviewItem(previewItem);
       qDebug() << "PreviewItem set:" << previewItem;
+
+      if (auto *mainWindow = qobject_cast<QQuickWindow *>(root)) {
+        mainWindow->setObjectName(QStringLiteral("mainWindow"));
+        windowController.attachMainWindow(mainWindow); // also registers capture exclusion
+        if (startHidden) windowController.startHidden();
+      } else {
+        qWarning() << "[Shell] QML root is not a QQuickWindow; shell window control disabled";
+      }
 
       static QmlBridge bridge;
       QObject::connect(root, SIGNAL(startRecording()), &bridge,
@@ -911,7 +998,9 @@ int main(int argc, char *argv[])
 
     exitCode = app.exec();
     qDebug() << "[App] app.exec returned" << exitCode;
+    windowController.attachMainWindow(nullptr); // window dies with the engine
   }
+  g_shell = nullptr;
 
   if (autoTestMode)
   {
