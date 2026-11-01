@@ -57,9 +57,9 @@ QIcon makeTrayIcon(TrayIconKind kind)
                 p.setBrush(Qt::white);
                 const qreal scale = s.badge / 12.0;
                 const qreal x = badge.center().x() - scale;
-                const qreal y = badge.center().y() - 4 * scale;
-                p.drawRect(QRectF(x, y, 2 * scale, 5 * scale));
-                p.drawRect(QRectF(x, y + 6 * scale, 2 * scale, 2 * scale));
+                const qreal y = badge.center().y() - 5 * scale;
+                p.drawRect(QRectF(x, y, 2 * scale, 6 * scale));
+                p.drawRect(QRectF(x, y + 8 * scale, 2 * scale, 2 * scale));
             }
         }
         p.end();

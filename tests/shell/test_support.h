@@ -12,9 +12,6 @@ struct IsolatedSettings {
     IsolatedSettings() {
         CHECK(directory.isValid());
         QSettings::setDefaultFormat(QSettings::IniFormat);
-        qputenv("XDG_CONFIG_HOME", directory.path().toUtf8());
-        QSettings::setPath(QSettings::NativeFormat, QSettings::UserScope, directory.path());
-        QSettings::setPath(QSettings::NativeFormat, QSettings::SystemScope, directory.path());
         QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, directory.path());
         QSettings::setPath(QSettings::IniFormat, QSettings::SystemScope, directory.path());
     }

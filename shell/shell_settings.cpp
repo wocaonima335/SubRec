@@ -7,7 +7,10 @@ namespace subrec::shell {
 class ShellSettings::Private {
 public:
     explicit Private(bool supported) : supported(supported) { settings.setFallbacksEnabled(false); }
-    QSettings settings{QStringLiteral("SubRec"), QStringLiteral("SubRec")};
+    // NativeFormat in the application (same store as QSettings("SubRec", "SubRec")).
+    // Respect an explicitly selected format so tests can use isolated INI files on Windows too.
+    QSettings settings{QSettings::defaultFormat(), QSettings::UserScope,
+                       QStringLiteral("SubRec"), QStringLiteral("SubRec")};
     const bool supported;
 };
 

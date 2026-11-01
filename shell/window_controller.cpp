@@ -72,7 +72,7 @@ public:
         if (window && window->visibility() == QWindow::Windowed) normalGeometry = window->geometry();
     }
 
-    void visibilityChanged()
+    void visibilityChanged(bool allowHint = true)
     {
         if (!window) return;
         const auto v = window->visibility();
@@ -90,7 +90,7 @@ public:
         visibility = next;
         PreviewBridge::instance().setPreviewWanted(visibility == WindowVisibility::Shown);
         if (changed) emit owner.windowShownChanged();
-        if (next == WindowVisibility::HiddenToTray && trayUsable() && !settings.trayHintShown()) hintPending = true;
+        if (allowHint && next == WindowVisibility::HiddenToTray && trayUsable() && !settings.trayHintShown()) hintPending = true;
         updateTray();
         deliverHint();
     }
@@ -176,7 +176,12 @@ void WindowController::attachMainWindow(QQuickWindow *window)
     if (d->window) disconnect(d->window, nullptr, this, nullptr);
     d->window = window;
     QGuiApplication::setQuitOnLastWindowClosed(false);
-    if (!window) { PreviewBridge::instance().setPreviewWanted(false); return; }
+    if (!window) {
+        d->visibility = WindowVisibility::HiddenToTray;
+        PreviewBridge::instance().setPreviewWanted(false);
+        emit windowShownChanged();
+        return;
+    }
     d->exclusion.addWindow(window);
     connect(window, &QWindow::visibilityChanged, this, [this] { d->visibilityChanged(); });
     const auto geometryChanged = [this] { d->rememberGeometry(); };
@@ -189,7 +194,8 @@ void WindowController::attachMainWindow(QQuickWindow *window)
         PreviewBridge::instance().setPreviewWanted(false);
         emit windowShownChanged();
     });
-    d->visibilityChanged();
+    // A newly constructed QML window is initially hidden, not a user tray entry.
+    d->visibilityChanged(false);
 }
 
 void WindowController::startHidden() { if (d->trayUsable()) hideToTray(); }
@@ -291,7 +297,10 @@ void WindowController::hideToTray()
 {
     if (!d->window) return;
     d->rememberGeometry();
-    if (d->trayUsable()) d->window->hide(); else d->window->showMinimized();
+    if (d->trayUsable()) {
+        d->window->hide();
+        d->visibilityChanged(); // Also handles --minimized before the first show().
+    } else d->window->showMinimized();
 }
 void WindowController::toggleWindow() { if (windowShown()) hideToTray(); else showMainWindow(); }
 

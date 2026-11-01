@@ -16,7 +16,7 @@ int main(int argc, char **argv)
             CHECK(s.closeActionText() == "ask" && s.closeAction() == CloseAction::Ask);
             CHECK(s.excludeText() == "recording" && s.excludeMode() == ExcludeMode::RecordingOnly);
             CHECK(!s.hideOnRecordStart()); CHECK(s.confirmExit()); CHECK(!s.trayHintShown()); CHECK(s.excludeSupported());
-            QSettings raw("SubRec", "SubRec");
+            QSettings raw(QSettings::IniFormat, QSettings::UserScope, "SubRec", "SubRec");
             CHECK(raw.allKeys().isEmpty()); // Reading defaults need not write preferences.
         } else if (mode == "roundtrip") {
             {
@@ -29,7 +29,7 @@ int main(int argc, char **argv)
             CHECK(!s.trayEnabled() && s.minimizeToTray() && s.startMinimized());
             CHECK(s.closeAction() == CloseAction::Tray && s.excludeMode() == ExcludeMode::Always);
             CHECK(s.hideOnRecordStart() && !s.confirmExit() && s.trayHintShown());
-            QSettings raw("SubRec", "SubRec");
+            QSettings raw(QSettings::IniFormat, QSettings::UserScope, "SubRec", "SubRec");
             CHECK(raw.fileName().startsWith(isolated.directory.path()));
             CHECK(raw.value("ui/trayEnabled").toBool() == false);
             CHECK(raw.value("ui/minimizeToTray").toBool()); CHECK(raw.value("ui/startMinimized").toBool());
@@ -62,7 +62,7 @@ int main(int argc, char **argv)
             s.setCloseActionText("exit"); s.setExcludeText("always"); CHECK(changes == before + 2);
             s.setCloseActionText("exit"); s.setExcludeText("always"); CHECK(changes == before + 2);
         } else if (mode == "invalid") {
-            QSettings raw("SubRec", "SubRec");
+            QSettings raw(QSettings::IniFormat, QSettings::UserScope, "SubRec", "SubRec");
             raw.setValue("ui/closeAction", "bogus"); raw.setValue("ui/excludeFromCapture", "bogus"); raw.sync();
             ShellSettings s(true); int changes = 0;
             QObject::connect(&s, &ShellSettings::changed, [&] { ++changes; });
