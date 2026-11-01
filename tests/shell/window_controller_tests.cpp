@@ -67,6 +67,17 @@ int main(int argc, char **argv)
             start = [] { return true; };
             shell.requestStart(); shell.requestStart(); CHECK(starts == 4); checkActive(true);
             recorder.setState("Preparing"); recorder.setState("Failed"); checkActive(false);
+            // M1: no usable video device must still reach the engine, which
+            // reports the error; exclusion is enabled before the call (callback).
+            recorder.setState("Idle");
+            recorder.devices = {QVariantMap{{"kind", "screen"}, {"available", false}}};
+            emit recorder.captureDevicesChanged();
+            CHECK(source.snapshot().state == RecState::NoDevice);
+            start = [&] { recorder.setState("Preparing"); recorder.setState("Failed"); return false; };
+            shell.requestStart(); CHECK(starts == 5); checkActive(false);
+            recorder.devices.clear(); recorder.setState("Idle"); emit recorder.captureDevicesChanged();
+            CHECK(source.snapshot().state == RecState::NoDevice);
+            shell.requestStart(); CHECK(starts == 6); checkActive(false);
         } else if (mode == "actions") {
             shell.requestPause(); shell.requestResume(); shell.requestStop(); CHECK(pauses == 0 && resumes == 0 && stops == 0);
             shell.requestStart(); recorder.setState("Running");

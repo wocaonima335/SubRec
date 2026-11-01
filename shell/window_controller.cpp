@@ -248,7 +248,9 @@ void WindowController::requestStart()
 {
     const auto state = d->snapshot().state;
     if (d->starting || d->startPending || d->shuttingDown
-        || (state != RecState::Idle && state != RecState::Failed) || !actions_.start) return;
+        || isCapturing(state) || !actions_.start) return;
+    // NoDevice is NOT rejected here: the engine reports the error and its fix
+    // suggestion (Failed + captureError), as before the shell (review M1).
     QScopedValueRollback<bool> guard(d->starting, true);
     d->startPending = true;
     d->exclusion.setCapturing(true); // MUST precede the first synchronous frame grab.
