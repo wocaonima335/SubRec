@@ -1,0 +1,60 @@
+#ifndef SUBREC_SHELL_SETTINGS_H
+#define SUBREC_SHELL_SETTINGS_H
+
+#include "shell_types.h"
+
+#include <QObject>
+#include <memory>
+
+namespace subrec::shell {
+
+// GUI thread only. QML context name: shellSettings.
+// Persistence: QSettings("SubRec", "SubRec"), ui/* keys from section 5.1.
+class ShellSettings : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(bool trayEnabled READ trayEnabled WRITE setTrayEnabled NOTIFY changed)
+    Q_PROPERTY(bool minimizeToTray READ minimizeToTray WRITE setMinimizeToTray NOTIFY changed)
+    Q_PROPERTY(QString closeAction READ closeActionText WRITE setCloseActionText NOTIFY changed)
+    Q_PROPERTY(bool startMinimized READ startMinimized WRITE setStartMinimized NOTIFY changed)
+    Q_PROPERTY(QString excludeFromCapture READ excludeText WRITE setExcludeText NOTIFY changed)
+    Q_PROPERTY(bool hideOnRecordStart READ hideOnRecordStart WRITE setHideOnRecordStart NOTIFY changed)
+    Q_PROPERTY(bool confirmExitWhileRecording READ confirmExit WRITE setConfirmExit NOTIFY changed)
+    Q_PROPERTY(bool excludeSupported READ excludeSupported CONSTANT)
+
+public:
+    // Inject CaptureExclusion::supported(); this capability is immutable.
+    explicit ShellSettings(bool excludeSupported, QObject *parent = nullptr);
+    ~ShellSettings() override;
+
+    bool trayEnabled() const; // C1: true
+    void setTrayEnabled(bool enabled);
+    bool minimizeToTray() const; // C2: false
+    void setMinimizeToTray(bool enabled);
+    QString closeActionText() const; // C3: "ask"; accepts ask | tray | exit
+    void setCloseActionText(const QString &action);
+    CloseAction closeAction() const;
+    bool startMinimized() const; // C4: false
+    void setStartMinimized(bool enabled);
+    QString excludeText() const; // C6: "recording"; recording | always | never
+    void setExcludeText(const QString &mode);
+    ExcludeMode excludeMode() const; // Effective mode: Never if unsupported.
+    bool hideOnRecordStart() const; // C7: false
+    void setHideOnRecordStart(bool enabled);
+    bool confirmExit() const; // ui/confirmExitWhileRecording: true
+    void setConfirmExit(bool enabled);
+    bool excludeSupported() const;
+    bool trayHintShown() const; // ui/trayHintShown: false
+    void setTrayHintShown(bool shown);
+
+signals:
+    // Emitted when a stored setting changes; backs every mutable QML property.
+    void changed();
+
+private:
+    class Private;
+    std::unique_ptr<Private> d;
+};
+
+} // namespace subrec::shell
+
+#endif // SUBREC_SHELL_SETTINGS_H
