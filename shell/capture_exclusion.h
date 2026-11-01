@@ -70,6 +70,7 @@ protected:
 
 private:
     void applyAll();
+    void applyWindow(QWindow *window); // one window, current effective() state
 
     ExcludeMode m_mode = ExcludeMode::RecordingOnly;
     bool m_capturing = false;
