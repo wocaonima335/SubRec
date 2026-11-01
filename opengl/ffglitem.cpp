@@ -175,8 +175,24 @@ void PreviewBridge::setPreviewItem(FFGLItem *item)
     }
 }
 
+void PreviewBridge::setPreviewWanted(bool wanted) noexcept
+{
+    m_previewWanted.store(wanted, std::memory_order_relaxed);
+}
+
+bool PreviewBridge::previewWanted() const noexcept
+{
+    return m_previewWanted.load(std::memory_order_relaxed);
+}
+
 bool PreviewBridge::submitFrame(const AVFrame *frame)
 {
+    // Window not shown: skip the copy entirely. Report success so callers do not
+    // count an intentional skip as a dropped frame (capture/gpu_preview.cpp).
+    if (!m_previewWanted.load(std::memory_order_relaxed)) {
+        m_skippedHidden.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
     std::unique_lock<std::mutex> lock(m_mutex, std::try_to_lock);
     if (!lock.owns_lock() || !m_item) return false;
     PreviewFrameData latest = makePreviewFrame(frame);
@@ -270,7 +286,9 @@ void PreviewBridge::markRendered(quint64 version, int width, int height, quint64
 PreviewDebugSnapshot PreviewBridge::debugSnapshot() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_debug;
+    PreviewDebugSnapshot snapshot = m_debug;
+    snapshot.skippedHiddenCount = m_skippedHidden.load(std::memory_order_relaxed);
+    return snapshot;
 }
 
 void PreviewBridge::scheduleDispatchLocked(FFGLItem *item)
