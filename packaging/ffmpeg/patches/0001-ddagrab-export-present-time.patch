@@ -1,0 +1,75 @@
+SubRec patch for FFmpeg n8.0.3 (LGPL-2.1-or-later, same license as the file).
+
+lavfi/vsrc_ddagrab: export the desktop presentation time as frame metadata
+
+DXGI_OUTDUPL_FRAME_INFO.LastPresentTime (QPC ticks) is only used inside ddagrab
+to tell whether a new desktop image exists. Export it on every output frame:
+
+  ddagrab.present_qpc  LastPresentTime of the newest desktop image (QPC ticks)
+  ddagrab.present_new  "1" if this frame carries a newly acquired image,
+                       "0" for duplicated frames (dup_frames) and frames that
+                       only redraw the mouse pointer
+
+The frame pts is unchanged. Metadata survives split/hwdownload/format/scale
+through av_frame_copy_props, so both the D3D11 and system-memory paths of SubRec
+see it. Applied by packaging/ffmpeg/build-ffmpeg.sh; shipped in the source package.
+
+--- a/libavfilter/vsrc_ddagrab.c
++++ b/libavfilter/vsrc_ddagrab.c
+@@ -38,6 +38,7 @@
+ #include "libavutil/opt.h"
+ #include "libavutil/time.h"
+ #include "libavutil/avstring.h"
++#include "libavutil/dict.h"
+ #include "libavutil/avassert.h"
+ #include "libavutil/hwcontext.h"
+ #include "libavutil/hwcontext_d3d11va.h"
+@@ -78,6 +79,11 @@
+     int64_t time_timeout;
+     int64_t first_pts;
+ 
++    /* DXGI LastPresentTime (QPC ticks) of the newest desktop image, and whether
++     * the texture acquired for the current frame is such a new image. */
++    int64_t present_qpc;
++    int     present_new;
++
+     DXGI_FORMAT raw_format;
+     int raw_width;
+     int raw_height;
+@@ -735,6 +741,9 @@
+         return 0;
+     }
+ 
++    dda->present_qpc = frame_info.LastPresentTime.QuadPart;
++    dda->present_new = 1;
++
+     hr = IDXGIResource_QueryInterface(desktop_resource, &IID_ID3D11Texture2D, (void**)desktop_texture);
+     release_resource(&desktop_resource);
+     if (FAILED(hr)) {
+@@ -1115,6 +1124,7 @@
+     now -= dda->first_pts;
+ 
+     if (!dda->probed_texture) {
++        dda->present_new = 0;
+         do {
+             ret = next_frame_internal(avctx, &cur_texture, 0);
+         } while (ret == AVERROR(EAGAIN) && !dda->dup_frames);
+@@ -1218,6 +1228,18 @@
+         return ret;
+ 
+ frame_done:
++    /* Export when the desktop image was presented. The frame pts keeps its
++     * scheduled semantics; consumers that need the presentation time use this
++     * QPC value. present_new is 0 for duplicated frames. */
++    if (dda->present_qpc > 0) {
++        ret = av_dict_set_int(&frame->metadata, "ddagrab.present_qpc", dda->present_qpc, 0);
++        if (ret >= 0)
++            ret = av_dict_set(&frame->metadata, "ddagrab.present_new", dda->present_new ? "1" : "0", 0);
++        if (ret < 0) {
++            av_frame_free(&frame);
++            return ret;
++        }
++    }
+     frame->pts = now;
+     dda->time_frame = time_frame;
+ 

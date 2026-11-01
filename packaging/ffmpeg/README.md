@@ -197,6 +197,19 @@ is already in `ffmpeg-<ref>.tar.xz`.
 | OpenH264 | v2.7.0 `1bca6231` | `libopenh264` (optional variant) | BSD-2-Clause (patent note below) | static |
 | MinGW-w64 runtime | from the toolchain | CRT startup, winpthreads, libgcc/libstdc++ | ZPL/public domain, MIT, GCC Runtime Library Exception | static |
 
+## 2a. SubRec patches (`patches/`)
+
+`build-ffmpeg.sh` keeps the pinned checkout pristine, exports it to `src/ffmpeg-patched`
+and applies `patches/*.patch` in name order before configuring (a patch that does not apply
+stops the build). `share/subrec-ffmpeg/patches.sha256` lists the applied files;
+`collect-sources.sh` copies each patch next to the source archives as `ffmpeg-<name>.patch`
+and includes them in `subrec-ffmpeg-build-scripts.tar.xz`, so the corresponding source is
+"pristine archive + these patches".
+
+| Patch | Purpose |
+|---|---|
+| `0001-ddagrab-export-present-time.patch` | ddagrab exports `DXGI_OUTDUPL_FRAME_INFO.LastPresentTime` (QPC ticks) as frame metadata `ddagrab.present_qpc`, plus `ddagrab.present_new` (`1` new desktop image, `0` duplicate / pointer-only). Frame pts unchanged. Used by SubRec to time-stamp video at the presentation time (P3a). Checked with `patch --dry-run` against n8.0.3 and a MinGW syntax parse; **not built or run yet**. |
+
 ## 3. FFmpeg version and header compatibility
 
 - **n8.0.3 (chosen).** It has the same library majors as the DLLs SubRec was developed with

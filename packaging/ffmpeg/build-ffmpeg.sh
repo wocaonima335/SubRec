@@ -45,7 +45,7 @@ case $VARIANT in
     *) die "unknown SUBREC_FFMPEG_VARIANT '$VARIANT' (gpl | lgpl | lgpl-openh264)" ;;
 esac
 
-for tool in git make nasm pkg-config cmake ninja xz sha256sum "$HOST-gcc" "$HOST-g++" "$HOST-objdump" "$HOST-strip"; do
+for tool in git make nasm pkg-config cmake ninja xz tar patch sha256sum "$HOST-gcc" "$HOST-g++" "$HOST-objdump" "$HOST-strip"; do
     command -v "$tool" >/dev/null || die "missing build tool: $tool (see README.md, 'Build host')"
 done
 if ! "$HOST-gcc" -v 2>&1 | grep -q 'Thread model: posix'; then
@@ -97,6 +97,27 @@ case $VARIANT in
     gpl)           fetch x264     "$X264_REPO"     "$X264_REF"     "$X264_COMMIT" ;;
     lgpl-openh264) fetch openh264 "$OPENH264_REPO" "$OPENH264_REF" "$OPENH264_COMMIT" ;;
 esac
+
+# --- SubRec patches ------------------------------------------------------------------
+# The pinned checkout stays pristine (collect-sources.sh archives it). FFmpeg is built from
+# an exported copy with packaging/ffmpeg/patches/*.patch applied in name order; the patch
+# files are shipped next to the source archives and listed in patches.sha256.
+FFSRC=$SRC/ffmpeg
+: > "$INFO/patches.sha256"
+shopt -s nullglob
+patches=("$SCRIPT_DIR"/patches/*.patch)
+shopt -u nullglob
+if [ ${#patches[@]} -gt 0 ]; then
+    FFSRC=$SRC/ffmpeg-patched
+    log "apply ${#patches[@]} SubRec FFmpeg patch(es)"
+    rm -rf "$FFSRC"
+    mkdir -p "$FFSRC"
+    git -C "$SRC/ffmpeg" archive --format=tar HEAD | tar -x -C "$FFSRC"
+    for p in "${patches[@]}"; do
+        patch -p1 --forward --batch --silent -d "$FFSRC" < "$p" || die "patch failed: $(basename "$p")"
+        ( cd "$SCRIPT_DIR/patches" && sha256sum "$(basename "$p")" ) >> "$INFO/patches.sha256"
+    done
+fi
 
 # --- dependencies (all static or header-only) -------------------------------------------
 log "nv-codec-headers"
@@ -222,7 +243,7 @@ args=(
 log "FFmpeg configure ($VARIANT)"
 rm -rf "$BLD/ffmpeg" "$OUT/bin" "$OUT/lib" "$OUT/include"
 mkdir -p "$BLD/ffmpeg"
-( cd "$BLD/ffmpeg" && "$SRC/ffmpeg/configure" "${args[@]}" ) \
+( cd "$BLD/ffmpeg" && "$FFSRC/configure" "${args[@]}" ) \
     || { tail -n 40 "$BLD/ffmpeg/ffbuild/config.log" >&2 || true; die "FFmpeg configure failed"; }
 
 # configure silently drops components whose dependencies are missing: check every one.

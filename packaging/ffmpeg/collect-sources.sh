@@ -64,8 +64,17 @@ while IFS=$'\t' read -r name _repo ref commit; do
     esac
 done < "$INFO/sources.tsv"
 
+shopt -s nullglob
+patch_files=("$SCRIPT_DIR"/patches/*.patch)
+shopt -u nullglob
+patch_paths=()
+for p in "${patch_files[@]}"; do
+    cp "$p" "$S/ffmpeg-$(basename "$p")"
+    patch_paths+=("ffmpeg/patches/$(basename "$p")")
+done
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
     -C "$SCRIPT_DIR/.." -cf - ffmpeg/versions.env ffmpeg/build-ffmpeg.sh ffmpeg/collect-sources.sh ffmpeg/README.md ffmpeg/BUILD_WARNINGS.md \
+    "${patch_paths[@]}" \
     | xz -9 -T1 > "$S/subrec-ffmpeg-build-scripts.tar.xz"
 
 case $VARIANT in
@@ -82,10 +91,16 @@ This FFmpeg was built by SubRec's own scripts from the pinned sources in this di
 Rebuild: unpack subrec-ffmpeg-build-scripts.tar.xz and run
   SUBREC_FFMPEG_VARIANT=$VARIANT ffmpeg/build-ffmpeg.sh
 on the build host listed below (scripts fetch the same commits; the archives here are
-byte-for-byte \`git archive\` exports of those commits, unmodified, no patches applied).
+byte-for-byte \`git archive\` exports of those commits, unmodified). FFmpeg was built with the
+SubRec patches ffmpeg-*.patch in this directory applied on top (also inside the scripts
+archive; SHA-256 below).
 
 Variant : $VARIANT
 License : $license
+
+FFmpeg patches (SHA-256, file)
+------------------------------
+$(cat "$INFO/patches.sha256" 2>/dev/null || true)
 
 Sources (name, upstream repository, ref, commit)
 ------------------------------------------------
