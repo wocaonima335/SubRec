@@ -15,6 +15,7 @@
 #include "wasapi_buffered_sink.h"
 #include "wasapi_silence_policy.h"
 #include "wasapi_packet_diagnostics.h"
+#include "qpc_session_clock.h"
 #include <QDebug>
 #include <condition_variable>
 #include <mutex>
@@ -203,6 +204,8 @@ struct LoopbackCapture::Impl {
             { std::unique_lock<std::mutex> lock(mutex); cv.wait(lock, [&]{ return go || stop || abort; }); }
             if (!abort && !stop) {
                 startQpc = qpc100ns(); startUs = av_gettime_relative();
+                // Shared QPC -> session mapping (also used for video presentation times).
+                QpcSessionClock::instance().refresh(true);
                 pipeline.setSessionStartUs(startUs);
                 check(stream->client->Start(), "Start"); stream->started = true; state = LoopbackState::Running;
             }
@@ -256,9 +259,18 @@ struct LoopbackCapture::Impl {
                                         ++statistics.driftWarnings;
                                     }
                                 }
-                                const int64_t captureUs = (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)
-                                    ? av_gettime_relative() - int64_t(count) * 1000000 / info.sampleRate
-                                    : startUs + (static_cast<int64_t>(qpc) - startQpc) / 10;
+                                // GetBuffer's qpc is in 100 ns units. Map it with the same
+                                // refreshed QPC anchors as the video presentation times so a
+                                // rate difference between QPC and av_gettime_relative() does
+                                // not accumulate; the one-shot start pair is only a fallback.
+                                int64_t captureUs = AV_NOPTS_VALUE;
+                                if (!(flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR)) {
+                                    captureUs = QpcSessionClock::instance().from100ns(static_cast<int64_t>(qpc));
+                                    if (captureUs == AV_NOPTS_VALUE)
+                                        captureUs = startUs + (static_cast<int64_t>(qpc) - startQpc) / 10;
+                                } else {
+                                    captureUs = av_gettime_relative() - int64_t(count) * 1000000 / info.sampleRate;
+                                }
                                 silence.packet(); // Any real/SILENT packet resets idle evidence.
                                 if (!pipeline.packet(*frame, captureUs)) abort = true;
                                 updateStatistics(pipeline);
