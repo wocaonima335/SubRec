@@ -7,6 +7,74 @@ Item {
     id: settingpage
     property bool showPreview: false
 
+    // Shell settings row (switch). Same switch style as the rows above.
+    component ShellSwitchRow: RowLayout {
+        id: row
+        property string title: ""
+        property string note: ""
+        property bool checked: false
+        property string disabledTip: ""
+        signal toggled(bool on)
+        spacing: 12
+        Layout.fillWidth: true
+        opacity: enabled ? 1.0 : 0.4
+        ColumnLayout {
+            spacing: 2
+            Layout.fillWidth: true
+            Text { text: row.title; color: "#E0E0E0"; font.pixelSize: 14 }
+            Text { text: row.note; color: "#808590"; font.pixelSize: 12; visible: text.length > 0
+                   wrapMode: Text.Wrap; Layout.fillWidth: true }
+        }
+        Switch {
+            id: sw
+            checked: row.checked
+            onToggled: row.toggled(checked)
+            ToolTip.visible: !row.enabled && row.disabledTip.length > 0 && hovered
+            ToolTip.text: row.disabledTip
+            indicator: Rectangle {
+                implicitWidth: 40
+                implicitHeight: 20
+                x: sw.leftPadding
+                y: sw.height / 2 - height / 2
+                radius: 10
+                color: sw.checked ? "#00A2E8" : "#3A4050"
+                Rectangle {
+                    x: sw.checked ? parent.width - width - 2 : 2
+                    y: 2; width: 16; height: 16; radius: 8; color: "#ffffff"
+                    Behavior on x { NumberAnimation { duration: 150 } }
+                }
+            }
+        }
+    }
+
+    component ShellComboRow: RowLayout {
+        id: crow
+        property string title: ""
+        property string note: ""
+        property color noteColor: "#808590"
+        property var options: []       // [{ text, value }]
+        property string value: ""
+        signal picked(string value)
+        spacing: 12
+        Layout.fillWidth: true
+        opacity: enabled ? 1.0 : 0.4
+        ColumnLayout {
+            spacing: 2
+            Layout.fillWidth: true
+            Text { text: crow.title; color: "#E0E0E0"; font.pixelSize: 14 }
+            Text { text: crow.note; color: crow.noteColor; font.pixelSize: 12; visible: text.length > 0
+                   wrapMode: Text.Wrap; Layout.fillWidth: true }
+        }
+        ComboBox {
+            Layout.preferredWidth: 200
+            textRole: "text"
+            valueRole: "value"
+            model: crow.options
+            currentIndex: Math.max(0, indexOfValue(crow.value))
+            onActivated: crow.picked(currentValue)
+        }
+    }
+
     FolderDialog {
         id: folderDialog
         title: "Select Output Folder"
@@ -379,6 +447,87 @@ Item {
                             selectionColor: "#00A2E8"
                         }
                     }
+                }
+
+                // 窗口与托盘 (MINIMIZE_DESIGN.md §6.4.2, C1-C4, C7)
+                ColumnLayout {
+                    spacing: 12
+                    Layout.fillWidth: true
+                    readonly property string trayTip: "需要先打开“在通知区域显示图标”"
+
+                    Text { text: "窗口与托盘"; color: "#FFFFFF"; font.pixelSize: 14; font.bold: true; opacity: 0.8 }
+
+                    ShellSwitchRow {
+                        title: "在通知区域显示图标"
+                        note: "关闭后，下面三项不可用"
+                        checked: shellSettings.trayEnabled
+                        onToggled: (on) => shellSettings.trayEnabled = on
+                    }
+                    ShellSwitchRow {
+                        title: "最小化时隐藏到托盘"
+                        note: "不在任务栏留按钮，点托盘图标恢复"
+                        enabled: shellSettings.trayEnabled
+                        disabledTip: parent.trayTip
+                        checked: shellSettings.minimizeToTray
+                        onToggled: (on) => shellSettings.minimizeToTray = on
+                    }
+                    ShellComboRow {
+                        title: "点关闭按钮时"
+                        note: "选“最小化到托盘”时，关闭窗口不会停止录制"
+                        enabled: shellSettings.trayEnabled
+                        options: [ { text: "每次询问", value: "ask" },
+                                   { text: "最小化到托盘", value: "tray" },
+                                   { text: "退出字录", value: "exit" } ]
+                        // C1 off: shown as "退出字录" (§6.4.2 state table).
+                        value: shellSettings.trayEnabled ? shellSettings.closeAction : "exit"
+                        onPicked: (v) => shellSettings.closeAction = v
+                    }
+                    ShellSwitchRow {
+                        title: "启动时最小化到托盘"
+                        note: "也可以用命令行参数 --minimized"
+                        enabled: shellSettings.trayEnabled
+                        disabledTip: parent.trayTip
+                        checked: shellSettings.startMinimized
+                        onToggled: (on) => shellSettings.startMinimized = on
+                    }
+                    ShellSwitchRow {
+                        title: "开始录制后自动隐藏主窗口"
+                        note: "隐藏后可以用托盘控制"
+                        checked: shellSettings.hideOnRecordStart
+                        onToggled: (on) => shellSettings.hideOnRecordStart = on
+                    }
+                }
+
+                // 录像画面 (C6)
+                ColumnLayout {
+                    spacing: 12
+                    Layout.fillWidth: true
+
+                    Text { text: "录像画面"; color: "#FFFFFF"; font.pixelSize: 14; font.bold: true; opacity: 0.8 }
+
+                    ShellComboRow {
+                        title: "不把字录窗口录进画面"
+                        enabled: shellSettings.excludeSupported
+                        noteColor: shellSettings.excludeSupported ? "#808590" : "#E8B04A"
+                        note: shellSettings.excludeSupported
+                              ? "开启后，截图工具、会议共享、远程协助也看不到字录窗口。仅对‘桌面复制’采集方式保证有效。"
+                              : "需要 Windows 10 2004 或更高版本。当前系统上字录窗口会被录进画面，可以打开上面的‘开始录制后自动隐藏主窗口’。"
+                        options: shellSettings.excludeSupported
+                                 ? [ { text: "仅录制时", value: "recording" },
+                                     { text: "始终", value: "always" },
+                                     { text: "从不", value: "never" } ]
+                                 : [ { text: "不支持", value: "never" } ]
+                        value: shellSettings.excludeSupported ? shellSettings.excludeFromCapture : "never"
+                        onPicked: (v) => shellSettings.excludeFromCapture = v
+                    }
+                }
+
+                // 退出确认
+                ShellSwitchRow {
+                    title: "退出字录时，如正在录制先确认"
+                    note: "退出会停止录制并保存已录内容"
+                    checked: shellSettings.confirmExitWhileRecording
+                    onToggled: (on) => shellSettings.confirmExitWhileRecording = on
                 }
             }
         }

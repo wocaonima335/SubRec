@@ -25,6 +25,8 @@ qt_add_qml_module(qml_module
      QML_FILES OptionsArea.qml
      QML_FILES SourceSelectButton.qml
      QML_FILES VerticalSeparator.qml
+     QML_FILES CloseChoiceDialog.qml
+     QML_FILES ExitConfirmDialog.qml
     RESOURCES
         ../icons/Pause.png
         ../icons/Setting.png

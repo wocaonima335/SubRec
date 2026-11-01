@@ -9,7 +9,8 @@ ApplicationWindow {
     id: mainwindow
     width: 640
     height: 500
-    visible: true
+    // S9 sets shellStartHidden (C4 / --minimized with a usable tray) before loading.
+    visible: !shellStartHidden
     color: "transparent" // Set transparent to let backgroundRectangle show rounded corners
     title: qsTr("字录")
 
@@ -29,6 +30,31 @@ ApplicationWindow {
     signal openCamera
     signal openSystemAudio
     signal openMicrophone
+
+    // Alt+F4 / taskbar "close window": never close natively; WindowController decides.
+    onClosing: (close) => {
+        close.accepted = false
+        shell.requestClose()
+    }
+
+    Connections {
+        target: shell
+        function onCloseChoiceRequested(capturing, timeText) { closeChoiceDialog.openFor(capturing, timeText) }
+        function onExitConfirmRequested(variant, timeText) { exitConfirmDialog.openFor(variant, timeText) }
+        function onSettingsPageRequested() { mainwindow.handleSettingItemClick(1, "settings") }
+    }
+
+    CloseChoiceDialog {
+        id: closeChoiceDialog
+        onChosen: (toTray, remember) => shell.resolveCloseChoice(toTray, remember)
+        onCancelled: shell.cancelExit()
+    }
+
+    ExitConfirmDialog {
+        id: exitConfirmDialog
+        onConfirmed: shell.confirmExit()
+        onCancelled: shell.cancelExit()
+    }
 
     // 主背景容器
     Rectangle {
@@ -121,7 +147,7 @@ ApplicationWindow {
                 id: minMouse
                 anchors.fill: parent
                 hoverEnabled: true
-                onClicked: mainwindow.showMinimized()
+                onClicked: shell.requestMinimize()
             }
         }
 
@@ -151,7 +177,7 @@ ApplicationWindow {
                 id: closeMouse
                 anchors.fill: parent
                 hoverEnabled: true
-                onClicked: Qt.quit()
+                onClicked: shell.requestClose()
             }
         }
     }
@@ -272,7 +298,7 @@ ApplicationWindow {
             anchors.verticalCenter: parent.verticalCenter
             text: "Retry"
             enabled: recorder.canStartCapture
-            onClicked: recorder.retryCapture()
+            onClicked: shell.requestStart() // start invariant: never recorder.retryCapture()
         }
     }
 
