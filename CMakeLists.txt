@@ -19,7 +19,7 @@ if(SUBREC_STRIP_TEST_HOOKS)
 endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Quick)
-find_package(Qt6 REQUIRED COMPONENTS Quick Qml Multimedia Widgets Gui)
+find_package(Qt6 REQUIRED COMPONENTS Quick Qml Multimedia Widgets Gui Network)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -47,7 +47,7 @@ foreach(required_ffmpeg_dir
 endforeach()
 
 # 添加 FFmpeg 头文件目录
-include_directories(${FFMPEG_INCLUDE_DIR})
+include_directories(${FFMPEG_INCLUDE_DIR} ${CMAKE_SOURCE_DIR})
 
 function(resolve_ffmpeg_library out_var lib_name)
     unset(${out_var})
@@ -97,9 +97,14 @@ add_subdirectory(thread)
 add_subdirectory(recorder)
 add_subdirectory(encoder)
 add_subdirectory(opengl)
+add_subdirectory(shell)
+
+if(SUBREC_BUILD_LIFECYCLE_TESTS)
+    enable_testing()
+    add_subdirectory(tests/shell)
+endif()
 
 if(SUBREC_BUILD_LIFECYCLE_TESTS AND WIN32)
-    enable_testing()
     add_subdirectory(tests/gpu_preview)
     add_subdirectory(tests/capture_lifecycle)
     add_subdirectory(tests/startup_failure)
@@ -138,6 +143,8 @@ target_link_libraries(appSubRec
     PRIVATE
         Qt6::Qml
         Qt6::Quick
+        Qt6::Widgets
+        shell_module
         qml_module
         opengl_module
         capture_module
