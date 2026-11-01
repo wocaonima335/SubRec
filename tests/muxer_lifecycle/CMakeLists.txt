@@ -101,6 +101,16 @@ target_link_libraries(aac_packet_ownership_tests PRIVATE Qt6::Core
 add_test(NAME aac_packet_ownership COMMAND aac_packet_ownership_tests)
 set_tests_properties(aac_packet_ownership PROPERTIES TIMEOUT 30 LABELS "audio")
 
+add_executable(packet_guard_tests packet_guard_tests.cpp ../../queue/packet_guard.cpp)
+target_compile_features(packet_guard_tests PRIVATE cxx_std_17)
+target_include_directories(packet_guard_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
+target_link_libraries(packet_guard_tests PRIVATE "${FFMPEG_ROOT}/lib/avcodec.lib" "${FFMPEG_ROOT}/lib/avutil.lib")
+if(MINGW)
+    target_compile_options(packet_guard_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME packet_guard COMMAND packet_guard_tests)
+set_tests_properties(packet_guard PROPERTIES TIMEOUT 10 LABELS "muxer;sync")
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()
 # NUT/null/PCM encoders and MOV demuxing are absent in release FFmpeg.

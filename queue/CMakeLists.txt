@@ -15,6 +15,8 @@ qt_add_library(queue_module STATIC
     ffaframequeue.cpp
     ffvframequeue.cpp
     ffboundedqueue.h
+    packet_guard.h
+    packet_guard.cpp
 )
 
 target_link_libraries(queue_module 
