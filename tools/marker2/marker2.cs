@@ -7,8 +7,18 @@ using System.Threading;
 using System.Windows.Forms;
 
 // WASAPI sync marker. Usage: marker2.exe <intervalSec> <totalSec> <logFile>
+// Each marker logs QPC times so the analysis can subtract the beacon's own skew:
+//   beep_qpc   when the first tone sample reaches the render mix (queue time + padding)
+//   flash_qpc  after the white frame was composed (DwmFlush returned)
+//   beacon_delay_ms = (beep_qpc - flash_qpc) in ms (positive: beep after flash)
 class Marker2
 {
+    [DllImport("kernel32.dll")] static extern bool QueryPerformanceCounter(out long value);
+    [DllImport("kernel32.dll")] static extern bool QueryPerformanceFrequency(out long value);
+    [DllImport("dwmapi.dll")] static extern int DwmFlush();
+
+    static long Qpc() { long v; QueryPerformanceCounter(out v); return v; }
+
     const int CLSCTX_ALL = 0x17;
     const int S_OK = 0;
     static readonly Guid IID_IAudioClient = new Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
@@ -80,6 +90,7 @@ class Marker2
         public uint BufferFrames;
         public long StreamLatency100ns;
         public int SampleRate;
+        public long QueueQpc;   // QPC when the padding was read, right before the tone was written
         public double QueueDelaySeconds { get { return (double)PaddingFrames / SampleRate; } }
         public double StreamLatencySeconds { get { return StreamLatency100ns / 10000000.0; } }
     }
@@ -165,9 +176,10 @@ class Marker2
         {
             uint padding;
             Check(client.GetCurrentPadding(out padding), "GetCurrentPadding");
+            long queueQpc = Qpc();
             tonePending = true;
             return new Timing { PaddingFrames = padding, BufferFrames = bufferFrames,
-                StreamLatency100ns = streamLatency, SampleRate = sampleRate };
+                StreamLatency100ns = streamLatency, SampleRate = sampleRate, QueueQpc = queueQpc };
         }
 
         public void Pump()
@@ -239,8 +251,10 @@ class Marker2
             Bounds = Screen.PrimaryScreen.Bounds, TopMost = true, BackColor = Color.Black, ShowInTaskbar = false };
         var writer = new StreamWriter(logPath, true) { AutoFlush = true };
         var sw = System.Diagnostics.Stopwatch.StartNew();
+        long qpcFrequency;
+        QueryPerformanceFrequency(out qpcFrequency);
         writer.WriteLine("start_utc=" + DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture) +
-            " interval=" + interval + " total=" + total);
+            " interval=" + interval + " total=" + total + " qpc_freq=" + qpcFrequency);
         int count = 0;
         double next = 3.0;
         var timer = new System.Windows.Forms.Timer { Interval = 5 };
@@ -268,6 +282,13 @@ class Marker2
                 Timing t = audio.QueueBeep();
                 audio.Pump(); // Put the tone in the next available render buffer now.
                 form.BackColor = Color.White; form.Opacity = 1.0; form.Refresh();
+                // Wait for the composition that contains the white frame; its return time
+                // is the best user-mode estimate of when the flash reached the desktop.
+                int dwm = DwmFlush();
+                long flashQpc = Qpc();
+                // The tone's first sample is written behind PaddingFrames already queued.
+                long beepQpc = t.QueueQpc + (long)((double)t.PaddingFrames * qpcFrequency / t.SampleRate);
+                double beaconDelayMs = (beepQpc - flashQpc) * 1000.0 / qpcFrequency;
                 offTimer.Start();
                 writer.WriteLine("marker " + count + " elapsed=" + before.ToString("F3", CultureInfo.InvariantCulture) +
                     " utc=" + DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture) +
@@ -275,7 +296,9 @@ class Marker2
                     " padding=" + t.PaddingFrames + " latency=" + t.StreamLatencySeconds.ToString("F6", CultureInfo.InvariantCulture) +
                     " padding_frames=" + t.PaddingFrames + " queue_delay=" + t.QueueDelaySeconds.ToString("F6", CultureInfo.InvariantCulture) +
                     " stream_latency=" + t.StreamLatencySeconds.ToString("F6", CultureInfo.InvariantCulture) +
-                    " buffer_frames=" + t.BufferFrames);
+                    " buffer_frames=" + t.BufferFrames +
+                    " beep_qpc=" + beepQpc + " flash_qpc=" + flashQpc + " dwm_flush=" + dwm +
+                    " beacon_delay_ms=" + beaconDelayMs.ToString("F3", CultureInfo.InvariantCulture));
             }
         };
         timer.Start();
