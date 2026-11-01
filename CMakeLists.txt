@@ -47,7 +47,9 @@ foreach(required_ffmpeg_dir
 endforeach()
 
 # 添加 FFmpeg 头文件目录
-include_directories(${FFMPEG_INCLUDE_DIR} ${CMAKE_SOURCE_DIR})
+include_directories(${FFMPEG_INCLUDE_DIR})
+# Repo root reaches shell users via shell_module PUBLIC includes only; a global
+# root include would precede per-test fakes/ dirs and shadow their fake headers.
 
 function(resolve_ffmpeg_library out_var lib_name)
     unset(${out_var})
