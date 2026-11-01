@@ -11,6 +11,9 @@ qt_add_library(capture_module STATIC
     ddagrab_capture_backend.cpp
     ddagrab_screen_source.h
     ddagrab_screen_source.cpp
+    qpc_session_clock.h
+    qpc_session_clock.cpp
+    present_stamp.h
 )
 
 target_link_libraries(capture_module
