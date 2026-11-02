@@ -320,8 +320,11 @@ void FFScreenGrabThread::State::grabLoop()
         if (ret >= 0) {
             if (m_gpuFrames && !m_originalHwFramesCtx && frame->hw_frames_ctx)
                 m_originalHwFramesCtx = av_buffer_ref(frame->hw_frames_ctx);
-            if (m_gpuFrames && m_originalHwFramesCtx && frame->hw_frames_ctx
-                && frame->hw_frames_ctx->data != m_originalHwFramesCtx->data
+            // The GPU encoder (h264_nvenc) dereferences frame->hw_frames_ctx: every frame it
+            // gets must come from the original pool. Reopened sources may deliver frames of
+            // another D3D11 frames context, or system-memory frames (#30 crash, r25).
+            if (m_gpuFrames && m_originalHwFramesCtx
+                && (!frame->hw_frames_ctx || frame->hw_frames_ctx->data != m_originalHwFramesCtx->data)
                 && !restoreOriginalGpuFrame(frame)) {
                 reportLoss(QStringLiteral("unable to restore frame to encoder GPU context"));
                 break;
@@ -347,9 +350,8 @@ void FFScreenGrabThread::State::grabLoop()
                     qWarning() << "[FFScreenGrabThread] captureUs stamp failed ret=" << stampRet
                                << "count=" << n;
             }
-            if (m_lastFrame) av_frame_unref(m_lastFrame);
-            m_lastFrame = av_frame_alloc();
-            if (m_lastFrame) av_frame_ref(m_lastFrame, frame);
+            if (!m_lastFrame) m_lastFrame = av_frame_alloc();
+            if (m_lastFrame) { av_frame_unref(m_lastFrame); av_frame_ref(m_lastFrame, frame); }
             queue->enqueueFromSrc(frame, &m_stop); // moves the reference; blocks while the queue is full
             ++frames;
             if (frames == 1 || frames % 300 == 0) {
@@ -406,7 +408,11 @@ bool FFScreenGrabThread::State::reopenAfterLoss()
             } else av_frame_free(&held);
             nextHold = now + std::chrono::milliseconds(33);
         }
-        const CaptureStartResult result = m_source.open(request, gpuFrames);
+        // Reopen with the same frame kind as the session's first open: GPU sessions need GPU
+        // frames (restored into the encoder's pool below), CPU sessions forced CPU frames.
+        // r24 passed gpuFrames as forceCpuFrames, so GPU sessions got system-memory frames
+        // without hw_frames_ctx and nvenc crashed on frame->hw_frames_ctx->data.
+        const CaptureStartResult result = m_source.open(request, !gpuFrames);
         if (result.ok) {
             if (m_source.width() != width || m_source.height() != height) {
                 qWarning() << "[FFScreenGrabThread] screen size changed from" << width << "x" << height
@@ -456,9 +462,17 @@ bool FFScreenGrabThread::State::restoreOriginalGpuFrame(AVFrame *frame)
     AVFrame *system = av_frame_alloc();
     AVFrame *gpu = av_frame_alloc();
     if (!system || !gpu) { av_frame_free(&system); av_frame_free(&gpu); return false; }
-    const int download = av_hwframe_transfer_data(system, frame, 0);
-    if (download < 0 || av_hwframe_get_buffer(m_originalHwFramesCtx, gpu, 0) < 0 ||
-        av_hwframe_transfer_data(gpu, system, 0) < 0) {
+    // GPU frame of another pool: download first. System-memory frame: upload directly.
+    const int download = frame->hw_frames_ctx ? av_hwframe_transfer_data(system, frame, 0)
+                                              : av_frame_ref(system, frame);
+    int ret = download;
+    if (ret >= 0) ret = av_hwframe_get_buffer(m_originalHwFramesCtx, gpu, 0);
+    if (ret >= 0) ret = av_hwframe_transfer_data(gpu, system, 0);
+    if (ret < 0) {
+        char text[AV_ERROR_MAX_STRING_SIZE] = {};
+        av_strerror(ret, text, sizeof(text));
+        qWarning() << "[FFScreenGrabThread] GPU frame restore failed:" << text
+                   << "srcFormat=" << system->format;
         av_frame_free(&system); av_frame_free(&gpu); return false;
     }
     av_frame_copy_props(gpu, frame);
