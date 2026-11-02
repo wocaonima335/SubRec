@@ -18,6 +18,7 @@
 extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/frame.h>
+#include <libavutil/hwcontext.h>
 #include <libavutil/time.h>
 }
 
@@ -39,10 +40,16 @@ struct FFScreenGrabThread::State {
     // Per-session captureUs stamp failures; State is recreated per session and the
     // counter is also cleared when grabbing starts. Atomic for future diagnostics readers.
     std::atomic<std::uint64_t> m_stampFailures{0};
+    AVFrame *m_lastFrame = nullptr;
+    AVBufferRef *m_originalHwFramesCtx = nullptr;
+    std::uint64_t m_heldFrames = 0;
+    std::uint64_t m_recoveryAttempts = 0;
+    std::chrono::steady_clock::time_point m_lossStarted{};
     void run();
     void grabLoop();
     bool reopenAfterLoss();
     void reportLoss(const QString &reason);
+    bool restoreOriginalGpuFrame(AVFrame *frame);
 };
 
 FFScreenGrabThread::FFScreenGrabThread() : state_(std::make_shared<State>()) {}
@@ -207,7 +214,7 @@ void FFScreenGrabThread::State::run()
     }
 
     // This guard runs even if open/read throws. DXGI is closed on its owner thread.
-    struct CloseSource { DdagrabScreenSource &source; ~CloseSource() { source.close(); } } closeSource{m_source};
+    struct CloseSource { DdagrabScreenSource &source; AVFrame *&last; AVBufferRef *&ctx; ~CloseSource() { source.close(); av_frame_free(&last); av_buffer_unref(&ctx); } } closeSource{m_source, m_lastFrame, m_originalHwFramesCtx};
     CaptureStartResult result = CaptureStartResult::success();
     if (m_stop.load(std::memory_order_acquire)) {
         CaptureError error;
@@ -311,6 +318,14 @@ void FFScreenGrabThread::State::grabLoop()
             continue;
         }
         if (ret >= 0) {
+            if (m_gpuFrames && !m_originalHwFramesCtx && frame->hw_frames_ctx)
+                m_originalHwFramesCtx = av_buffer_ref(frame->hw_frames_ctx);
+            if (m_gpuFrames && m_originalHwFramesCtx && frame->hw_frames_ctx
+                && frame->hw_frames_ctx->data != m_originalHwFramesCtx->data
+                && !restoreOriginalGpuFrame(frame)) {
+                reportLoss(QStringLiteral("unable to restore frame to encoder GPU context"));
+                break;
+            }
             // P1-Z: stamp on the session clock (av_gettime_relative domain, see
             // queue/media_clock.h) right after the grab, before queueing/filtering.
             // ddagrab's own pts (origin = its first_pts) is left untouched, reference only.
@@ -332,7 +347,10 @@ void FFScreenGrabThread::State::grabLoop()
                     qWarning() << "[FFScreenGrabThread] captureUs stamp failed ret=" << stampRet
                                << "count=" << n;
             }
-            queue->enqueueFromSrc(frame); // moves the reference; blocks while the queue is full
+            if (m_lastFrame) av_frame_unref(m_lastFrame);
+            m_lastFrame = av_frame_alloc();
+            if (m_lastFrame) av_frame_ref(m_lastFrame, frame);
+            queue->enqueueFromSrc(frame, &m_stop); // moves the reference; blocks while the queue is full
             ++frames;
             if (frames == 1 || frames % 300 == 0) {
                 qDebug() << "[FFScreenGrabThread] frames=" << frames;
@@ -359,38 +377,97 @@ bool FFScreenGrabThread::State::reopenAfterLoss()
     int width = 0;
     int height = 0;
     InputRequest request;
+    std::shared_ptr<FFVFrameQueue::State> queue;
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         gpuFrames = m_gpuFrames;
         width = m_width;
         height = m_height;
         request = m_request;
+        queue = m_queue;
     }
-    // GPU frames: the encoder holds the old graph's hw_frames_ctx (h264_amf even asserts that
-    // every frame uses it), so a new ddagrab device/frames context cannot be fed in.
-    if (gpuFrames) {
-        return false;
-    }
-
     m_source.close();
-    // Up to ~10 s, e.g. while a UAC prompt or the lock screen owns the desktop.
-    for (int attempt = 0; attempt < 100 && !m_stop.load(std::memory_order_acquire); ++attempt) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        const CaptureStartResult result = m_source.open(request, true);
-        if (!result.ok) {
-            continue;
+    m_lossStarted = std::chrono::steady_clock::now();
+    m_recoveryAttempts = 0;
+    qWarning() << "[FFScreenGrabThread] capture lost, entering recovery mode="
+               << (gpuFrames ? "gpu" : "cpu");
+    auto nextHold = std::chrono::steady_clock::now();
+    while (!m_stop.load(std::memory_order_acquire)) {
+        ++m_recoveryAttempts;
+        // Keep the audio/video timeline alive at the configured capture rate while DXGI is gone.
+        const auto now = std::chrono::steady_clock::now();
+        if (m_lastFrame && queue && now >= nextHold) {
+            AVFrame *held = av_frame_alloc();
+            if (held && av_frame_ref(held, m_lastFrame) >= 0) {
+                if (setFrameCaptureUs(held, av_gettime_relative()) >= 0 &&
+                    queue->enqueueFromSrc(held, &m_stop) == MediaQueueResult::Ok) {
+                    ++m_heldFrames;
+                } else av_frame_free(&held);
+            } else av_frame_free(&held);
+            nextHold = now + std::chrono::milliseconds(33);
         }
-        if (m_source.width() != width || m_source.height() != height) {
-            qWarning() << "[FFScreenGrabThread] screen size changed from" << width << "x" << height
-                       << "to" << m_source.width() << "x" << m_source.height()
-                       << "; the encoder cannot follow, ending the video stream";
-            m_source.close();
-            return false;
+        const CaptureStartResult result = m_source.open(request, gpuFrames);
+        if (result.ok) {
+            if (m_source.width() != width || m_source.height() != height) {
+                qWarning() << "[FFScreenGrabThread] screen size changed from" << width << "x" << height
+                           << "to" << m_source.width() << "x" << m_source.height()
+                           << "; the encoder cannot follow, ending the video stream";
+                m_source.close();
+                return false;
+            }
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - m_lossStarted).count();
+            qInfo() << "[FFScreenGrabThread] duplication restored after" << m_recoveryAttempts
+                    << "attempts /" << elapsed << "ms mode=" << (gpuFrames ? "gpu" : "cpu")
+                    << "held=" << m_heldFrames;
+            return true;
         }
-        qInfo() << "[FFScreenGrabThread] duplication restored after" << (attempt + 1) << "attempts";
-        return true;
+        if ((m_recoveryAttempts % 10) == 0)
+            qInfo() << "[FFScreenGrabThread] recovery retry" << m_recoveryAttempts
+                    << "mode=" << (gpuFrames ? "gpu" : "cpu");
+        // Retry the open every ~300 ms, but keep holding the last frame at ~30 fps meanwhile.
+        const auto retryAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+        while (!m_stop.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < retryAt) {
+            if (m_lastFrame && queue && std::chrono::steady_clock::now() >= nextHold) {
+                AVFrame *held = av_frame_alloc();
+                if (held && av_frame_ref(held, m_lastFrame) >= 0 &&
+                    setFrameCaptureUs(held, av_gettime_relative()) >= 0 &&
+                    queue->enqueueFromSrc(held, &m_stop) == MediaQueueResult::Ok)
+                    ++m_heldFrames;
+                av_frame_free(&held);
+                nextHold += std::chrono::milliseconds(33);
+                if (nextHold < std::chrono::steady_clock::now() - std::chrono::milliseconds(100))
+                    nextHold = std::chrono::steady_clock::now();
+            }
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_cond.wait_until(lock, std::min(retryAt, nextHold),
+                              [this] { return m_stop.load(std::memory_order_acquire); });
+        }
     }
     return false;
+}
+
+// Reopened ddagrab owns a new D3D11 frames context. Download through system memory,
+// then allocate/upload into the encoder's original pool; this avoids passing a surface
+// tied to the lost duplication device into NVENC/AMF.
+bool FFScreenGrabThread::State::restoreOriginalGpuFrame(AVFrame *frame)
+{
+    if (!m_originalHwFramesCtx || !frame) return false;
+    AVFrame *system = av_frame_alloc();
+    AVFrame *gpu = av_frame_alloc();
+    if (!system || !gpu) { av_frame_free(&system); av_frame_free(&gpu); return false; }
+    const int download = av_hwframe_transfer_data(system, frame, 0);
+    if (download < 0 || av_hwframe_get_buffer(m_originalHwFramesCtx, gpu, 0) < 0 ||
+        av_hwframe_transfer_data(gpu, system, 0) < 0) {
+        av_frame_free(&system); av_frame_free(&gpu); return false;
+    }
+    av_frame_copy_props(gpu, frame);
+    av_buffer_unref(&gpu->hw_frames_ctx);
+    gpu->hw_frames_ctx = av_buffer_ref(m_originalHwFramesCtx);
+    av_frame_unref(frame);
+    av_frame_move_ref(frame, gpu);
+    av_frame_free(&system); av_frame_free(&gpu);
+    return true;
 }
 
 void FFScreenGrabThread::State::reportLoss(const QString &reason)
