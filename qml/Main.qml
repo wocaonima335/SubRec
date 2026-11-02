@@ -270,6 +270,7 @@ ApplicationWindow {
 
     Rectangle {
         id: captureErrorBanner
+        objectName: "captureErrorBanner"
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: screenTitle.bottom
@@ -293,13 +294,25 @@ ApplicationWindow {
 
         Button {
             id: retryButton
-            anchors.right: parent.right
+            anchors.right: dismissCaptureError.left
             anchors.rightMargin: 8
             anchors.verticalCenter: parent.verticalCenter
             text: "Retry"
             enabled: recorder.canStartCapture
             onClicked: shell.requestStart() // start invariant: never recorder.retryCapture()
         }
+        Button {
+            id: dismissCaptureError
+            objectName: "dismissCaptureError"
+            anchors.right: parent.right
+            anchors.rightMargin: 8
+            anchors.verticalCenter: parent.verticalCenter
+            width: 32
+            text: "\u00d7"
+            Accessible.name: "Dismiss capture error"
+            onClicked: recorder.clearCaptureError()
+        }
+
     }
 
     // 主内容区

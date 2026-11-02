@@ -534,10 +534,15 @@ void FFRecorder::stopOnCaptureError() {
     m_scheduler->stop();
 }
 
-void FFRecorder::clearCaptureError() {
+void FFRecorder::clearCaptureError(bool deferNotification) {
   if (m_captureError.isEmpty()) return;
   m_captureError.clear();
-  emit captureErrorChanged();
+  // Scheduler transitions hold their mutex: notify readers only after it is released.
+  // Clear the value now, never queue a mutation that could erase a newer error.
+  if (deferNotification)
+    QMetaObject::invokeMethod(this, "captureErrorChanged", Qt::QueuedConnection);
+  else
+    emit captureErrorChanged();
 }
 
 void FFRecorder::refreshCaptureDevices() {

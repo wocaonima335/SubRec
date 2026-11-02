@@ -330,6 +330,7 @@ void CaptureScheduler::refreshDevices()
         std::lock_guard<std::mutex> lock(m_mutex);
         if (!configurationMutableLocked()) return;
     }
+    m_recorder.clearCaptureError();
     QList<CaptureDevice> devices = DirectShowCaptureBackend().enumerate();
     // Desktop Duplication screens are listed too (marked unavailable without ddagrab).
     devices.append(DdagrabCaptureBackend().enumerate());
@@ -697,7 +698,7 @@ bool CaptureScheduler::configurationMutableLocked() const
 
 void CaptureScheduler::onSessionStarted(std::uint64_t sessionId, const CaptureStartResult &result)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::unique_lock<std::mutex> lock(m_mutex);
     if (sessionId != m_sessionId || m_state != CaptureSchedulerState::Preparing) {
         qDebug() << "[CaptureScheduler] ignored stale startup result session=" << sessionId;
         return;
@@ -708,8 +709,9 @@ void CaptureScheduler::onSessionStarted(std::uint64_t sessionId, const CaptureSt
     }
     CaptureError error = result.error.value_or(CaptureError{});
     failLocked(error.userMessage.isEmpty() ? QStringLiteral("Capture session failed.") : error.userMessage);
-    QMetaObject::invokeMethod(&m_recorder, "setCaptureError", Qt::QueuedConnection,
-                              Q_ARG(QString, m_lastError), Q_ARG(QString, error.remediation));
+    const QString message = m_lastError;
+    lock.unlock();
+    m_recorder.setCaptureError(message, error.remediation);
 }
 
 void CaptureScheduler::setStateLocked(CaptureSchedulerState newState, const QString &reason)
@@ -717,6 +719,8 @@ void CaptureScheduler::setStateLocked(CaptureSchedulerState newState, const QStr
     if (m_state == newState) return;
     qDebug() << "[CaptureScheduler] state" << captureSchedulerStateName(m_state)
              << "->" << captureSchedulerStateName(newState) << reason;
+    if (m_state == CaptureSchedulerState::Failed || newState == CaptureSchedulerState::Preparing)
+        m_recorder.clearCaptureError(true);
     m_state = newState;
     if (newState != CaptureSchedulerState::Failed) m_lastError.clear();
     QMetaObject::invokeMethod(&m_recorder, "notifyCaptureStateChanged", Qt::QueuedConnection);

@@ -33,6 +33,7 @@
 #include <QRect>
 #include <QQuickWindow>
 #include <QTimer>
+#include <QVariant>
 #include <QStringList>
 #include <cstdlib>
 #include <cstdio>
@@ -240,6 +241,44 @@ void runAutoScenario(QObject *root)
   if (!capture::test::autoTestScenarioActive())
     return;
   const QString scenario = qEnvironmentVariable("SUBREC_AUTOTEST_SCENARIO").trimmed();
+
+  if (scenario == QStringLiteral("ui_probe")) {
+#if !defined(SUBREC_STRIP_TEST_HOOKS) || !SUBREC_STRIP_TEST_HOOKS
+    QTimer::singleShot(250, root, [root] {
+      auto &recorder = FFRecorder::getInstance();
+      auto *banner = root->findChild<QObject *>(QStringLiteral("captureErrorBanner"));
+      auto *close = root->findChild<QObject *>(QStringLiteral("dismissCaptureError"));
+      recorder.setCaptureError(QStringLiteral("ui_probe close"), QStringLiteral("Dismiss this error"));
+      const bool shown = banner && banner->property("visible").toBool();
+      const bool clicked = close && QMetaObject::invokeMethod(close, "click");
+      const bool closeOk = shown && clicked && recorder.captureError().isEmpty()
+                           && !banner->property("visible").toBool();
+      recorder.setCaptureError(QStringLiteral("ui_probe refresh"), QString());
+      recorder.refreshCaptureDevices();
+      const bool autoOk = recorder.captureError().isEmpty()
+                          && banner && !banner->property("visible").toBool();
+      if (auto *rootItem = qobject_cast<QObject *>(root)) {
+        QMetaObject::invokeMethod(rootItem, "handleSettingItemClick", Qt::DirectConnection,
+                                  Q_ARG(QVariant, QVariant(1)), Q_ARG(QVariant, QVariant(QStringLiteral("settings"))));
+      }
+      QTimer::singleShot(500, root, [root, closeOk, autoOk] {
+        auto *dialog = root->findChild<QObject *>(QStringLiteral("folderDialog"));
+        bool opened = dialog && QMetaObject::invokeMethod(dialog, "open");
+        QTimer::singleShot(250, root, [root, dialog, closeOk, autoOk, opened] {
+          const bool visible = opened && dialog && dialog->property("visible").toBool();
+          if (dialog) QMetaObject::invokeMethod(dialog, "close");
+          qInfo().noquote() << QStringLiteral("[AutoTest] ui_probe M1_close=%1 M1_auto=%2 I3_dialog=%3")
+              .arg(closeOk ? "PASS" : "FAIL", autoOk ? "PASS" : "FAIL",
+                   visible ? "PASS" : "FAIL");
+          QCoreApplication::exit(closeOk && autoOk && visible ? AutoTestOk : AutoTestCaptureError);
+        });
+      });
+    });
+#else
+    QTimer::singleShot(0, [] { QCoreApplication::exit(AutoTestBadEnvironment); });
+#endif
+    return;
+  }
 
   const int quitDelay = qEnvironmentVariableIntValue(
       "SUBREC_AUTOTEST_QUIT_MS");

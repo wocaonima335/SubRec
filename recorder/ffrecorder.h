@@ -151,7 +151,7 @@ public slots:
   void notifyDeviceConfigurationChanged();
   void notifyCaptureStateChanged();
   void setCaptureError(const QString &message, const QString &remediation);
-  void clearCaptureError();
+  void clearCaptureError(bool deferNotification = false);
   void stopOnCaptureError();
   Q_INVOKABLE void refreshCaptureDevices();
   Q_INVOKABLE bool selectVideoCaptureDevice(const QString &deviceId);
