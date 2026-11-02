@@ -1,3 +1,13 @@
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <wtsapi32.h>
+#endif
 #include "capture/test_video_start_delay.h"
 #include "ffscreengrabthread.h"
 #include "capture/ddagrab_screen_source.h"
@@ -14,6 +24,9 @@
 #include <chrono>
 #include <cstdint>
 #include <thread>
+#include <algorithm>
+#include <cstddef>
+#include <utility>
 
 extern "C" {
 #include <libavutil/error.h>
@@ -21,6 +34,61 @@ extern "C" {
 #include <libavutil/hwcontext.h>
 #include <libavutil/time.h>
 }
+
+namespace {
+// Session lock state: 1 locked, 0 unlocked, -1 unknown. On Windows 10/11 the lock screen
+// (LockApp) is drawn on the Default desktop, so DXGI duplication keeps working and would
+// record it; the WTS session flags are the reliable signal. wtsapi32 is loaded lazily so
+// the grab thread (also built into standalone tests) needs no extra link dependency.
+#ifdef _WIN32
+// Local mirrors of WTSINFOEXW (Windows 7+); MinGW's wtsapi32.h does not declare them.
+constexpr int kWtsSessionInfoEx = 25; // WTS_INFO_CLASS::WTSSessionInfoEx
+constexpr LONG kSessionStateLock = 0;   // WTS_SESSIONSTATE_LOCK
+constexpr LONG kSessionStateUnlock = 1; // WTS_SESSIONSTATE_UNLOCK
+struct WtsInfoExLevel1 {
+    ULONG SessionId;
+    int SessionState;
+    LONG SessionFlags;
+    WCHAR WinStationName[33];
+    WCHAR UserName[21];
+    WCHAR DomainName[18];
+    LARGE_INTEGER LogonTime, ConnectTime, DisconnectTime, LastInputTime, CurrentTime;
+    DWORD IncomingBytes, OutgoingBytes, IncomingFrames, OutgoingFrames,
+          IncomingCompressedBytes, OutgoingCompressedBytes;
+};
+struct WtsInfoEx { DWORD Level; WtsInfoExLevel1 Data; };
+#endif
+
+int sessionLockState()
+{
+#ifdef _WIN32
+    using QueryFn = BOOL(WINAPI *)(HANDLE, DWORD, WTS_INFO_CLASS, LPWSTR *, DWORD *);
+    using FreeFn = void(WINAPI *)(PVOID);
+    static HMODULE module = LoadLibraryW(L"wtsapi32.dll");
+    static QueryFn query = module ? reinterpret_cast<QueryFn>(
+        reinterpret_cast<void *>(GetProcAddress(module, "WTSQuerySessionInformationW"))) : nullptr;
+    static FreeFn freeMemory = module ? reinterpret_cast<FreeFn>(
+        reinterpret_cast<void *>(GetProcAddress(module, "WTSFreeMemory"))) : nullptr;
+    if (!query || !freeMemory) return -1;
+    LPWSTR buffer = nullptr;
+    DWORD bytes = 0;
+    if (!query(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, static_cast<WTS_INFO_CLASS>(kWtsSessionInfoEx), &buffer, &bytes)
+        || !buffer)
+        return -1;
+    int state = -1;
+    const auto *info = reinterpret_cast<const WtsInfoEx *>(buffer);
+    if (bytes >= sizeof(DWORD) + offsetof(WtsInfoExLevel1, WinStationName) && info->Level == 1) {
+        const LONG flags = info->Data.SessionFlags;
+        if (flags == kSessionStateLock) state = 1;
+        else if (flags == kSessionStateUnlock) state = 0;
+    }
+    freeMemory(buffer);
+    return state;
+#else
+    return 0;
+#endif
+}
+} // namespace
 
 struct FFScreenGrabThread::State {
     DdagrabScreenSource m_source;
@@ -50,6 +118,22 @@ struct FFScreenGrabThread::State {
     bool reopenAfterLoss();
     void reportLoss(const QString &reason);
     bool restoreOriginalGpuFrame(AVFrame *frame);
+    // Lock-screen hold: keep the last pre-lock frame instead of recording the lock screen.
+    AVFrame *m_candidateFrame = nullptr; // newest snapshot (refreshed every 500 ms)
+    AVFrame *m_stableFrame = nullptr;    // previous snapshot: 0.5-1 s old, predates a lock
+    std::chrono::steady_clock::time_point m_candidateAt{};
+    std::chrono::steady_clock::time_point m_lockPolledAt{};
+    std::chrono::steady_clock::time_point m_lockStarted{};
+    bool m_lockedCached = false;
+    bool m_lockHold = false;
+    std::uint64_t m_lockHeldFrames = 0;
+    std::chrono::steady_clock::time_point m_nextLockHold{};
+    bool sessionLocked();
+    void rememberFrame(const AVFrame *frame);
+    void enterLockHold(const char *where);
+    void leaveLockHold();
+    bool enqueueHeld(const std::shared_ptr<FFVFrameQueue::State> &queue, std::uint64_t &counter);
+    void lockHoldTick(const std::shared_ptr<FFVFrameQueue::State> &queue);
 };
 
 FFScreenGrabThread::FFScreenGrabThread() : state_(std::make_shared<State>()) {}
@@ -214,7 +298,7 @@ void FFScreenGrabThread::State::run()
     }
 
     // This guard runs even if open/read throws. DXGI is closed on its owner thread.
-    struct CloseSource { DdagrabScreenSource &source; AVFrame *&last; AVBufferRef *&ctx; ~CloseSource() { source.close(); av_frame_free(&last); av_buffer_unref(&ctx); } } closeSource{m_source, m_lastFrame, m_originalHwFramesCtx};
+    struct CloseSource { DdagrabScreenSource &source; AVFrame *&last; AVFrame *&cand; AVFrame *&stable; AVBufferRef *&ctx; ~CloseSource() { source.close(); av_frame_free(&last); av_frame_free(&cand); av_frame_free(&stable); av_buffer_unref(&ctx); } } closeSource{m_source, m_lastFrame, m_candidateFrame, m_stableFrame, m_originalHwFramesCtx};
     CaptureStartResult result = CaptureStartResult::success();
     if (m_stop.load(std::memory_order_acquire)) {
         CaptureError error;
@@ -311,6 +395,12 @@ void FFScreenGrabThread::State::grabLoop()
     std::uint64_t frames = 0;
     m_stampFailures.store(0, std::memory_order_relaxed); // recording start: new session count
     while (!m_stop.load(std::memory_order_acquire)) {
+        if (sessionLocked()) {
+            enterLockHold("grab");
+            lockHoldTick(queue);
+            continue;
+        }
+        if (m_lockHold) leaveLockHold();
         // ddagrab paces itself to the frame rate (it sleeps until the next frame time and
         // duplicates the last frame on a static desktop), so this loop does not spin.
         const int ret = m_source.read(frame);
@@ -350,8 +440,7 @@ void FFScreenGrabThread::State::grabLoop()
                     qWarning() << "[FFScreenGrabThread] captureUs stamp failed ret=" << stampRet
                                << "count=" << n;
             }
-            if (!m_lastFrame) m_lastFrame = av_frame_alloc();
-            if (m_lastFrame) { av_frame_unref(m_lastFrame); av_frame_ref(m_lastFrame, frame); }
+            rememberFrame(frame);
             queue->enqueueFromSrc(frame, &m_stop); // moves the reference; blocks while the queue is full
             ++frames;
             if (frames == 1 || frames % 300 == 0) {
@@ -395,6 +484,14 @@ bool FFScreenGrabThread::State::reopenAfterLoss()
                << (gpuFrames ? "gpu" : "cpu");
     auto nextHold = std::chrono::steady_clock::now();
     while (!m_stop.load(std::memory_order_acquire)) {
+        if (sessionLocked()) {
+            // Locked: reopening would duplicate the lock screen. Hold the pre-lock frame
+            // and retry the open only after unlock.
+            enterLockHold("recovery");
+            lockHoldTick(queue);
+            continue;
+        }
+        if (m_lockHold) leaveLockHold();
         ++m_recoveryAttempts;
         // Keep the audio/video timeline alive at the configured capture rate while DXGI is gone.
         const auto now = std::chrono::steady_clock::now();
@@ -451,6 +548,86 @@ bool FFScreenGrabThread::State::reopenAfterLoss()
         }
     }
     return false;
+}
+
+bool FFScreenGrabThread::State::sessionLocked()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - m_lockPolledAt >= std::chrono::milliseconds(100)) {
+        m_lockPolledAt = now;
+        const int state = sessionLockState();
+        if (state >= 0) m_lockedCached = state == 1; // unknown: keep the last answer
+    }
+    return m_lockedCached;
+}
+
+void FFScreenGrabThread::State::rememberFrame(const AVFrame *frame)
+{
+    if (!m_lastFrame) m_lastFrame = av_frame_alloc();
+    if (m_lastFrame) { av_frame_unref(m_lastFrame); av_frame_ref(m_lastFrame, frame); }
+    const auto now = std::chrono::steady_clock::now();
+    if (!m_candidateFrame || now - m_candidateAt >= std::chrono::milliseconds(500)) {
+        std::swap(m_stableFrame, m_candidateFrame);
+        if (!m_candidateFrame) m_candidateFrame = av_frame_alloc();
+        if (m_candidateFrame) { av_frame_unref(m_candidateFrame); av_frame_ref(m_candidateFrame, frame); }
+        m_candidateAt = now;
+    }
+}
+
+void FFScreenGrabThread::State::enterLockHold(const char *where)
+{
+    if (m_lockHold) return;
+    m_lockHold = true;
+    m_lockHeldFrames = 0;
+    m_lockStarted = std::chrono::steady_clock::now();
+    m_nextLockHold = m_lockStarted;
+    // The session flag can trail the switch to the lock screen by a few frames, so hold the
+    // 0.5-1 s old snapshot rather than the newest frame.
+    AVFrame *source = m_stableFrame ? m_stableFrame : m_candidateFrame;
+    if (source && m_lastFrame && source != m_lastFrame) {
+        av_frame_unref(m_lastFrame);
+        av_frame_ref(m_lastFrame, source);
+    }
+    qInfo() << "[FFScreenGrabThread] session locked (" << where
+            << "), holding last pre-lock frame mode=" << (m_gpuFrames ? "gpu" : "cpu");
+}
+
+void FFScreenGrabThread::State::leaveLockHold()
+{
+    if (!m_lockHold) return;
+    m_lockHold = false;
+    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - m_lockStarted).count();
+    qInfo() << "[FFScreenGrabThread] session unlocked after" << ms << "ms, held="
+            << m_lockHeldFrames << "mode=" << (m_gpuFrames ? "gpu" : "cpu");
+}
+
+bool FFScreenGrabThread::State::enqueueHeld(const std::shared_ptr<FFVFrameQueue::State> &queue,
+                                            std::uint64_t &counter)
+{
+    if (!m_lastFrame || !queue) return false;
+    AVFrame *held = av_frame_alloc();
+    bool ok = held && av_frame_ref(held, m_lastFrame) >= 0 &&
+              setFrameCaptureUs(held, av_gettime_relative()) >= 0 &&
+              queue->enqueueFromSrc(held, &m_stop) == MediaQueueResult::Ok;
+    av_frame_free(&held);
+    if (ok) ++counter;
+    return ok;
+}
+
+void FFScreenGrabThread::State::lockHoldTick(const std::shared_ptr<FFVFrameQueue::State> &queue)
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= m_nextLockHold) {
+        enqueueHeld(queue, m_lockHeldFrames);
+        m_nextLockHold += std::chrono::milliseconds(33);
+        if (m_nextLockHold < now - std::chrono::milliseconds(100)) m_nextLockHold = now;
+        if (m_lockHeldFrames % 300 == 0 && m_lockHeldFrames)
+            qInfo() << "[FFScreenGrabThread] lock hold frames=" << m_lockHeldFrames;
+    }
+    std::unique_lock<std::mutex> lock(m_mutex);
+    m_cond.wait_until(lock, std::min(m_nextLockHold, m_lockPolledAt + std::chrono::milliseconds(100)),
+                      [this] { return m_stop.load(std::memory_order_acquire); });
 }
 
 // Reopened ddagrab owns a new D3D11 frames context. Download through system memory,
