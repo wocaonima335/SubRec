@@ -1,11 +1,13 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
-import Qt.labs.platform 1.1
+import QtQuick.Dialogs
+import QtCore
 
 Item {
     id: settingpage
     property bool showPreview: false
+    function openFolderDialog() { folderDialog.open() }
 
     // Shell settings row (switch). Same switch style as the rows above.
     component ShellSwitchRow: RowLayout {
@@ -77,14 +79,13 @@ Item {
 
     FolderDialog {
         id: folderDialog
+        objectName: "folderDialog"
         title: "Select Output Folder"
-        folder: StandardPaths.writableLocation(StandardPaths.MoviesLocation)
+        currentFolder: StandardPaths.writableLocation(StandardPaths.MoviesLocation)
         onAccepted: {
-            var path = folderDialog.folder.toString()
-            if (path.startsWith("file:///")) {
-                path = path.substring(8)
-            }
-            recorder.outputPath = path
+            var path = folderDialog.selectedFolder.toString()
+            if (path.startsWith("file:///")) path = path.substring(8)
+            recorder.outputPath = decodeURIComponent(path)
         }
     }
 
@@ -224,7 +225,7 @@ Item {
                         }
                         contentItem: Text {
                             leftPadding: 10
-                            rightPadding: parent.indicator.width + 10
+                            rightPadding: parent.indicator ? parent.indicator.width + 10 : 10
                             text: parent.displayText
                             font: parent.font
                             color: "#E0E0E0"
@@ -415,7 +416,7 @@ Item {
                                     horizontalAlignment: Text.AlignHCenter
                                     verticalAlignment: Text.AlignVCenter
                                 }
-                                onClicked: folderDialog.open()
+                                onClicked: settingpage.openFolderDialog()
                             }
                         }
                     }

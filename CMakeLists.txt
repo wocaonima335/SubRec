@@ -19,7 +19,7 @@ if(SUBREC_STRIP_TEST_HOOKS)
 endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Quick)
-find_package(Qt6 REQUIRED COMPONENTS Quick Qml Multimedia Widgets Gui Network)
+find_package(Qt6 REQUIRED COMPONENTS Quick Qml QuickControls2 Multimedia Widgets Gui Network)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -145,6 +145,7 @@ target_link_libraries(appSubRec
     PRIVATE
         Qt6::Qml
         Qt6::Quick
+        Qt6::QuickControls2
         Qt6::Widgets
         shell_module
         qml_module

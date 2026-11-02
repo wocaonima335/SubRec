@@ -32,6 +32,7 @@
 #include <QQmlContext>
 #include <QRect>
 #include <QQuickWindow>
+#include <QQuickStyle>
 #include <QTimer>
 #include <QVariant>
 #include <QStringList>
@@ -921,6 +922,9 @@ int main(int argc, char *argv[])
   const bool debugLog = subrec::logging::configure(argc, argv);
   QApplication app(argc, argv); // Widgets: QSystemTrayIcon/QMenu need QApplication (§4.1, R9)
   subrec::logging::reportLevel(debugLog);
+  // The native Windows style rejects the custom control delegates used by the QML pages.
+  // Basic is deterministic across platforms and keeps Browse/style customization working.
+  QQuickStyle::setStyle(QStringLiteral("Basic"));
   int exitCode = 0;
   const bool autoTestMode = capture::test::autoTestScenarioActive();
   const bool startMinimizedArg = app.arguments().contains(QStringLiteral("--minimized"));
