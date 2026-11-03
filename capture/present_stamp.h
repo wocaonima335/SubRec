@@ -20,6 +20,12 @@ extern "C" {
 //   this keeps duplicates on the tick grid instead of mixing receive times in.
 // - Missing metadata or an implausible present time (in the future, or older
 //   than maxAgeUs): receive time, counted as fallback.
+// - Held frame (lock-screen hold, capture recovery; stampHeld): receive time. It
+//   repeats an old picture, so it ends the duplicate chain. The first new image
+//   after a hold whose presentation time is not after the last held stamp (the
+//   desktop image was presented while the hold was running) gets its receive
+//   time instead, counted as afterHold: presentation time never moves backwards
+//   past frames that were already queued.
 // - Output is strictly increasing (+1 us when needed, counted as clamped).
 class PresentStamper
 {
@@ -31,8 +37,8 @@ public:
         int64_t receiveUs = 0;     // av_gettime_relative() right after read()
     };
     struct Counters {
-        uint64_t present = 0, synthesized = 0, fallback = 0;
-        uint64_t rejectedFuture = 0, rejectedStale = 0, clamped = 0;
+        uint64_t present = 0, synthesized = 0, fallback = 0, held = 0;
+        uint64_t rejectedFuture = 0, rejectedStale = 0, clamped = 0, afterHold = 0;
         int64_t maxLatencyUs = 0;    // receive - present, new images only
         int64_t sumLatencyUs = 0;
     };
@@ -47,12 +53,28 @@ public:
         counters_ = Counters{};
         lastStampUs_ = lastNewUs_ = kNone;
         duplicates_ = 0;
+        afterHold_ = false;
+    }
+
+    // Re-queued copy of an older picture (lock hold / capture recovery).
+    int64_t stampHeld(int64_t receiveUs)
+    {
+        ++counters_.held;
+        lastNewUs_ = kNone;
+        duplicates_ = 0;
+        afterHold_ = true;
+        return monotonic(receiveUs);
     }
 
     int64_t stamp(const Input &in)
     {
         int64_t candidate;
-        if (in.hasPresent && in.isNew) {
+        const bool afterHold = afterHold_;
+        afterHold_ = false;
+        if (in.hasPresent && in.isNew && afterHold && lastStampUs_ != kNone && in.presentUs <= lastStampUs_) {
+            ++counters_.afterHold;
+            candidate = fallback(in);
+        } else if (in.hasPresent && in.isNew) {
             if (in.presentUs > in.receiveUs + futureToleranceUs_) {
                 ++counters_.rejectedFuture;
                 candidate = fallback(in);
@@ -75,12 +97,7 @@ public:
         } else {
             candidate = fallback(in);
         }
-        if (lastStampUs_ != kNone && candidate <= lastStampUs_) {
-            candidate = lastStampUs_ + 1;
-            ++counters_.clamped;
-        }
-        lastStampUs_ = candidate;
-        return candidate;
+        return monotonic(candidate);
     }
 
     const Counters &counters() const { return counters_; }
@@ -91,6 +108,16 @@ public:
 
 private:
     static constexpr int64_t kNone = INT64_MIN;
+
+    int64_t monotonic(int64_t candidate)
+    {
+        if (lastStampUs_ != kNone && candidate <= lastStampUs_) {
+            candidate = lastStampUs_ + 1;
+            ++counters_.clamped;
+        }
+        lastStampUs_ = candidate;
+        return candidate;
+    }
 
     int64_t fallback(const Input &in)
     {
@@ -108,4 +135,5 @@ private:
     int64_t lastStampUs_ = kNone;
     int64_t lastNewUs_ = kNone;
     int64_t duplicates_ = 0;
+    bool afterHold_ = false;
 };

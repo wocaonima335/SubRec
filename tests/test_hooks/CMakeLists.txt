@@ -31,7 +31,7 @@ add_test(NAME test_hooks_strip_binary COMMAND ${CMAKE_COMMAND}
 set_tests_properties(test_hooks_strip_binary PROPERTIES TIMEOUT 10)
 
 add_executable(runtime_hook_gate_tests runtime_hook_gate_tests.cpp
-    ../../thread/ffscreengrabthread.cpp ../../thread/ffthread.cpp
+    ../../thread/ffscreengrabthread.cpp ../../capture/qpc_session_clock.cpp ../../thread/ffthread.cpp
     ../../queue/ffvframequeue.cpp)
 target_compile_features(runtime_hook_gate_tests PRIVATE cxx_std_17)
 target_include_directories(runtime_hook_gate_tests PRIVATE ../.. ${FFMPEG_INCLUDE_DIR})

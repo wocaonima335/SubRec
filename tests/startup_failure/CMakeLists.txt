@@ -8,7 +8,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 endif()
 find_package(Threads REQUIRED)
 add_executable(startup_failure_tests startup_failure_tests.cpp
-    ../../recorder/capture_session.cpp ../../thread/ffscreengrabthread.cpp
+    ../../recorder/capture_session.cpp ../../thread/ffscreengrabthread.cpp ../../capture/qpc_session_clock.cpp
     ../../thread/ffthread.cpp ../../queue/ffvframequeue.cpp ../../queue/recordersyncqueue.cpp)
 target_compile_features(startup_failure_tests PRIVATE cxx_std_17)
 target_include_directories(startup_failure_tests PRIVATE fakes ../.. "${FFMPEG_ROOT}/include")

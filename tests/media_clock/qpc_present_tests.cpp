@@ -93,6 +93,37 @@ void stamperRules()
     CHECK(st.counters().present == 0 && st.stamp({true, 5, true, 10}) == 5);
 }
 
+// #30 lock-screen hold / capture recovery: held copies of an old picture are
+// stamped with their queue time and never let the next presentation time run
+// backwards into them.
+void heldFramesAcrossLock()
+{
+    PresentStamper st;
+    CHECK(st.stamp({true, 1000000, true, 1010000}) == 1000000);
+    CHECK(st.stamp({true, 1000000, false, 1043000}) == 1033333);    // duplicate on the grid
+    // Session locked: the pre-lock snapshot is re-queued at ~30 fps.
+    int64_t last = 1033333;
+    for (int i = 1; i <= 90; ++i) {
+        const int64_t held = st.stampHeld(1043000 + i * 33333);
+        CHECK(held > last);
+        last = held;
+    }
+    // A duplicate right after the hold must not be synthesized from the pre-lock image.
+    const int64_t dup = st.stamp({true, 1000000, false, last + 20000});
+    CHECK(dup == last + 20000);
+    last = dup;
+    st.stampHeld(last + 33333);
+    last += 33333;
+    // Unlock: the first new image was presented while the hold was still running.
+    const int64_t first = st.stamp({true, last - 15000, true, last + 9000});
+    CHECK(first == last + 9000);
+    // Later new images use their presentation time again.
+    CHECK(st.stamp({true, last + 40000, true, last + 52000}) == last + 40000);
+    const auto &c = st.counters();
+    CHECK(c.held == 91 && c.afterHold == 1 && c.present == 2 && c.synthesized == 1);
+    CHECK(c.fallback == 2);   // the post-hold duplicate and the after-hold image
+}
+
 // Content presents at 60 Hz; ddagrab acquires at its 30 fps tick and SubRec
 // receives the frame after copy/graph/thread latency (P1 field logs: ~13-33 ms).
 // VideoTickScheduler::decidePaced removes per-frame jitter once paced, so the
@@ -156,6 +187,7 @@ int main(int argc, char **argv)
         }
         if (mode == "present" || mode == "all") {
             stamperRules();
+            heldFramesAcrossLock();
             flashTickError();
         }
         std::cout << "PASS: qpc/present " << mode << '\n';

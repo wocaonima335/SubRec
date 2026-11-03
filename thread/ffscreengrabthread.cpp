@@ -11,8 +11,11 @@
 #include "capture/test_video_start_delay.h"
 #include "ffscreengrabthread.h"
 #include "capture/ddagrab_screen_source.h"
+#include "capture/present_stamp.h"
+#include "capture/qpc_session_clock.h"
 #include "thread/stop_deadline.h"
 #include <cstdlib>
+#include <cstring>
 
 #include "queue/ffvframequeue.h"
 #include "queue/media_clock.h"
@@ -113,6 +116,13 @@ struct FFScreenGrabThread::State {
     std::uint64_t m_heldFrames = 0;
     std::uint64_t m_recoveryAttempts = 0;
     std::chrono::steady_clock::time_point m_lossStarted{};
+    PresentStamper m_presentStamper{kRecordFrameRate}; // grab thread only
+    bool m_fallbackWarned = false;
+    int64_t captureStamp(const AVFrame *frame);
+    // Stamp for a re-queued held frame (lock hold / recovery): goes through the
+    // same PresentStamper so stamps stay strictly increasing across the hold.
+    int64_t heldStamp();
+    void logPresentStamps(const char *what);
     void run();
     void grabLoop();
     bool reopenAfterLoss();
@@ -394,6 +404,9 @@ void FFScreenGrabThread::State::grabLoop()
 
     std::uint64_t frames = 0;
     m_stampFailures.store(0, std::memory_order_relaxed); // recording start: new session count
+    m_presentStamper.reset();
+    m_fallbackWarned = false;
+    QpcSessionClock::instance().refresh(true);   // first anchor before the first frame
     while (!m_stop.load(std::memory_order_acquire)) {
         if (sessionLocked()) {
             enterLockHold("grab");
@@ -419,20 +432,13 @@ void FFScreenGrabThread::State::grabLoop()
                 reportLoss(QStringLiteral("unable to restore frame to encoder GPU context"));
                 break;
             }
-            // P1-Z: stamp on the session clock (av_gettime_relative domain, see
-            // queue/media_clock.h) right after the grab, before queueing/filtering.
-            // ddagrab's own pts (origin = its first_pts) is left untouched, reference only.
-            // Known error (P1 decision: keep receive time, see DdagrabScreenSource::read()):
-            // - DXGI LastPresentTime is only used inside FFmpeg ddagrab to detect a new
-            //   frame; it is not exported, so the real present time is unavailable here.
-            // - ddagrab's pts is av_gettime_relative() taken right after AcquireNextFrame;
-            //   this stamp is taken after buffersink, so it lags by the texture copy, mouse
-            //   drawing and filter-graph time.
-            // - Duplicated frames (dup_frames=1) carry ddagrab's tick time as pts, and here
-            //   get the same receive-time stamp semantics as new frames.
-            // - Real present time (ddagrab exporting it as side data, or our own DXGI
-            //   duplication capture) is a P3 candidate.
-            const int stampRet = setFrameCaptureUs(frame, av_gettime_relative());
+            // P3a: stamp on the session clock (av_gettime_relative domain, see
+            // queue/media_clock.h) with the time the desktop image was presented:
+            // DXGI LastPresentTime exported by the patched ddagrab, mapped from QPC by
+            // QpcSessionClock. Duplicates are placed on the frame grid after the last new
+            // image; without the metadata the receive time is used and counted
+            // (present_fallback). ddagrab's own pts (origin = its first_pts) is untouched.
+            const int stampRet = setFrameCaptureUs(frame, captureStamp(frame));
             if (stampRet < 0) {
                 // Never substitute a later time downstream; the consumer reports the gap.
                 const auto n = m_stampFailures.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -446,6 +452,7 @@ void FFScreenGrabThread::State::grabLoop()
             if (frames == 1 || frames % 300 == 0) {
                 qDebug() << "[FFScreenGrabThread] frames=" << frames;
             }
+            if (frames == 1 || frames % 1800 == 0) logPresentStamps("progress");
             continue;
         }
 
@@ -460,6 +467,62 @@ void FFScreenGrabThread::State::grabLoop()
     }
     av_frame_free(&frame);
     qInfo() << "[FFScreenGrabThread] grab loop finished, frames=" << frames;
+    logPresentStamps("summary");
+}
+
+int64_t FFScreenGrabThread::State::captureStamp(const AVFrame *frame)
+{
+    const int64_t receiveUs = av_gettime_relative();
+    PresentStamper::Input input;
+    input.receiveUs = receiveUs;
+    // ddagrab.present_qpc / present_new come from the SubRec FFmpeg patch
+    // (packaging/ffmpeg/patches/0001-ddagrab-export-present-time.patch).
+    const AVDictionaryEntry *qpc = av_dict_get(frame->metadata, "ddagrab.present_qpc", nullptr, 0);
+    const AVDictionaryEntry *fresh = av_dict_get(frame->metadata, "ddagrab.present_new", nullptr, 0);
+    if (qpc && qpc->value) {
+        char *end = nullptr;
+        const long long ticks = std::strtoll(qpc->value, &end, 10);
+        const int64_t presentUs = (end && *end == '\0' && ticks > 0)
+            ? QpcSessionClock::instance().fromQpcTicks(ticks) : AV_NOPTS_VALUE;
+        if (presentUs != AV_NOPTS_VALUE) {
+            input.hasPresent = true;
+            input.presentUs = presentUs;
+            input.isNew = fresh && fresh->value && std::strcmp(fresh->value, "1") == 0;
+        }
+    }
+    const int64_t stamp = m_presentStamper.stamp(input);
+    const auto &c = m_presentStamper.counters();
+    if (c.fallback == 1 && c.present == 0 && !m_fallbackWarned) {
+        m_fallbackWarned = true;
+        qWarning() << "[FFScreenGrabThread] no ddagrab presentation time; using receive time"
+                   << "(FFmpeg without the SubRec ddagrab patch?)";
+    }
+    return stamp;
+}
+
+int64_t FFScreenGrabThread::State::heldStamp()
+{
+    // A held frame repeats an older picture (pre-lock snapshot or last frame before a
+    // loss), so its presentation time no longer applies: it is placed at the receive
+    // time, never before the previous stamp, and ends duplicate synthesis from the
+    // last new image. After the hold, a new image whose presentation time is not after
+    // the last held stamp gets its receive time (counted after_hold), so presentation
+    // time never moves backwards into frames that were already queued.
+    return m_presentStamper.stampHeld(av_gettime_relative());
+}
+
+void FFScreenGrabThread::State::logPresentStamps(const char *what)
+{
+    const auto &c = m_presentStamper.counters();
+    const auto q = QpcSessionClock::instance().stats();
+    qInfo() << "[FFScreenGrabThread] present_stamp" << what << "present=" << c.present
+            << "synthesized=" << c.synthesized << "held=" << c.held << "after_hold=" << c.afterHold
+            << "present_fallback=" << c.fallback
+            << "rejected_future=" << c.rejectedFuture << "rejected_stale=" << c.rejectedStale
+            << "clamped=" << c.clamped << "latency_mean_us=" << m_presentStamper.meanLatencyUs()
+            << "latency_max_us=" << c.maxLatencyUs << "qpc_anchors=" << q.anchors
+            << "qpc_slope_ppm=" << q.slopePpm << "qpc_residual_us=" << q.maxResidualUs
+            << "qpc_drift_us=" << q.driftUs << "qpc_uncertainty_us=" << q.lastUncertaintyUs;
 }
 
 bool FFScreenGrabThread::State::reopenAfterLoss()
@@ -498,7 +561,7 @@ bool FFScreenGrabThread::State::reopenAfterLoss()
         if (m_lastFrame && queue && now >= nextHold) {
             AVFrame *held = av_frame_alloc();
             if (held && av_frame_ref(held, m_lastFrame) >= 0) {
-                if (setFrameCaptureUs(held, av_gettime_relative()) >= 0 &&
+                if (setFrameCaptureUs(held, heldStamp()) >= 0 &&
                     queue->enqueueFromSrc(held, &m_stop) == MediaQueueResult::Ok) {
                     ++m_heldFrames;
                 } else av_frame_free(&held);
@@ -534,7 +597,7 @@ bool FFScreenGrabThread::State::reopenAfterLoss()
             if (m_lastFrame && queue && std::chrono::steady_clock::now() >= nextHold) {
                 AVFrame *held = av_frame_alloc();
                 if (held && av_frame_ref(held, m_lastFrame) >= 0 &&
-                    setFrameCaptureUs(held, av_gettime_relative()) >= 0 &&
+                    setFrameCaptureUs(held, heldStamp()) >= 0 &&
                     queue->enqueueFromSrc(held, &m_stop) == MediaQueueResult::Ok)
                     ++m_heldFrames;
                 av_frame_free(&held);
@@ -608,7 +671,7 @@ bool FFScreenGrabThread::State::enqueueHeld(const std::shared_ptr<FFVFrameQueue:
     if (!m_lastFrame || !queue) return false;
     AVFrame *held = av_frame_alloc();
     bool ok = held && av_frame_ref(held, m_lastFrame) >= 0 &&
-              setFrameCaptureUs(held, av_gettime_relative()) >= 0 &&
+              setFrameCaptureUs(held, heldStamp()) >= 0 &&
               queue->enqueueFromSrc(held, &m_stop) == MediaQueueResult::Ok;
     av_frame_free(&held);
     if (ok) ++counter;
