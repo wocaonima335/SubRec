@@ -46,3 +46,9 @@ Native FFmpeg 8 (`/tmp/w18-r3-native`) and Qt 6.8 (`/tmp/qtl/6.8.0/gcc_64`):
 Not verified here: hardware encoders (NVENC/AMF/QSV), the full Windows application
 link and run, the PowerShell `mp4_edit_list_parser` test, and stop time of a 30-minute
 hybrid file on a real disk.
+
+## Known limitations / log notes (PC3, 2026-11)
+
+- A `[MuxThread] closed … finalize_state= not_finalized` line before `run() start` is
+  expected: initVideo's reset closes a muxer thread that never ran. The real finalize
+  state is logged when recording stops.

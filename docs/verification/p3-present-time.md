@@ -60,3 +60,14 @@ No constant offset correction was added anywhere.
 
 Not verified: building the patched FFmpeg, D3D11/WASAPI at run time, marker2 compilation
 (no C# compiler here), and any PC3 measurement.
+
+## Known limitations (PC3, 2026-11)
+
+- V3 not met: beacon-corrected A/V offset median 37–46 ms, p5–p95 spread ≈47–71 ms
+  (L1/L2/B1). Beacon flashes land on two frame phases (x.500 / x.533), producing two
+  clusters ~33 ms apart at 30 fps, so the p95−p5 ≤ 25 ms criterion is not achievable as
+  specified; needs per-phase evaluation or 60 fps measurement. Accepted for now.
+- V4 partial: slotCollisions 33 per 30 min (L2) vs ≈6 on the unpatched baseline; follow-up tuning.
+- Baseline (unpatched) runs must replace the FFmpeg DLLs that CMake copies into the build
+  directory; switching PATH alone keeps the patched DLLs loaded.
+- The patched FFmpeg package is first built by CI with this change.
