@@ -36,7 +36,8 @@ TickDecision VideoTickScheduler::decide(int64_t us) {
     const auto tick = impl_->tickAt(us, AV_ROUND_NEAR_INF);
     if (tick == AV_NOPTS_VALUE) return {TickDecision::Kind::InvalidTime, tick, 0};
     if (tick <= impl_->last) {
-        ++impl_->counts.slotCollisions; return {TickDecision::Kind::SlotCollision, tick, 0};
+        ++impl_->counts.slotCollisions; ++impl_->counts.earlySlot;
+        return {TickDecision::Kind::SlotCollision, tick, 0};
     }
     const auto skipped = tick - (impl_->last + 1);
     impl_->last = tick; ++impl_->counts.frames; impl_->counts.laggedTicks += skipped;
@@ -48,7 +49,7 @@ TickDecision VideoTickScheduler::decidePaced(int64_t us, bool firstAfterResume) 
     if (tick == AV_NOPTS_VALUE || impl_->last == INT64_MAX)
         return {TickDecision::Kind::InvalidTime, AV_NOPTS_VALUE, 0};
     if (impl_->lastCaptureUs != AV_NOPTS_VALUE && us <= impl_->lastCaptureUs) {
-        ++impl_->counts.slotCollisions;
+        ++impl_->counts.slotCollisions; ++impl_->counts.staleStamp;
         return {TickDecision::Kind::SlotCollision, tick, 0};
     }
     impl_->lastCaptureUs = us;
@@ -64,7 +65,7 @@ TickDecision VideoTickScheduler::decidePaced(int64_t us, bool firstAfterResume) 
             tick = next;
     }
     if (tick <= impl_->last) {
-        ++impl_->counts.slotCollisions;
+        ++impl_->counts.slotCollisions; ++impl_->counts.earlySlot;
         return {TickDecision::Kind::SlotCollision, tick, 0};
     }
     const auto skipped = tick - next;
@@ -86,3 +87,4 @@ int64_t VideoTickScheduler::requestHoldover(int64_t us, int64_t maxTicks) {
 }
 VideoTickCounters VideoTickScheduler::counters() const { return impl_->counts; }
 int64_t VideoTickScheduler::lastTick() const { return impl_->last; }
+int64_t VideoTickScheduler::lastCaptureUs() const { return impl_->lastCaptureUs; }

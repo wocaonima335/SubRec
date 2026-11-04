@@ -89,6 +89,7 @@ void FFVEncoderThread::run()
     missingStamps.store(0);
     AVFrame *lastFrame = nullptr;
     uint64_t stampDiagnostics = 0;
+    uint64_t slotEventCount = 0;
     struct FrameCleanup { AVFrame *&frame; ~FrameCleanup() { av_frame_free(&frame); } } cleanup{lastFrame};
     ticks.setHoldFrameCallback([&](int64_t tick, int64_t) {
         if (!lastFrame || streamIndex < 0) return false;
@@ -159,7 +160,23 @@ void FFVEncoderThread::run()
         if (resumed) {
             frame->pict_type = AV_PICTURE_TYPE_I;
         }
+        const int64_t prevLastTick = ticks.lastTick();
+        const int64_t prevCaptureUs = ticks.lastCaptureUs();
+        const auto staleBefore = ticks.counters().staleStamp;
         const auto decision = ticks.decidePaced(mediaUs, resumed);
+        if (decision.kind == TickDecision::Kind::SlotCollision || decision.kind == TickDecision::Kind::Lagged) {
+            // Diagnostics only (no behaviour change). Rate limit: first 50 events,
+            // then every 100th, so a pathological run cannot flood the log.
+            const auto eventIndex = ++slotEventCount;
+            if (eventIndex <= 50 || eventIndex % 100 == 0) {
+                const char *kind = decision.kind == TickDecision::Kind::Lagged ? "lagged"
+                    : (ticks.counters().staleStamp != staleBefore ? "stale_stamp" : "early_slot");
+                qInfo() << "[VideoClock] slot_event index=" << eventIndex << "kind=" << kind
+                        << "us=" << mediaUs << "lastCaptureUs=" << prevCaptureUs
+                        << "tick=" << decision.tick << "last=" << prevLastTick
+                        << "skipped=" << decision.skippedTicks;
+            }
+        }
         if (diagnosticIndex == 1 || diagnosticIndex % 300 == 0 || resumed) {
             qInfo() << "[VideoClock] tick_diagnostic index=" << diagnosticIndex
                     << "mediaUs=" << mediaUs << "tick=" << decision.tick
@@ -204,6 +221,8 @@ void FFVEncoderThread::run()
     ticks.setHoldFrameCallback({});
     const auto counts = ticks.counters();
     qInfo() << "[VideoClock] summary frames=" << counts.frames << "slotCollisions=" << counts.slotCollisions
+            << "staleStamp=" << counts.staleStamp << "earlySlot=" << counts.earlySlot
+            << "slotEvents=" << slotEventCount
             << "laggedTicks=" << counts.laggedTicks << "holdoverTicks=" << counts.holdoverTicks
             << "missing_capture_stamps=" << missingStamps.load();
 }

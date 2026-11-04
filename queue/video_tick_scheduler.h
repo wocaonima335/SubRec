@@ -20,7 +20,9 @@ struct TickDecision {
 
 struct VideoTickCounters {
     uint64_t frames = 0;         // Accepted captured frames, including Lagged.
-    uint64_t slotCollisions = 0;
+    uint64_t slotCollisions = 0; // Total dropped capture frames = staleStamp + earlySlot.
+    uint64_t staleStamp = 0;     // decidePaced only: mediaUs <= previous capture mediaUs.
+    uint64_t earlySlot = 0;      // Computed tick <= lastTick (slot already used).
     uint64_t laggedTicks = 0;    // Sum of skippedTicks for accepted capture frames.
     uint64_t holdoverTicks = 0;  // Successfully submitted repeated frames only.
 };
@@ -103,6 +105,8 @@ public:
 
     VideoTickCounters counters() const; // Read-only value snapshot, owner thread.
     int64_t lastTick() const;           // -1 before any accepted/held tick.
+    // Previous capture mediaUs seen by decidePaced (AV_NOPTS_VALUE if none); diagnostics only.
+    int64_t lastCaptureUs() const;
 
 private:
     struct Impl;

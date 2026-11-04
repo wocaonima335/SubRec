@@ -59,6 +59,7 @@ void tickTest(AVRational fps) {
         else { CHECK(d.kind==TickDecision::Kind::SlotCollision); ++collisions; }
     }
     const auto c=ticks.counters(); CHECK(c.frames==accepted && c.slotCollisions==collisions && c.laggedTicks==skipped);
+    CHECK(c.slotCollisions==c.staleStamp+c.earlySlot && c.staleStamp==0);
     CHECK(ticks.decide(-1).kind==TickDecision::Kind::InvalidTime && ticks.lastTick()==previous);
     CHECK(ticks.decide(AV_NOPTS_VALUE).kind==TickDecision::Kind::InvalidTime);
     ticks.configure({INT_MAX,1}); CHECK(ticks.decide(INT64_MAX).kind==TickDecision::Kind::InvalidTime);
@@ -89,11 +90,37 @@ void segmentTest() {
     CHECK(held.size()==6 && ticks.counters().frames==2);
     ticks.reset(); CHECK(ticks.requestHoldover(1000000)==0); // No last frame.
 }
+void collisionReasonTest() {
+    VideoTickScheduler ticks; CHECK(ticks.configure({30,1}));
+    CHECK(ticks.lastCaptureUs() == AV_NOPTS_VALUE);
+    CHECK(ticks.decidePaced(0, false).kind == TickDecision::Kind::Accept);          // tick 0
+    CHECK(ticks.lastCaptureUs() == 0);
+    // Same capture time again: stale stamp branch.
+    CHECK(ticks.decidePaced(0, false).kind == TickDecision::Kind::SlotCollision);
+    auto c = ticks.counters(); CHECK(c.staleStamp == 1 && c.earlySlot == 0 && c.slotCollisions == 1);
+    // Normal next frame snaps to tick 1.
+    CHECK(ticks.decidePaced(33333, false).tick == 1);
+    // Far ahead: lagged to tick 5 (3 skipped).
+    auto d = ticks.decidePaced(166667, false); CHECK(d.kind == TickDecision::Kind::Lagged && d.tick == 5 && d.skippedTicks == 3);
+    // Burst: a frame 10 ms after the previous one is snapped forward to tick 6,
+    // the next one (newer stamp, but earlier than slot 6) has no free slot.
+    CHECK(ticks.decidePaced(176667, false).tick == 6);
+    d = ticks.decidePaced(186667, false);
+    CHECK(d.kind == TickDecision::Kind::SlotCollision && d.tick == 6);
+    c = ticks.counters();
+    CHECK(c.staleStamp == 1 && c.earlySlot == 1 && c.slotCollisions == 2 && c.laggedTicks == 3 && c.frames == 4);
+    CHECK(ticks.lastCaptureUs() == 186667 && ticks.lastTick() == 6);
+    // Legacy decide(): collisions are always early-slot.
+    VideoTickScheduler legacy; CHECK(legacy.configure({30,1}));
+    legacy.decide(0); CHECK(legacy.decide(0).kind == TickDecision::Kind::SlotCollision);
+    c = legacy.counters(); CHECK(c.earlySlot == 1 && c.staleStamp == 0 && c.slotCollisions == 1);
+}
 int main(int argc,char **argv) {
     try {
         const std::string mode=argc>1?argv[1]:"clock";
         if(mode=="clock") clockTest(); else if(mode=="30") tickTest({30,1});
-        else if(mode=="ntsc") tickTest({30000,1001}); else segmentTest();
+        else if(mode=="ntsc") tickTest({30000,1001});
+        else if(mode=="collisions") collisionReasonTest(); else segmentTest();
         std::cout<<"PASS "<<mode<<'\n';
     } catch(const std::exception &e) { std::cerr<<e.what()<<'\n';return 1; }
 }

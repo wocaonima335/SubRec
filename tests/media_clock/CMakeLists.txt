@@ -21,7 +21,7 @@ add_executable(media_clock_tests media_clock_tests.cpp ../../queue/media_clock.c
 target_compile_features(media_clock_tests PRIVATE cxx_std_17)
 target_include_directories(media_clock_tests PRIVATE ../.. "${FFMPEG_ROOT}/include")
 target_link_libraries(media_clock_tests PRIVATE Threads::Threads "${contract_avutil}")
-foreach(mode IN ITEMS clock 30 ntsc segments)
+foreach(mode IN ITEMS clock 30 ntsc segments collisions)
     add_test(NAME media_clock_${mode} COMMAND media_clock_tests ${mode})
     set_tests_properties(media_clock_${mode} PROPERTIES TIMEOUT 30 LABELS "clock;sync")
 endforeach()
