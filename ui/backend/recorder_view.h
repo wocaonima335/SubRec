@@ -156,9 +156,23 @@ signals:
     // (S6 extra line "已录制的部分可能已保存到 …"), else "".
     void recordingFailed(const QString &error, const QString &partialFilePath);
 
+private slots:
+    void onCaptureStateChanged();
+    void onCaptureErrorChanged();
+    void onCaptureTimeChanged();
+    void onOutputPathChanged();
+    void onOutputFileNameChanged();
+    void onCaptureDevicesChanged();
+    void onVideoResolutionChanged();
+    void onEncoderChanged();
+    void onAudioModeChanged();
+    void onAudioSamplerChanged();
 private:
     QPointer<QObject> recorder_;
     std::function<void(bool)> changeVideoSource_;
+    QString previousState_;
+    QString previousOutputFile_;
+    QString previousTime_;
 };
 
 } // namespace subrec::ui
