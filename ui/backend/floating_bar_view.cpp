@@ -135,6 +135,7 @@ void FloatingBarView::acknowledgeHint()
 
 QPoint FloatingBarView::preferredPosition(int barWidth, int barHeight) const
 {
+    Q_UNUSED(barHeight) // the default sits 16 px from the top regardless of the height
     const QString key = screenKeyFor(bar_);
     if (policy_) {
         if (const auto saved = policy_->savedPosition(key))
