@@ -15,3 +15,6 @@ subrec_ui_add_zcode_test(theme_controller_tests)
 
 # H2 (shell-only; no ui_module QML needed but the helper keeps one registration pattern)
 subrec_ui_add_zcode_test(global_hotkeys_tests)
+
+# TB1
+subrec_ui_add_zcode_test(taskbar_overlay_tests)

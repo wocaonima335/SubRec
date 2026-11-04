@@ -32,7 +32,14 @@ public:
     // Accessibility text passed to SetOverlayIcon, e.g. "录制中".
     void setDescription(const QString &text);
 
+protected:
+    // Watches the attached window: HWND recreation (PlatformSurface / WinIdChange)
+    // re-applies the overlay to the new taskbar button.
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
+    void reapply(); // store-then-apply entry point; no-op off Windows
+
     class Private;
     std::unique_ptr<Private> d;
 };
