@@ -48,6 +48,11 @@ signals:
     void modeChanged();
     void darkChanged();
     void reduceMotionChanged();
+
+private:
+    QString mode_;      // validated, one of system/dark/light
+    bool systemDark_ = true;
+    bool reduceMotion_ = false;
 };
 
 } // namespace subrec::ui

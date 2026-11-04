@@ -70,6 +70,43 @@ set(UI_ZCODE_SOURCES
     backend/floating_bar_view.h backend/floating_bar_view.cpp
 )
 
-# U1: Lucide SVGs go here (ui/icons/<name>.svg), resource path :/qt/qml/SubRec/Ui/icons/.
+# U1: Lucide-style SVGs (ISC licence; coordinator to record in THIRD_PARTY_LICENSES.md),
+# resource path :/qt/qml/SubRec/Ui/icons/.
 set(UI_ZCODE_RESOURCES
+    icons/app-window.svg
+    icons/camera.svg
+    icons/captions.svg
+    icons/check.svg
+    icons/chevron-down.svg
+    icons/circle-alert.svg
+    icons/circle-check.svg
+    icons/circle.svg
+    icons/download.svg
+    icons/external-link.svg
+    icons/file-text.svg
+    icons/folder-open.svg
+    icons/grip-vertical.svg
+    icons/info.svg
+    icons/keyboard.svg
+    icons/library.svg
+    icons/maximize-2.svg
+    icons/mic-off.svg
+    icons/mic.svg
+    icons/minimize-2.svg
+    icons/minus.svg
+    icons/monitor-off.svg
+    icons/monitor.svg
+    icons/pause.svg
+    icons/play.svg
+    icons/power.svg
+    icons/refresh-cw.svg
+    icons/search.svg
+    icons/settings.svg
+    icons/sliders-horizontal.svg
+    icons/square.svg
+    icons/trash-2.svg
+    icons/triangle-alert.svg
+    icons/video.svg
+    icons/volume-2.svg
+    icons/x.svg
 )
