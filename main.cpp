@@ -1150,6 +1150,10 @@ int main(int argc, char *argv[])
                                                            : QString());
   };
   QObject::connect(&shellState, &subrec::shell::ShellStateSource::changed, pushShellState);
+  // WhenHidden (C5) depends on the window: hiding/minimizing while paused changes nothing
+  // in the shell state or the elapsed text, so follow the window itself too.
+  QObject::connect(&windowController, &subrec::shell::WindowController::windowShownChanged,
+                   pushShellState);
   QObject::connect(&recorderView, &subrec::ui::RecorderView::captureTimeTextChanged,
                    pushShellState);
   QObject::connect(&subtitleView, &subrec::ui::SubtitleView::serviceChanged, pushShellState);
