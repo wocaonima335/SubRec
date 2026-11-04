@@ -3,6 +3,8 @@
 
 #include <QObject>
 #include <QPointer>
+#include <QElapsedTimer>
+#include <QTimer>
 #include <QtQml/qqmlregistration.h>
 
 QT_BEGIN_NAMESPACE
@@ -54,8 +56,15 @@ signals:
     void activeChanged();
     void levelsChanged();
 
+private slots:
+    void updateFromSampler();
 private:
     QPointer<QObject> sampler_;
+    qreal levelDb_ = -60.0;
+    bool active_ = false;
+    qint64 lastEmitMs_ = 0;
+    QElapsedTimer throttle_;
+    QTimer pending_;
 };
 
 } // namespace subrec::ui
