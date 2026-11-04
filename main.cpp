@@ -1074,6 +1074,29 @@ int main(int argc, char *argv[])
                          FFRecorder::getInstance().property("audioSampler").value<QObject *>());
                    });
   recordingLibrary.setFolder(outputNaming.outputDir());
+  // U6: the library follows the output folder (P3-2 changes it at runtime) and marks the
+  // file being written (L5: not playable, moveToTrash refuses it). currentOutputFile is
+  // "" outside capturing states.
+  QObject::connect(&outputNaming, &subrec::ui::OutputNaming::outputDirChanged,
+                   &recordingLibrary, [&outputNaming, &recordingLibrary] {
+                     recordingLibrary.setFolder(outputNaming.outputDir());
+                   });
+  recordingLibrary.setActiveRecording(recorderView.currentOutputFile());
+  QObject::connect(&recorderView, &subrec::ui::RecorderView::currentOutputFileChanged,
+                   &recordingLibrary, [&recorderView, &recordingLibrary] {
+                     recordingLibrary.setActiveRecording(recorderView.currentOutputFile());
+                   });
+  // U7: P3-6 log row and P3-7 licence links. Same log path rule as qtLogHandler(); the
+  // licence files sit next to the exe as packaged by windows-build.yml (Deploy step).
+  {
+    QString logPath = qEnvironmentVariable("SUBREC_LOG_FILE").trimmed();
+    if (logPath.isEmpty())
+      logPath = QCoreApplication::applicationDirPath() + "/SubRec.log";
+    appInfo.setLogFilePath(QDir::toNativeSeparators(QFileInfo(logPath).absoluteFilePath()));
+    const QDir appDir(QCoreApplication::applicationDirPath());
+    appInfo.setLicensePaths(appDir.filePath(QStringLiteral("LICENSE.txt")),
+                            appDir.filePath(QStringLiteral("THIRD_PARTY_LICENSES.md")));
+  }
   // U8: catalog first — setModelCatalog() is ignored while settings are locked, which
   // includes capturing. Then mirror the recorder's capturing state (uiStateChanged is
   // the NOTIFY of RecorderView::capturing) so the asr/* settings lock while recording.
@@ -1239,6 +1262,30 @@ int main(int argc, char *argv[])
               windowController.onHotkeyConflicts(conflicts);
           }
           taskbarOverlay.attachWindow(mainWindow);
+          if (tray) {
+            // H4 tray: item 6 mirrors the bar and toggles it for this recording only
+            // (the policy drops the override at Idle/Failed); menu shortcut texts follow
+            // the bindings. Old UI has no bar and no hotkeys, so neither is set there.
+            auto *trayPtr = tray.get();
+            // Item 6 stays hidden where the bar cannot be excluded from capture (C5 is
+            // forced to "never" there, and the override must not bring it back).
+            const auto pushTrayExtras = [trayPtr, &floatingBarPolicy, &hotkeyController,
+                                         &shellSettings] {
+              trayPtr->setFloatingBarItem(shellSettings.excludeSupported(),
+                                          floatingBarPolicy.shouldShow());
+              trayPtr->setShortcutTexts(
+                  hotkeyController.shortcutLabel(subrec::ui::HotkeyController::ToggleWindow),
+                  hotkeyController.shortcutLabel(subrec::ui::HotkeyController::ToggleRecord),
+                  hotkeyController.shortcutLabel(subrec::ui::HotkeyController::TogglePause));
+            };
+            pushTrayExtras();
+            QObject::connect(trayPtr, &subrec::shell::TrayController::floatingBarToggled,
+                             &floatingBarPolicy, &subrec::shell::FloatingBarPolicy::setTrayOverride);
+            QObject::connect(&floatingBarPolicy, &subrec::shell::FloatingBarPolicy::shouldShowChanged,
+                             trayPtr, pushTrayExtras);
+            QObject::connect(&hotkeyController, &subrec::ui::HotkeyController::bindingsChanged,
+                             trayPtr, pushTrayExtras);
+          }
         }
 #endif
         windowController.attachMainWindow(mainWindow); // also registers capture exclusion
