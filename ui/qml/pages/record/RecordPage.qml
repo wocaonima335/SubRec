@@ -6,44 +6,102 @@ import QtQuick
 // All recording state comes from RecorderView.uiState (§3.2.3); all subtitle state from
 // SubtitleView.uiState (§3.2.4). Nothing is cached in QML.
 // FROZEN API: none (page root; navigation via Navigation, dialogs via DialogRequests).
-Item {
+Flickable {
     id: root
+    contentWidth: width
+    contentHeight: layout.height
+    clip: false
 
-    // TODO(U5): title row (h1 "录制" + resolution/encoder line with tooltip), responsive layout.
-    Text {
-        x: Theme.pagePadding
-        y: Theme.pagePadding
-        text: "录制"
-        font: Theme.h1Font
-        color: Theme.textPrimary
-    }
+    // §2.7: the source panel keeps its 280 px at narrow widths (decision 8); the preview
+    // absorbs the remaining width and keeps 16:9.
+    readonly property int sideMargin: Theme.pagePadding
+    readonly property int gap: Theme.space16
+    readonly property int sourcePanelWidth: Theme.sourcePanelWidth
+    readonly property int previewWidth: width - sideMargin * 2 - gap - sourcePanelWidth
+    readonly property int previewHeight: Math.round(previewWidth * 9 / 16)
 
-    PreviewPanel {
-        id: preview
-        x: Theme.pagePadding
-        y: 72
-        width: 736
-        height: 414
-    }
+    Column {
+        id: layout
+        x: root.sideMargin
+        width: root.width - root.sideMargin * 2
+        spacing: 0
 
-    ControlBar {
-        x: Theme.pagePadding
-        y: preview.y + preview.height + 16
-        width: preview.width
-        height: 104
-    }
+        // A: title row.
+        Item {
+            width: parent.width
+            height: 40
+            Text {
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: Theme.space4
+                text: qsTr("录制")
+                font: Theme.h1Font
+                color: Theme.textPrimary
+            }
+            Item {
+                // §3.2.2 A: "{resolution} · {encoder}（硬件/软件）", encoder detail tooltip.
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: Theme.space4
+                width: encoderText.implicitWidth
+                height: 16
 
-    SourcePanel {
-        x: preview.x + preview.width + 16
-        y: preview.y
-        width: Theme.sourcePanelWidth
-        height: 534
-    }
+                Text {
+                    id: encoderText
+                    anchors.fill: parent
+                    horizontalAlignment: Text.AlignRight
+                    text: {
+                        const encoder = RecorderView.selectedVideoEncoder
+                        if (encoder.length === 0)
+                            return qsTr("编码器：待定")
+                        const tag = RecorderView.selectedVideoEncoderIsHardware ? qsTr("硬件") : qsTr("软件")
+                        return RecorderView.videoResolution + " · " + encoder + "（" + tag + "）"
+                    }
+                    font: Theme.monoSmallFont
+                    color: RecorderView.selectedVideoEncoder.length === 0 ? Theme.textTertiary
+                         : RecorderView.selectedVideoEncoderIsHardware ? Theme.successFg
+                         : Theme.textTertiary
 
-    RecentRecordings {
-        x: Theme.pagePadding
-        y: 622
-        width: 1032
-        height: 104
+                    HoverHandler {
+                        id: encoderHover
+                    }
+                    AppToolTip {
+                        visible: encoderHover.hovered
+                             && RecorderView.selectedVideoEncoderDetail.length > 0
+                        text: RecorderView.selectedVideoEncoderDetail
+                    }
+                }
+            }
+        }
+
+        Item { width: 1; height: Theme.space16 }
+
+        // B + D: preview column and source panel side by side.
+        Row {
+            spacing: root.gap
+
+            Column {
+                spacing: Theme.space16
+                PreviewPanel {
+                    width: root.previewWidth
+                    height: root.previewHeight
+                }
+                ControlBar {
+                    width: root.previewWidth
+                }
+            }
+
+            SourcePanel {
+                width: root.sourcePanelWidth
+                height: Math.max(root.previewHeight + Theme.space16 + 104, 534)
+            }
+        }
+
+        // E: recent recordings.
+        Item { width: 1; height: Theme.space16 }
+        RecentRecordings {
+            width: parent.width
+        }
+        Item { width: 1; height: Theme.space24 }
     }
 }
