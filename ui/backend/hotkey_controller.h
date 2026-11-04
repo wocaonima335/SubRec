@@ -5,6 +5,9 @@
 #include <QPointer>
 #include <QString>
 #include <QStringList>
+#include "shell/key_chord.h"
+#include "shell/global_hotkeys.h"
+#include <array>
 #include <QtQml/qqmlregistration.h>
 
 QT_BEGIN_NAMESPACE
@@ -96,6 +99,13 @@ signals:
 
 private:
     QPointer<shell::GlobalHotkeys> hotkeys_;
+    std::array<shell::KeyChord,3> bindings_{};
+    std::array<shell::RegisterResult,3> statuses_{};
+    int capturing_ = -1;
+    QString captureText_;
+    bool eventFilter(QObject *, QEvent *) override;
+    void finishCapture(int result, const QString &message = {});
+    void saveBinding(int action, const shell::KeyChord &chord);
     QPointer<QQuickWindow> window_;
 };
 
