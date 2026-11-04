@@ -55,6 +55,9 @@ signals:
     void statusChanged(subrec::shell::HotkeyAction action);
 
 private:
+    // GUI-thread slot reached via the queued WM_HOTKEY lambda; applies the 500 ms debounce.
+    void dispatch(int action);
+
     class Private;
     std::unique_ptr<Private> d;
 };
