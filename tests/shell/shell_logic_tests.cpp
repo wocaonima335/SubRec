@@ -34,6 +34,11 @@ int main(int argc, char **argv)
             }
         } else if (mode == "notifications") {
             // Section 3.5's shared permission gate covers N1-N6 (N3/N5/N6 reserved).
+            // N5/N6 are now wired; both remain blocked for every capturing state.
+            for (const auto state : {RecState::Preparing, RecState::Running, RecState::Paused, RecState::Stopping}) {
+                CHECK(!notificationAllowed(WindowVisibility::HiddenToTray, state));
+                CHECK(!notificationAllowed(WindowVisibility::Minimized, state));
+            }
             for (int notification = 1; notification <= 6; ++notification)
                 for (auto visibility : {WindowVisibility::Shown, WindowVisibility::Minimized, WindowVisibility::HiddenToTray})
                     for (size_t i = 0; i < states.size(); ++i) {
@@ -57,5 +62,9 @@ int main(int argc, char **argv)
             CHECK(recStateFrom("Unknown", true) == RecState::Failed);
         } else CHECK(false);
         return 0;
-    } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
+    } catch (const std::exception &e)
+    {
+        std::cerr << e.what() << '\n';
+        return 1;
+    }
 }

@@ -5,6 +5,7 @@
 #include <QAction>
 #include <QMenu>
 #include <QPainter>
+#include <QKeySequence>
 #include <array>
 #include <optional>
 
@@ -17,16 +18,27 @@ public:
     ShellSnapshot snapshot;
     std::optional<NotifyId> lastNotification;
     std::array<QIcon, 5> icons;
-    QAction *toggle = nullptr, *status = nullptr, *startStop = nullptr, *pause = nullptr;
+    QAction *toggle = nullptr, *status = nullptr, *startStop = nullptr, *pause = nullptr, *floatingBar = nullptr;
+
+    bool floatingBarAllowed = false;
+    QString toggleShortcut;
+    QString startShortcut;
+    QString pauseShortcut;
+
+    static QString withShortcut(const QString &text, const QString &shortcut)
+    {
+        return shortcut.isEmpty() ? text : text + QChar('\t') + shortcut;
+    }
 
     void refresh()
     {
         const auto model = buildTrayMenuModel(snapshot);
-        toggle->setText(model.toggleWindowText);
+        toggle->setText(withShortcut(model.toggleWindowText, toggleShortcut));
         status->setText(model.statusText);
-        startStop->setText(model.startStopText);
+        startStop->setText(withShortcut(model.startStopText, startShortcut));
         startStop->setEnabled(model.startStopEnabled);
-        pause->setText(model.pauseText);
+        pause->setText(withShortcut(model.pauseText, pauseShortcut));
+        floatingBar->setVisible(floatingBarAllowed && isCapturing(snapshot.state));
         pause->setEnabled(model.pauseEnabled);
         // An 8px dot in the standard 16px icon slot. Keep its color when disabled.
         const char *color = "#22C55E";
@@ -52,7 +64,8 @@ public:
         status->setIcon(statusIcon);
         icon.setIcon(icons.at(static_cast<size_t>(trayIconFor(snapshot.state))));
         const auto tooltip = trayToolTip(snapshot);
-        if (icon.toolTip() != tooltip) icon.setToolTip(tooltip);
+        if (icon.toolTip() != tooltip)
+            icon.setToolTip(tooltip);
     }
 };
 
@@ -78,6 +91,10 @@ TrayController::TrayController(QObject *parent) : QObject(parent), d(std::make_u
     d->status->setEnabled(false);
     d->startStop = d->menu.addAction(QString(), this, &TrayController::startStopRequested);
     d->pause = d->menu.addAction(QString(), this, &TrayController::pauseResumeRequested);
+    d->floatingBar = d->menu.addAction(QStringLiteral("显示悬浮条"), this, [this] {
+        emit floatingBarToggled(d->floatingBar->isChecked());
+    });
+    d->floatingBar->setCheckable(true);
     d->menu.addSeparator();
     d->menu.addAction(QStringLiteral("打开保存文件夹"), this, &TrayController::openOutputFolderRequested);
     d->menu.addAction(QStringLiteral("设置…"), this, &TrayController::openSettingsRequested);
@@ -86,30 +103,61 @@ TrayController::TrayController(QObject *parent) : QObject(parent), d(std::make_u
     d->icon.setContextMenu(&d->menu);
     connect(&d->menu, &QMenu::aboutToShow, this, [this] { d->refresh(); });
     connect(&d->icon, &QSystemTrayIcon::activated, this, [this](QSystemTrayIcon::ActivationReason reason) {
-        if (reason == QSystemTrayIcon::Trigger) emit toggleWindowRequested();
+        if (reason == QSystemTrayIcon::Trigger)
+            emit toggleWindowRequested();
     });
     connect(&d->icon, &QSystemTrayIcon::messageClicked, this, [this] {
-        if (d->lastNotification) emit notificationClicked(*d->lastNotification);
+        if (d->lastNotification)
+            emit notificationClicked(*d->lastNotification);
     });
     d->refresh();
 }
 
 TrayController::~TrayController() = default;
-bool TrayController::systemTrayAvailable() { return QSystemTrayIcon::isSystemTrayAvailable(); }
-void TrayController::setEnabled(bool enabled) { d->icon.setVisible(enabled); }
-void TrayController::update(const ShellSnapshot &snapshot) { d->snapshot = snapshot; d->refresh(); }
-QMenu *TrayController::menu() const { return &d->menu; }
+bool TrayController::systemTrayAvailable()
+{
+    return QSystemTrayIcon::isSystemTrayAvailable();
+}
+bool TrayController::notificationsSupported()
+{
+    return QSystemTrayIcon::supportsMessages();
+}
+void TrayController::setEnabled(bool enabled)
+{
+    d->icon.setVisible(enabled);
+}
+void TrayController::update(const ShellSnapshot &snapshot)
+{
+    d->snapshot = snapshot;
+    d->refresh();
+}
+QMenu *TrayController::menu() const
+{
+    return &d->menu;
+}
 
 void TrayController::notify(NotifyId id, const QString &title, const QString &body,
                             QSystemTrayIcon::MessageIcon icon)
 {
-    if (!d->icon.isVisible() || !QSystemTrayIcon::supportsMessages()) return;
+    if (!d->icon.isVisible() || !QSystemTrayIcon::supportsMessages())
+        return;
     d->lastNotification = id;
     d->icon.showMessage(title, body, icon, 10000);
 }
 
 // TODO(H4): menu item 6 and shortcut texts.
-void TrayController::setFloatingBarItem(bool, bool) {}
-void TrayController::setShortcutTexts(const QString &, const QString &, const QString &) {}
+void TrayController::setFloatingBarItem(bool visible, bool checked)
+{
+    d->floatingBarAllowed = visible;
+    d->floatingBar->setVisible(visible && isCapturing(d->snapshot.state));
+    d->floatingBar->setChecked(checked);
+}
+void TrayController::setShortcutTexts(const QString &toggleWindow, const QString &startStop, const QString &pauseResume)
+{
+    d->toggleShortcut = toggleWindow;
+    d->startShortcut = startStop;
+    d->pauseShortcut = pauseResume;
+    d->refresh();
+}
 
 } // namespace subrec::shell

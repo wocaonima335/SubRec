@@ -25,13 +25,17 @@ namespace subrec::shell {
 RecordingActions::RecordingActions(std::function<bool()> start, std::function<void()> stop,
     std::function<void()> pause, std::function<void()> resume, std::function<void()> openOutputFolder)
     : start(std::move(start)), stop(std::move(stop)), pause(std::move(pause)),
-      resume(std::move(resume)), openOutputFolder(std::move(openOutputFolder)) {}
+      resume(std::move(resume)), openOutputFolder(std::move(openOutputFolder))
+      {
+      }
 
 class WindowController::Private {
 public:
     Private(WindowController &owner, ShellSettings &settings, ShellStateSource &source,
             TrayController *tray, CaptureExclusion &exclusion, PowerRequest &power)
-        : owner(owner), settings(settings), source(source), tray(tray), exclusion(exclusion), power(power) {}
+        : owner(owner), settings(settings), source(source), tray(tray), exclusion(exclusion), power(power)
+        {
+        }
     WindowController &owner;
     ShellSettings &settings;
     ShellStateSource &source;
@@ -46,15 +50,27 @@ public:
     bool starting = false, startPending = false;
     bool closePending = false, exitPending = false, shuttingDown = false;
     bool hintPending = false, hintTimerActive = false;
+    bool subtitleSucceeded = false;
 
-    bool trayUsable() const { return tray && settings.trayEnabled() && TrayController::systemTrayAvailable(); }
-    ShellSnapshot snapshot() const { auto s = source.snapshot(); s.window = visibility; return s; }
-    void updateTray() { if (tray) tray->update(snapshot()); }
+    bool trayUsable() const
+    {
+        return tray && settings.trayEnabled() && TrayController::systemTrayAvailable();
+    }
+    ShellSnapshot snapshot() const
+    {
+        auto s = source.snapshot();
+        s.window = visibility;
+        return s;
+    }
+    void updateTray()
+    {
+        if (tray) tray->update(snapshot());
+    }
 
     bool notify(NotifyId id, const QString &title, const QString &body, QSystemTrayIcon::MessageIcon icon)
     {
         const auto s = snapshot();
-        if (!trayUsable() || !QSystemTrayIcon::supportsMessages() || startPending
+        if (!trayUsable() || !TrayController::notificationsSupported() || startPending
             || !notificationAllowed(s.window, s.state)) return false;
         tray->notify(id, title, body, icon);
         return true;
@@ -62,7 +78,8 @@ public:
 
     void deliverHint()
     {
-        if (!hintPending || hintTimerActive || settings.trayHintShown()) return;
+        if (!hintPending || hintTimerActive || settings.trayHintShown())
+            return;
         if (notify(NotifyId::TrayHint, QStringLiteral("字录仍在后台运行"),
                 QStringLiteral("点任务栏右下角的字录图标可以打开窗口。Windows 11 可能把图标收在“^”里，可以在 任务栏设置 › 其他系统托盘图标 中设为始终显示。"),
                 QSystemTrayIcon::Information)) {
@@ -73,12 +90,14 @@ public:
 
     void rememberGeometry()
     {
-        if (window && window->visibility() == QWindow::Windowed) normalGeometry = window->geometry();
+        if (window && window->visibility() == QWindow::Windowed)
+            normalGeometry = window->geometry();
     }
 
     void visibilityChanged(bool allowHint = true)
     {
-        if (!window) return;
+        if (!window)
+            return;
         const auto v = window->visibility();
         if (v == QWindow::Minimized && hideOnMinimize(trayUsable(), settings.minimizeToTray())) {
             window->hide();
@@ -93,8 +112,10 @@ public:
         const bool changed = next != visibility;
         visibility = next;
         PreviewBridge::instance().setPreviewWanted(visibility == WindowVisibility::Shown);
-        if (changed) emit owner.windowShownChanged();
-        if (allowHint && next == WindowVisibility::HiddenToTray && trayUsable() && !settings.trayHintShown()) hintPending = true;
+        if (changed)
+            emit owner.windowShownChanged();
+        if (allowHint && next == WindowVisibility::HiddenToTray && trayUsable() && !settings.trayHintShown())
+            hintPending = true;
         updateTray();
         deliverHint();
     }
@@ -102,9 +123,11 @@ public:
     void applySettings()
     {
         exclusion.setMode(settings.excludeMode());
-        if (tray) tray->setEnabled(settings.trayEnabled());
+        if (tray)
+            tray->setEnabled(settings.trayEnabled());
         // Disabling the only way back must never strand a hidden window.
-        if (!trayUsable() && visibility == WindowVisibility::HiddenToTray) owner.showMainWindow();
+        if (!trayUsable() && visibility == WindowVisibility::HiddenToTray)
+            owner.showMainWindow();
         updateTray();
     }
 
@@ -115,7 +138,8 @@ public:
         // A tentative start survives unrelated Idle/time/device signals emitted
         // inside start(). Once the engine publishes an active/terminal transition,
         // its state owns the lifetime of exclusion and power again.
-        if (isCapturing(s.state) || (s.state == RecState::Failed && s.state != previous.state)) startPending = false;
+        if (isCapturing(s.state) || (s.state == RecState::Failed && s.state != previous.state))
+            startPending = false;
         const bool active = isCapturing(s.state) || startPending;
         exclusion.setCapturing(active);
         power.setActive(active);
@@ -135,7 +159,10 @@ public:
         // Do not immediately replace N2/N4 with the deferred N1 balloon.
         if (notified && hintPending && !hintTimerActive) {
             hintTimerActive = true;
-            QTimer::singleShot(10000, &owner, [this] { hintTimerActive = false; deliverHint(); });
+            QTimer::singleShot(10000, &owner, [this] {
+                hintTimerActive = false;
+                deliverHint();
+            });
         } else {
             deliverHint();
         }
@@ -161,23 +188,37 @@ WindowController::WindowController(ShellSettings &settings, ShellStateSource &st
         connect(tray, &TrayController::pauseResumeRequested, this, &WindowController::requestPauseResume);
         connect(tray, &TrayController::exitRequested, this, &WindowController::beginExit);
         connect(tray, &TrayController::openOutputFolderRequested, this, [this] {
-            if (actions_.openOutputFolder) actions_.openOutputFolder();
+            if (actions_.openOutputFolder)
+                actions_.openOutputFolder();
         });
         connect(tray, &TrayController::openSettingsRequested, this, [this] {
-            showMainWindow(); emit settingsPageRequested();
+            showMainWindow();
+            emit settingsPageRequested();
         });
-        connect(tray, &TrayController::notificationClicked, this, [this](NotifyId) { showMainWindow(); });
+        connect(tray, &TrayController::notificationClicked, this, [this](NotifyId id) {
+            showMainWindow();
+            if (id == NotifyId::Saved)
+                emit pageRequested(QStringLiteral("library"));
+            else if (id == NotifyId::SubtitleResult)
+                emit pageRequested(d->subtitleSucceeded ? QStringLiteral("library") : QStringLiteral("settings/subtitle"));
+            else if (id == NotifyId::HotkeyConflict)
+                emit pageRequested(QStringLiteral("settings/hotkeys"));
+        });
     }
     d->applySettings();
     d->refresh();
 }
 
 WindowController::~WindowController() = default;
-bool WindowController::windowShown() const { return d->visibility == WindowVisibility::Shown; }
+bool WindowController::windowShown() const
+{
+    return d->visibility == WindowVisibility::Shown;
+}
 
 void WindowController::attachMainWindow(QQuickWindow *window)
 {
-    if (d->window) disconnect(d->window, nullptr, this, nullptr);
+    if (d->window)
+        disconnect(d->window, nullptr, this, nullptr);
     d->window = window;
     QGuiApplication::setQuitOnLastWindowClosed(false);
     if (!window) {
@@ -202,12 +243,20 @@ void WindowController::attachMainWindow(QQuickWindow *window)
     d->visibilityChanged(false);
 }
 
-void WindowController::startHidden() { if (d->trayUsable()) hideToTray(); }
+void WindowController::startHidden()
+{
+    if (d->trayUsable())
+        hideToTray();
+}
 
 void WindowController::requestClose()
 {
-    if (d->shuttingDown) { QCoreApplication::quit(); return; }
-    if (d->closePending || d->exitPending) return;
+    if (d->shuttingDown) {
+        QCoreApplication::quit();
+        return;
+    }
+    if (d->closePending || d->exitPending)
+        return;
     switch (decideClose(d->trayUsable(), d->settings.closeAction())) {
     case CloseOutcome::AskUser: {
         d->closePending = true;
@@ -216,33 +265,51 @@ void WindowController::requestClose()
         emit closeChoiceRequested(isCapturing(s.state), s.timeText);
         break;
     }
-    case CloseOutcome::HideToTray: hideToTray(); break;
-    case CloseOutcome::Exit: beginExit(); break;
+    case CloseOutcome::HideToTray:
+        hideToTray();
+        break;
+    case CloseOutcome::Exit:
+        beginExit();
+        break;
     }
 }
 
 void WindowController::requestMinimize()
 {
-    if (hideOnMinimize(d->trayUsable(), d->settings.minimizeToTray())) hideToTray();
-    else if (d->window) { d->rememberGeometry(); d->window->showMinimized(); }
+    if (hideOnMinimize(d->trayUsable(), d->settings.minimizeToTray()))
+        hideToTray();
+    else if (d->window)
+    {
+        d->rememberGeometry();
+        d->window->showMinimized();
+    }
 }
 
 void WindowController::resolveCloseChoice(bool toTray, bool remember)
 {
     d->closePending = false;
-    if (remember) d->settings.setCloseActionText(toTray ? QStringLiteral("tray") : QStringLiteral("exit"));
-    if (toTray) hideToTray(); else beginExit();
+    if (remember)
+        d->settings.setCloseActionText(toTray ? QStringLiteral("tray") : QStringLiteral("exit"));
+    if (toTray)
+        hideToTray();
+    else
+        beginExit();
 }
 
 void WindowController::confirmExit()
 {
-    if (!d->exitPending) return;
+    if (!d->exitPending)
+        return;
     d->exitPending = false;
     d->shuttingDown = true;
     // main.cpp's existing aboutToQuit hook drains/stops the scheduler.
     QCoreApplication::quit();
 }
-void WindowController::cancelExit() { d->exitPending = false; d->closePending = false; }
+void WindowController::cancelExit()
+{
+    d->exitPending = false;
+    d->closePending = false;
+}
 
 void WindowController::requestStart()
 {
@@ -256,44 +323,64 @@ void WindowController::requestStart()
     d->exclusion.setCapturing(true); // MUST precede the first synchronous frame grab.
     d->power.setActive(true);
     const bool accepted = actions_.start();
-    if (!accepted) d->startPending = false;
+    if (!accepted) {
+        d->startPending = false;
+        const auto reason = !d->snapshot().captureError.isEmpty() ? d->snapshot().captureError
+            : state == RecState::NoDevice ? QStringLiteral("没有可用的视频来源")
+            : QStringLiteral("无法开始录制");
+        d->notify(NotifyId::StartRejected, QStringLiteral("无法开始录制"), reason, QSystemTrayIcon::Warning);
+        emit startRejected(reason);
+    }
     d->refresh(); // Rollback on rejection; never clear an already active session.
 }
 
 void WindowController::requestStop()
 {
     const auto state = d->snapshot().state;
-    if ((state == RecState::Running || state == RecState::Paused) && actions_.stop) actions_.stop();
+    if ((state == RecState::Running || state == RecState::Paused) && actions_.stop)
+        actions_.stop();
 }
 void WindowController::requestPause()
 {
-    if (d->snapshot().state == RecState::Running && actions_.pause) actions_.pause();
+    if (d->snapshot().state == RecState::Running && actions_.pause)
+        actions_.pause();
 }
 void WindowController::requestResume()
 {
-    if (d->snapshot().state == RecState::Paused && actions_.resume) actions_.resume();
+    if (d->snapshot().state == RecState::Paused && actions_.resume)
+        actions_.resume();
 }
 void WindowController::requestPauseResume()
 {
-    if (d->snapshot().state == RecState::Paused) requestResume(); else requestPause();
+    if (d->snapshot().state == RecState::Paused)
+        requestResume();
+    else
+        requestPause();
 }
 void WindowController::requestStartStop()
 {
     const auto state = d->snapshot().state;
-    if (state == RecState::Idle || state == RecState::Failed) requestStart();
-    else requestStop();
+    if (state == RecState::Idle || state == RecState::Failed || state == RecState::NoDevice)
+        requestStart();
+    else
+        requestStop();
 }
 
 void WindowController::showMainWindow()
 {
-    if (!d->window) return;
+    if (!d->window)
+        return;
     if (!windowShown()) {
         const auto restore = d->restoreVisibility;
         const auto geometry = d->normalGeometry;
-        if (geometry.isValid()) d->window->setGeometry(geometry);
-        if (restore == QWindow::Maximized) d->window->showMaximized();
-        else if (restore == QWindow::FullScreen) d->window->showFullScreen();
-        else d->window->showNormal();
+        if (geometry.isValid())
+            d->window->setGeometry(geometry);
+        if (restore == QWindow::Maximized)
+            d->window->showMaximized();
+        else if (restore == QWindow::FullScreen)
+            d->window->showFullScreen();
+        else
+            d->window->showNormal();
     }
     d->window->raise();
     d->window->requestActivate();
@@ -301,18 +388,28 @@ void WindowController::showMainWindow()
 
 void WindowController::hideToTray()
 {
-    if (!d->window) return;
+    if (!d->window)
+        return;
     d->rememberGeometry();
     if (d->trayUsable()) {
         d->window->hide();
         d->visibilityChanged(); // Also handles --minimized before the first show().
-    } else d->window->showMinimized();
+    } else {
+        d->window->showMinimized();
+    }
 }
-void WindowController::toggleWindow() { if (windowShown()) hideToTray(); else showMainWindow(); }
+void WindowController::toggleWindow()
+{
+    if (windowShown())
+        hideToTray();
+    else
+        showMainWindow();
+}
 
 void WindowController::beginExit()
 {
-    if (d->exitPending) return;
+    if (d->exitPending)
+        return;
     d->closePending = false;
     const auto s = d->snapshot();
     if (!d->shuttingDown && exitNeedsConfirm(s.state, s.subtitleFinishing, d->settings.confirmExit())) {
@@ -327,12 +424,19 @@ void WindowController::beginExit()
 
 void WindowController::onSubtitleResult(bool ok, const QString &pathOrError)
 {
+    d->subtitleSucceeded = ok;
     d->notify(NotifyId::SubtitleResult, ok ? QStringLiteral("字幕已生成") : QStringLiteral("字幕生成失败"),
         ok ? QFileInfo(pathOrError).fileName() : pathOrError,
         ok ? QSystemTrayIcon::Information : QSystemTrayIcon::Warning);
 }
 
 // TODO(H4): N6 text per MINIMIZE_DESIGN §3.5, click -> pageRequested("settings/hotkeys").
-void WindowController::onHotkeyConflicts(const QStringList &) {}
+void WindowController::onHotkeyConflicts(const QStringList &actionTexts)
+{
+    if (actionTexts.isEmpty())
+        return;
+    d->notify(NotifyId::HotkeyConflict, QStringLiteral("快捷键被占用"),
+              actionTexts.join(QStringLiteral("、")) + QStringLiteral(" 已被其他程序占用，可在 设置 › 快捷键 中更换。"), QSystemTrayIcon::Warning);
+}
 
 } // namespace subrec::shell

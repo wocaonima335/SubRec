@@ -22,6 +22,7 @@ public:
     explicit TrayController(QObject *parent = nullptr);
     ~TrayController() override;
     static bool systemTrayAvailable();
+    static bool notificationsSupported();
     void setEnabled(bool enabled);
     void update(const ShellSnapshot &snapshot);
     // WindowController must check notificationAllowed before calling.

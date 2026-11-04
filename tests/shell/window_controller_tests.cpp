@@ -52,7 +52,44 @@ int main(int argc, char **argv)
         window.setGeometry(40, 60, 640, 480);
         window.show(); shell.attachMainWindow(&window);
         CHECK(shell.windowShown()); CHECK(PreviewBridge::instance().previewWanted());
-        if (mode == "start") {
+        if (mode == "batch2") {
+            int rejected = 0;
+            QString route;
+            QObject::connect(&shell, &WindowController::startRejected, [&](const QString &reason) {
+                CHECK(!reason.isEmpty());
+                ++rejected;
+            });
+            QObject::connect(&shell, &WindowController::pageRequested, [&](const QString &page) {
+                route = page;
+            });
+            start = [] { return false; };
+            shell.requestStart();
+            CHECK(rejected == 1);
+            CHECK(tray.property("notificationCount").toInt() == 0);
+            shell.onHotkeyConflicts({"Ctrl+Alt+R"});
+            CHECK(tray.property("notificationCount").toInt() == 0);
+            settings.setTrayHintShown(true);
+            shell.hideToTray();
+            shell.requestStart();
+            CHECK(rejected == 2);
+            CHECK(tray.property("lastNotification").toInt() == static_cast<int>(NotifyId::StartRejected));
+            shell.onHotkeyConflicts({"Ctrl+Alt+R"});
+            CHECK(tray.property("lastNotification").toInt() == static_cast<int>(NotifyId::HotkeyConflict));
+            const int count = tray.property("notificationCount").toInt();
+            recorder.setState("Running");
+            shell.onHotkeyConflicts({"Ctrl+Alt+P"});
+            CHECK(tray.property("notificationCount").toInt() == count);
+            emit tray.notificationClicked(NotifyId::HotkeyConflict);
+            CHECK(route == "settings/hotkeys" && shell.windowShown());
+            emit tray.notificationClicked(NotifyId::Saved);
+            CHECK(route == "library");
+            shell.onSubtitleResult(false, "error");
+            emit tray.notificationClicked(NotifyId::SubtitleResult);
+            CHECK(route == "settings/subtitle");
+            shell.onSubtitleResult(true, "/tmp/file.srt");
+            emit tray.notificationClicked(NotifyId::SubtitleResult);
+            CHECK(route == "library");
+        } else if (mode == "start") {
             start = [&] { return false; };
             shell.requestStart(); CHECK(starts == 1); checkActive(false);
             start = [&] { recorder.setState("Preparing"); recorder.setState("Failed"); return false; };
@@ -143,5 +180,9 @@ int main(int argc, char **argv)
             settings.setExcludeText("always"); CHECK(exclusion.effective() == CaptureExclusion::supported());
         } else CHECK(false);
         return 0;
-    } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
+    } catch (const std::exception &e)
+    {
+        std::cerr << e.what() << '\n';
+        return 1;
+    }
 }
