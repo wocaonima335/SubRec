@@ -15,19 +15,46 @@ AbstractButton {
     property bool round: false
     property bool dangerHover: false
     property color hoverColor: Theme.bgHover
+    // 46×40 window caption buttons (§3.1); 32×32 everywhere else.
+    property bool windowButton: false
 
-    implicitWidth: 32
-    implicitHeight: 32
-    hoverEnabled: true
+    implicitWidth: windowButton ? 46 : 32
+    implicitHeight: windowButton ? 40 : 32
+    hoverEnabled: enabled
 
-    // TODO(U2): states, tooltip, focus ring.
+    opacity: enabled ? 1.0 : 0.4
+
     background: Rectangle {
         radius: root.round ? width / 2 : Theme.radiusSm
-        color: root.hovered ? root.hoverColor : "transparent"
+        color: root.pressed ? (root.dangerHover ? Theme.dangerBg : Theme.bgPressed)
+             : root.hovered ? root.hoverColor
+             : "transparent"
     }
+
     contentItem: AppIcon {
         name: root.iconName
         size: root.iconSize
-        color: root.hovered ? Theme.textPrimary : Theme.textSecondary
+        color: root.dangerHover && root.hovered ? Theme.dangerFg
+             : root.hovered ? Theme.textPrimary
+             : Theme.textSecondary
+    }
+
+    HoverHandler {
+        id: hover
+    }
+    AppToolTip {
+        visible: hover.hovered && root.toolTipText.length > 0 && root.enabled
+        text: root.toolTipText
+    }
+
+    Rectangle {
+        visible: root.activeFocus && root.focusReason === Qt.TabFocusReason
+        anchors.fill: parent
+        anchors.margins: -Theme.space4
+        radius: (root.round ? width / 2 : Theme.radiusSm) + 2
+        color: "transparent"
+        border.width: 2
+        border.color: Theme.focusRing
+        z: -1
     }
 }

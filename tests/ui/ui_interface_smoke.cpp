@@ -31,6 +31,7 @@
 #include "ui/backend/settings_store.h"
 
 #include <QApplication>
+#include <QFile>
 #include <QMetaMethod>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
@@ -220,6 +221,37 @@ bool hasMethod(const QObject *object, const char *name)
     return false;
 }
 
+// U2 acceptance (UI_BATCH_PLAN.md §2.2): the component gallery must load offscreen and is
+// the PC3 screenshot reference. Additive check only — no contract change.
+void checkGallery()
+{
+    const QString galleryPath = QCoreApplication::applicationDirPath()
+        + QStringLiteral("/../tests/ui/gallery/ComponentGallery.qml");
+    if (!QFile::exists(galleryPath)) {
+        check(false, "ComponentGallery.qml found next to the sources");
+        return;
+    }
+    QQmlApplicationEngine engine;
+    engine.load(QUrl::fromLocalFile(galleryPath));
+    check(engine.rootObjects().size() == 1, "ComponentGallery loads offscreen");
+    if (engine.rootObjects().isEmpty()) return;
+    const QList<QObject *> all = engine.rootObjects().first()->findChildren<QObject *>();
+    // Instantiated component set: one representative of every U2 group (recursive: the
+    // dialog bodies and delegates hold some of them).
+    for (const char *type : {"AppButton", "IconButton", "AppTextField", "AppComboBox", "AppSwitch",
+                             "SegmentedControl", "AppCheckBox", "AppRadioButton", "AppProgressBar",
+                             "Card", "NavItem", "InlineAlert", "StatusPill", "SubtitleBadge",
+                             "LevelMeter", "RecordMainButton", "RecordPauseButton", "EmptyState",
+                             "FormGroupTitle", "FormRow", "AppDialog", "ToastHost", "Spinner",
+                             "AppIcon"}) {
+        bool found = false;
+        for (QObject *child : all)
+            found = found || QString::fromLatin1(child->metaObject()->className()).contains(type);
+        if (!found) std::fprintf(stderr, "FAIL: gallery has no %s\n", type);
+        check(found, "gallery contains one of every U2 component");
+    }
+}
+
 void checkLoad()
 {
     using namespace subrec::ui;
@@ -276,6 +308,7 @@ int main(int argc, char **argv)
     checkContracts();
     checkDefaults();
     checkLoad();
+    checkGallery();
 
     if (g_failures == 0) std::printf("ui_interface_smoke: all checks passed\n");
     return g_failures == 0 ? 0 : 1;

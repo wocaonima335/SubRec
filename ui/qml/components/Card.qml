@@ -14,10 +14,29 @@ Rectangle {
     border.width: 1
     border.color: Theme.borderDefault
 
-    // TODO(U2): title row.
+    Text {
+        id: titleText
+        visible: root.title.length > 0
+        text: root.title
+        font: Theme.h2Font
+        color: Theme.textPrimary
+        anchors.top: parent.top
+        anchors.topMargin: root.padding
+        anchors.left: parent.left
+        anchors.leftMargin: root.padding
+        anchors.right: parent.right
+        anchors.rightMargin: root.padding
+    }
+
     Item {
         id: body
-        anchors.fill: parent
-        anchors.margins: root.padding
+        anchors.top: root.title.length > 0 ? titleText.bottom : parent.top
+        anchors.topMargin: root.title.length > 0 ? Theme.space12 : root.padding
+        anchors.left: parent.left
+        anchors.leftMargin: root.padding
+        anchors.right: parent.right
+        anchors.rightMargin: root.padding
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: root.padding
     }
 }

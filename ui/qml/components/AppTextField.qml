@@ -17,18 +17,85 @@ TextField {
     property bool locked: false
     property string suffixText: ""
 
-    implicitHeight: Theme.controlHeight
+    implicitHeight: Theme.controlHeight + (errorText.length > 0 ? 20 : 0)
+    implicitWidth: 240
     readOnly: locked
     font: mono ? Theme.monoSmallFont : Theme.bodyFont
-    color: Theme.textPrimary
+    color: locked ? Theme.textSecondary : Theme.textPrimary
     placeholderTextColor: Theme.textTertiary
+    selectByMouse: true
+    leftPadding: leadingIconName !== "" ? 36 : Theme.space12
+    rightPadding: suffixText !== "" ? suffixItem.implicitWidth + Theme.space8 : Theme.space12
+    topPadding: 0
+    bottomPadding: 0
+    verticalAlignment: TextInput.AlignVCenter
 
-    // TODO(U2): error line, icon, suffix, hover/focus borders, locked tooltip.
+    opacity: enabled ? 1.0 : 0.4
+
+    // Paths elide in the middle while not being edited (§2.5.2); TextField has no elide,
+    // so show the elided rendering as a overlay text while unfocused.
+    Text {
+        id: elideOverlay
+        visible: root.mono && !root.activeFocus && root.text.length > 0
+        anchors.fill: parent
+        anchors.leftMargin: root.leftPadding
+        anchors.rightMargin: root.rightPadding
+        verticalAlignment: Text.AlignVCenter
+        font: root.font
+        color: root.color
+        text: root.text
+        elide: Text.ElideMiddle
+    }
+
     background: Rectangle {
         radius: Theme.radiusSm
-        color: Theme.bgSurface2
+        color: root.locked ? Theme.bgApp : Theme.bgSurface2
         border.width: 1
         border.color: root.errorText.length > 0 ? Theme.dangerFg
-                    : root.activeFocus ? Theme.accentDefault : Theme.borderDefault
+                    : !root.locked && root.activeFocus ? Theme.accentDefault
+                    : !root.locked && root.hovered ? Theme.borderStrong
+                    : Theme.borderDefault
+    }
+
+    AppIcon {
+        visible: root.leadingIconName.length > 0
+        anchors.left: parent.left
+        anchors.leftMargin: Theme.space12
+        anchors.verticalCenter: parent.verticalCenter
+        name: root.leadingIconName
+        size: 16
+        color: Theme.textTertiary
+    }
+
+    Text {
+        id: suffixItem
+        visible: root.suffixText.length > 0
+        anchors.right: parent.right
+        anchors.rightMargin: Theme.space12
+        anchors.verticalCenter: parent.verticalCenter
+        text: root.suffixText
+        font: Theme.bodyFont
+        color: Theme.textTertiary
+    }
+
+    // Error message 4 px below the 36-px field (§2.5.2); the control grows by 20 px.
+    Text {
+        id: errorLine
+        visible: root.errorText.length > 0
+        y: Theme.controlHeight + Theme.space4
+        anchors.left: parent.left
+        width: root.width
+        text: root.errorText
+        font: Theme.captionFont
+        color: Theme.dangerFg
+        elide: Text.ElideRight
+    }
+
+    HoverHandler {
+        id: hover
+    }
+    AppToolTip {
+        visible: root.locked && hover.hovered
+        text: qsTr("录制中不能修改")
     }
 }

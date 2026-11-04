@@ -20,14 +20,70 @@ Item {
     default property alias control: controlSlot.data
 
     implicitWidth: 768
-    implicitHeight: wide ? Theme.formWideRowHeight : Theme.formRowHeight
+    // §3.4: 64 (98 wide) + 20 when the extra line shows.
+    implicitHeight: (wide ? Theme.formWideRowHeight : Theme.formRowHeight)
+                    + (extraText.length > 0 ? 20 : 0)
 
-    // TODO(U2): title/description texts, control placement, extra line, divider.
+    readonly property color __extraColor: extraKind === "warning" ? Theme.warningFg
+                                         : extraKind === "danger" ? Theme.dangerFg
+                                         : Theme.textSecondary
+
+    Text {
+        id: titleText
+        x: 0
+        y: Theme.space12
+        width: root.wide ? parent.width : 440
+        text: root.title
+        font: Theme.bodyStrongFont
+        color: Theme.textPrimary
+        elide: Text.ElideRight
+    }
+
+    Text {
+        id: descText
+        visible: root.description.length > 0
+        x: 0
+        y: Theme.space12 + 22
+        width: root.wide ? parent.width : 440
+        height: root.wide ? 32 : 16
+        text: root.description
+        font: Theme.captionFont
+        color: root.descriptionKind === "warning" ? Theme.warningFg : Theme.textSecondary
+        wrapMode: Text.WordWrap
+            // §3.4: descriptions are one line (two for wide rows / C6's long note).
+        maximumLineCount: root.wide ? 2 : 1
+        elide: Text.ElideRight
+    }
+
+    // Extra line under the texts (C6 "当前屏幕采集方式下此项无效" etc.).
+    Text {
+        visible: root.extraText.length > 0
+        x: 0
+        y: root.wide ? Theme.formWideRowHeight - 2 : Theme.formRowHeight - 4
+        width: root.wide ? parent.width : 440
+        text: root.extraText
+        font: Theme.captionFont
+        color: root.__extraColor
+        elide: Text.ElideRight
+    }
+
     Item {
         id: controlSlot
+
+        // Wide rows: the control spans below the texts; otherwise right-aligned,
+        // vertically centred (§3.4).
+        x: root.wide ? 0 : parent.width - childrenRect.width
+        y: root.wide ? 58 : (Theme.formRowHeight - Math.max(childrenRect.height, 0)) / 2
+        width: root.wide ? parent.width : Math.max(childrenRect.width, 1)
+        height: root.wide ? 36 : Math.max(childrenRect.height, 1)
+    }
+
+    Rectangle {
+        visible: root.showDivider
+        anchors.left: parent.left
         anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
-        width: childrenRect.width
-        height: childrenRect.height
+        anchors.bottom: parent.bottom
+        height: 1
+        color: Theme.borderDefault
     }
 }
