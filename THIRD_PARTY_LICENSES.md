@@ -15,7 +15,7 @@ SubRec (字录) is released under **GPL-3.0** ([LICENSE](LICENSE)); the maintain
 > 2. 商业版本需要：换成**不含 x264 的 LGPL 构建**（`packaging/ffmpeg` 的 `lgpl` 变体，尚未运行；还要先在 `encoder/ffvencoder.cpp` 里加入 `h264_mf` 作软件编码回退并测试），或为 x264 取得商业授权；同时需处理 H.264/AAC 的专利池问题（非版权问题）。
 > 3. Qt 6 各模块均可在 GPLv3 项目中使用；对商业版本需**动态链接 + 遵守 LGPLv3**，或购买 Qt 商业授权。
 > 4. CLA **不能**覆盖任何第三方材料，包括 `reference/ffmpeg-fftools/ffmpeg_mux.c`（见 §3）。
-> 5. 本项目代码由维护者本人及 AI 工具编写；`icons/*.png` 由维护者本人制作，按 GPL-3.0 发布。仓库中唯一的整文件第三方拷贝是 `reference/ffmpeg-fftools/ffmpeg_mux.c`（FFmpeg，**LGPL-2.1-or-later**，保留原版权头，不参与编译）。拷贝检测是启发式的，结论有局限，见 §6。
+> 5. 本项目代码由维护者本人及 AI 工具编写；`icons/*.png` 由维护者本人制作，按 GPL-3.0 发布。新界面的 `ui/icons/*.svg` 来自 Lucide（ISC，见 §3）。除这些图标外，仓库中唯一的整文件第三方拷贝是 `reference/ffmpeg-fftools/ffmpeg_mux.c`（FFmpeg，**LGPL-2.1-or-later**，保留原版权头，不参与编译）。拷贝检测是启发式的，结论有局限，见 §6。
 
 ---
 
@@ -122,6 +122,7 @@ The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.s
 | **screen-capture-recorder / virtual-audio-capturer**（第三方 DirectShow 组件） | `capture/dshow_capture_backend.cpp`、`recorder/ffrecorder_p.h` 以设备名 `video=screen-capture-recorder`、`audio=virtual-audio-capturer` 引用 | 未验证 [需核查上游许可证] | **不在仓库内**；用户自行安装。README 已说明。请勿在未核对许可证前把它们打进安装包。 |
 | **`reference/ffmpeg-fftools/ffmpeg_mux.c`** | 892 行；FFmpeg `fftools/ffmpeg_mux.c` 的整文件原样拷贝，**逐字节未改**；不参与编译（任何 CMake 目标都未引用）；说明见同目录 [`NOTICE.md`](reference/ffmpeg-fftools/NOTICE.md)。**与 FFmpeg n8.0.3（commit `8ae0b349`）的 `fftools/ffmpeg_mux.c` 逐字节相同**（已用 `diff` 核对，0 差异）；**未**与其它版本（如最初开发所用的快照 `37064b2d16`）比对，所以不知道它最初拷自哪个版本——相同内容可能也存在于相邻版本 | **LGPL-2.1-or-later**，版权人为 FFmpeg 项目贡献者；文件头 “This file is part of FFmpeg … GNU Lesser General Public License … version 2.1 or later” | **不是本项目作者的代码。** 原版权头保持不变；许可证文本见 [`LICENSES/LGPL-2.1.txt`](LICENSES/LGPL-2.1.txt)；仅作设计对照参考；商业版分发包不要包含它；[`CLA.md`](CLA.md) 不覆盖它，不接受对它的修改性贡献。LGPL-2.1-or-later 允许按 GPL 条款再分发，放在 GPLv3 仓库没有文件层面的冲突。它引用的 `ffmpeg.h`、`ffmpeg_mux.h`、`ffmpeg_utils.h`、`sync_queue.h` 是 FFmpeg 内部头，所以也无法单独编译。 |
 | 图标 `icons/*.png`（12 个） | `res.qrc` 嵌入可执行文件 | **本项目自有作品**，GPL-3.0（由项目维护者本人制作） | 不是第三方材料；和代码一样适用 GPL-3.0 与 `CLA.md`。 |
+| **Lucide 图标** `ui/icons/*.svg`（36 个，新界面） | `ui/files_zcode.cmake` 登记为 `SubRec.Ui` 模块资源，仅 `SUBREC_BUILD_NEW_UI=ON` 的构建嵌入可执行文件；名称与路径数据取自 Lucide（<https://lucide.dev>，<https://github.com/lucide-icons/lucide>），`stroke-width` 由上游的 2 改为 1.5 | **ISC**（Lucide Contributors）；其中源自 Feather 的部分为 **MIT**（Cole Bemis）[知识，发布前核对上游]。全文见 [`LICENSES/ISC-Lucide.txt`](LICENSES/ISC-Lucide.txt) | **第三方材料。** 上游版本**未记录**：图标在无网络环境中录入，没有对应的 release/commit，SVG 内也不带版权头；发布前须对照某个固定的 Lucide release 逐个核对并在此写明版本号。ISC/MIT 均为宽松许可，与 GPL-3.0 及商业版本兼容；分发时附上许可全文即可（ISC 要求“版权与许可声明出现在所有副本中”）。 |
 | 字体 | QML 指定 `Segoe UI` | Microsoft 系统字体，未随包分发 | 不随包分发则无问题；不要把字体文件加入发行包。 |
 
 ## 4. 构建工具与 CI（不随成品分发）
@@ -136,7 +137,8 @@ CMake（BSD-3）、Ninja（Apache-2.0）、MinGW-w64 GCC（GPL，有 Runtime Exc
 4. 为 Qt 在商业版本中的 LGPL 合规（动态链接、可替换、声明）或商业授权做决定。
 5. 核查 `screen-capture-recorder` / `virtual-audio-capturer` 的许可证后再决定是否在文档中推荐或打包。
 6. 所有 [知识] 标记项以上游当前许可证为准，逐项核对后再对外声明。
-7. 在最终仓库目录上运行免费扫描器（见 §6 末尾），并由维护者确认“是否曾整体粘贴过开源项目的文件/函数”。
+7. Lucide 图标：选定一个上游 release，逐个核对 `ui/icons/*.svg`，在 §3 写明版本号并按该版本更新 `LICENSES/ISC-Lucide.txt` 的版权年份；新界面构建进入发行包时，把 `LICENSES/ISC-Lucide.txt` 一并放进包内（`windows-build.yml` 目前只复制本文件）。
+8. 在最终仓库目录上运行免费扫描器（见 §6 末尾），并由维护者确认“是否曾整体粘贴过开源项目的文件/函数”。
 
 ## 6. 整块拷贝检测 / Wholesale-copy check
 
@@ -147,7 +149,7 @@ CMake（BSD-3）、Ninja（Apache-2.0）、MinGW-w64 GCC（GPL，有 Runtime Exc
 | `reference/ffmpeg-fftools/ffmpeg_mux.c`（892 行） | **整文件原样拷贝**自 FFmpeg `fftools/ffmpeg_mux.c`，保留原头，见 §3。不参与编译。 |
 | 第一方会被编译的源码（`capture decoder demuxer encoder event filter muxer opengl queue recorder render resampler thread timer qml shaderSource tests tools main.cpp`） | 无外来版权/许可证头；与 `ffmpeg_mux.c`、FFmpeg 头文件（4.3 与 2025 版）及 OpenCV 头文件按规范化行（≥45 字符）比对 **0 行重叠**；12 词元滑窗只命中通用写法（`if (ret < 0) return ret;`、`av_packet_unref/av_frame_free` 调用序列）；无 fftools 内部类型/标识符；无超长行或大型数值表。**未发现整块拷贝。** |
 | ffplay “参考”注释（`recorder/ffaudiosampler.{h,cpp}`、`qml/AudioVisualizer.qml`） | 实现是环形缓冲 + RMS + dB + QML Canvas，属算法思路参考，**未见 ffplay 代码粘贴**。风险低。ffplay 为 LGPL-2.1+。 |
-| 着色器、图标 | `shaderSource/source.{frag,vert}` 是常见 YUV→RGB 写法，无外来头；`icons/*.png` 为维护者本人制作（§3）。 |
+| 着色器、图标 | `shaderSource/source.{frag,vert}` 是常见 YUV→RGB 写法，无外来头；`icons/*.png` 为维护者本人制作（§3）；`ui/icons/*.svg` 是 Lucide 图标（ISC，§3），属已登记的第三方材料。 |
 
 **局限：**
 

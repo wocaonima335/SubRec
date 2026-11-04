@@ -225,8 +225,10 @@ bool hasMethod(const QObject *object, const char *name)
 // the PC3 screenshot reference. Additive check only — no contract change.
 void checkGallery()
 {
-    const QString galleryPath = QCoreApplication::applicationDirPath()
-        + QStringLiteral("/../tests/ui/gallery/ComponentGallery.qml");
+    // Source path injected by tests/ui/CMakeLists.txt, so the check does not depend on
+    // where the build directory sits relative to the sources.
+    const QString galleryPath = QStringLiteral(SUBREC_UI_SOURCE_DIR)
+        + QStringLiteral("/gallery/ComponentGallery.qml");
     if (!QFile::exists(galleryPath)) {
         check(false, "ComponentGallery.qml found next to the sources");
         return;

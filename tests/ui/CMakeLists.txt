@@ -55,6 +55,9 @@ add_subdirectory("${subrec_root}/ui" ui_module_build)
 
 qt_add_executable(ui_interface_smoke ui_interface_smoke.cpp)
 target_compile_features(ui_interface_smoke PRIVATE cxx_std_17)
+# checkGallery() loads tests/ui/gallery/ComponentGallery.qml from the source tree.
+target_compile_definitions(ui_interface_smoke PRIVATE
+    SUBREC_UI_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(ui_interface_smoke PRIVATE
     ui_module ui_moduleplugin ui_test_shell_batch2 Qt6::Quick Qt6::Widgets)
 add_test(NAME ui_interface_smoke COMMAND ui_interface_smoke)
