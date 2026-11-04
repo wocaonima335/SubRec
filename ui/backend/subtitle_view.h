@@ -14,6 +14,8 @@ QT_END_NAMESPACE
 
 namespace subrec::ui {
 
+class ModelCatalog;
+
 // Module U8. GUI thread. QML singleton `SubtitleView`: everything P1 (D panel subtitle
 // section, control-bar SubtitleBadge), P2 (subtitle column) and P3-4 read about AI subtitles.
 //
@@ -75,6 +77,10 @@ public:
     // reloadSettings(), called after any asr/* write. Either may be null/empty.
     void attach(QObject *service, std::function<void()> reloadSettings);
 
+    // Optional model/capture inputs for INT-A; no subtitle service is required at startup.
+    void setModelCatalog(ModelCatalog *catalog);
+    void setCapturing(bool capturing);
+
     bool serviceAttached() const;
     bool available() const;
     QString state() const;
@@ -114,8 +120,13 @@ signals:
     void subtitleDone(const QString &srtPath);
     void subtitleFailed(const QString &error);
 
+private slots:
+    void onServiceChanged();
 private:
     QPointer<QObject> service_;
+    QPointer<ModelCatalog> catalog_;
+    bool capturing_ = false;
+    QString previousState_;
     std::function<void()> reloadSettings_;
 };
 

@@ -6,6 +6,7 @@
 #include <QPointer>
 #include <QString>
 #include <QVariantMap>
+#include <QVector>
 #include <QtQml/qqmlregistration.h>
 
 QT_BEGIN_NAMESPACE
@@ -57,6 +58,10 @@ public:
 
 signals:
     void countChanged();
+
+private:
+    QVector<QVariantMap> rows_;
+    friend class ModelCatalog;
 };
 
 // Module U8. GUI thread. QML singleton `ModelCatalog`: model download/licence/delete actions.
@@ -82,6 +87,9 @@ public:
 
     void attach(QObject *modelManager); // borrowed; nullptr detaches
 
+    // Call after changing asr/modelId so selection roles update immediately.
+    void refreshSelection();
+
     ModelListModel *models() const;
     bool selectedModelReady() const;
     bool anyDownloading() const;
@@ -101,6 +109,9 @@ signals:
     void licenseRequired(const QString &modelId); // open D3 in accept mode
     void downloadFinished(const QString &modelId); // T5
     void downloadFailed(const QString &modelId, const QString &error); // T6, M5
+
+private slots:
+    void refreshCatalog();
 
 private:
     ModelListModel *models_ = nullptr; // child, never null

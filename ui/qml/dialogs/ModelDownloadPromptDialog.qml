@@ -12,11 +12,27 @@ AppDialog {
     secondaryText: "稍后"
 
     function openFor(id: string) {
-        root.modelId = id
-        open()
+        root.modelId = id;
+        open();
     }
 
     // TODO(U8): body/note texts with ModelCatalog.modelInfo(modelId).sizeText.
-    onAccepted: { close(); ModelCatalog.requestDownload(modelId) }
+    Column {
+        width: parent.width
+        spacing: Theme.space8
+        Text {
+            text: "需要下载模型才能启用 AI 字幕。"
+            color: Theme.textPrimary
+        }
+        Text {
+            text: String(ModelCatalog.modelInfo(root.modelId).sizeText || "下载大小以模型清单为准")
+            color: Theme.textSecondary
+        }
+    }
+
+    onAccepted: {
+        close();
+        ModelCatalog.requestDownload(modelId);
+    }
     onRejected: close()
 }
