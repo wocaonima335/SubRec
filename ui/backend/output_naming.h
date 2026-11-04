@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QString>
+#include <QUrl>
 #include <QtQml/qqmlregistration.h>
 
 QT_BEGIN_NAMESPACE
@@ -76,6 +77,10 @@ signals:
 
 private:
     QPointer<QObject> recorder_;
+    QString templateError_;
+    bool capturing() const;
+public:
+    Q_INVOKABLE void setOutputFolderUrl(const QUrl &url);
 };
 
 } // namespace subrec::ui
