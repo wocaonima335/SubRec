@@ -106,11 +106,38 @@ add_subdirectory(opengl)
 add_subdirectory(shell)
 if(SUBREC_BUILD_NEW_UI)
     add_subdirectory(ui)
+    execute_process(COMMAND git rev-parse --short HEAD
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE subrec_ui_git_hash OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    target_compile_definitions(ui_module PRIVATE
+        SUBREC_VERSION="${PROJECT_VERSION}" SUBREC_GIT_HASH="${subrec_ui_git_hash}")
 endif()
 
 if(SUBREC_BUILD_LIFECYCLE_TESTS)
     enable_testing()
     add_subdirectory(tests/shell)
+    if(SUBREC_BUILD_NEW_UI)
+        # The standalone UI harness owns engine doubles named shell_module and FFRecorder.
+        # Build it separately so those doubles never share the production engine's ABI.
+        include(ExternalProject)
+        set(subrec_ui_test_dir "${CMAKE_CURRENT_BINARY_DIR}/ui-tests")
+        ExternalProject_Add(subrec_ui_test_build
+            SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/ui"
+            BINARY_DIR "${subrec_ui_test_dir}"
+            CMAKE_GENERATOR "${CMAKE_GENERATOR}"
+            CMAKE_ARGS
+                "-DCMAKE_PREFIX_PATH:PATH=${CMAKE_PREFIX_PATH}"
+                "-DQt6_DIR:PATH=${Qt6_DIR}"
+                "-DCMAKE_BUILD_TYPE:STRING=${CMAKE_BUILD_TYPE}"
+                "-DCMAKE_CXX_COMPILER:FILEPATH=${CMAKE_CXX_COMPILER}"
+                "-DCMAKE_CXX_FLAGS:STRING=${CMAKE_CXX_FLAGS}"
+            BUILD_ALWAYS TRUE
+            INSTALL_COMMAND "")
+        add_test(NAME subrec_ui COMMAND "${CMAKE_CTEST_COMMAND}"
+            --test-dir "${subrec_ui_test_dir}" --output-on-failure)
+        set_tests_properties(subrec_ui PROPERTIES LABELS "ui" TIMEOUT 180
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
+    endif()
 endif()
 
 if(SUBREC_BUILD_LIFECYCLE_TESTS AND WIN32)
@@ -147,6 +174,10 @@ set_target_properties(appSubRec PROPERTIES
 
 target_include_directories(appSubRec PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
+if(SUBREC_BUILD_NEW_UI)
+    target_compile_definitions(appSubRec PRIVATE SUBREC_HAS_NEW_UI=1)
+endif()
+
 # 链接库（包含子模块）
 target_link_libraries(appSubRec
     PRIVATE
@@ -169,6 +200,10 @@ target_link_libraries(appSubRec
         recorder_module
         encoder_module
 )
+
+if(SUBREC_BUILD_NEW_UI)
+    target_link_libraries(appSubRec PRIVATE ui_module ui_moduleplugin)
+endif()
 
 # 复制 FFmpeg DLL 文件到输出目录
 file(GLOB FFMPEG_DLLS CONFIGURE_DEPENDS "${FFMPEG_DLL_DIR}/*.dll")
@@ -223,4 +258,8 @@ if(MINGW_RUNTIME_DLLS)
     install(FILES ${MINGW_RUNTIME_DLLS}
         DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
+endif()
+
+if(SUBREC_BUILD_NEW_UI AND SUBREC_BUILD_LIFECYCLE_TESTS AND TARGET subrec_tests)
+    add_dependencies(subrec_tests subrec_ui_test_build)
 endif()

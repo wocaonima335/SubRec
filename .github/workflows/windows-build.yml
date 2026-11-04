@@ -193,6 +193,19 @@ jobs:
           -LE "^(device|needs_ffmpeg_test_components|needs_powershell)$"
           --output-on-failure --timeout 180 --no-tests=error
 
+      - name: Configure new UI integration
+        shell: pwsh
+        run: >
+          cmake -S . -B build/ci-new-ui -G Ninja
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+          -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
+          -DSUBREC_BUILD_NEW_UI=ON
+          -DSUBREC_BUILD_LIFECYCLE_TESTS=OFF
+
+      - name: Build new UI integration
+        run: cmake --build build/ci-new-ui --target appSubRec --parallel
+
       - name: Deploy (windeployqt)
         shell: pwsh
         run: |

@@ -1,0 +1,36 @@
+name: ui-tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libegl1-mesa-dev
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+      - name: Configure
+        run: cmake -S tests/ui -B build-ui -G Ninja -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror"
+      - name: Build
+        run: cmake --build build-ui --parallel 2
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QSG_RHI_BACKEND: software
+        run: ctest --test-dir build-ui --output-on-failure --no-tests=error
+      - name: QML lint
+        shell: bash
+        run: |
+          set -o pipefail
+          cmake --build build-ui --target all_qmllint 2>&1 | tee /tmp/ui-qmllint.log
+          if rg 'Warning:|Error:' /tmp/ui-qmllint.log; then exit 1; fi
