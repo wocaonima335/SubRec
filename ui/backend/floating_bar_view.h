@@ -6,8 +6,10 @@
 #include <QPointer>
 #include <QQuickWindow> // complete type: attachWindow() is Q_INVOKABLE
 #include <QString>
+#include <QTimer>
 #include <QtQml/qqmlregistration.h>
 #include <functional>
+#include <memory>
 
 QT_BEGIN_NAMESPACE
 class QQmlEngine;
@@ -91,6 +93,12 @@ signals:
 private:
     QPointer<shell::FloatingBarPolicy> policy_;
     Actions actions_;
+    QPointer<QQuickWindow> bar_;
+    std::unique_ptr<QTimer> hintTimer_; // FB-H: 8 s auto-dismiss
+    QString elapsedText_;
+    QString captureError_;
+    QString subtitleIndicator_;
+    int barWidthFallback() const;
 };
 
 } // namespace subrec::ui

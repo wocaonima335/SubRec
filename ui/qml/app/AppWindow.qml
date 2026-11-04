@@ -232,7 +232,11 @@ ApplicationWindow {
         anchors.fill: parent
     }
 
+    // A Window inside the window's default property is legal and the standard pattern for
+    // secondary windows; qmllint's type check flags it, so disable that category here.
+    // qmllint disable incompatible-type
     FloatingBar {}
+    // qmllint enable incompatible-type
 
     WindowResizeFrame {
         anchors.fill: parent
