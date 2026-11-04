@@ -1074,6 +1074,15 @@ int main(int argc, char *argv[])
                          FFRecorder::getInstance().property("audioSampler").value<QObject *>());
                    });
   recordingLibrary.setFolder(outputNaming.outputDir());
+  // U8: catalog first — setModelCatalog() is ignored while settings are locked, which
+  // includes capturing. Then mirror the recorder's capturing state (uiStateChanged is
+  // the NOTIFY of RecorderView::capturing) so the asr/* settings lock while recording.
+  subtitleView.setModelCatalog(&modelCatalog);
+  subtitleView.setCapturing(recorderView.capturing());
+  QObject::connect(&recorderView, &subrec::ui::RecorderView::uiStateChanged, &subtitleView,
+                   [&recorderView, &subtitleView] {
+                     subtitleView.setCapturing(recorderView.capturing());
+                   });
 
   // Batch 2: no hotkeys in AutoTest (§3.8); the floating bar follows the shell snapshot;
   // the taskbar overlay mirrors the tray icon kind.
