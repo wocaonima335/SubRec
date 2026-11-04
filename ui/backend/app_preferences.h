@@ -47,6 +47,11 @@ public:
     // a value actually changed.
     Q_INVOKABLE void saveWindowState(const QRect &normalGeometry, bool maximized);
 
+    // R3 helper: returns `candidate` unchanged when it is at least partially on a
+    // connected screen (so restoring it keeps the window reachable); otherwise an invalid
+    // rect and the caller falls back to the default 1280x800 placement.
+    Q_INVOKABLE QRect clampedGeometry(const QRect &candidate) const;
+
 signals:
     void changed();
 };

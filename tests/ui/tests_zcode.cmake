@@ -18,3 +18,6 @@ subrec_ui_add_zcode_test(global_hotkeys_tests)
 
 # TB1
 subrec_ui_add_zcode_test(taskbar_overlay_tests)
+
+# U4
+subrec_ui_add_zcode_test(app_preferences_tests)

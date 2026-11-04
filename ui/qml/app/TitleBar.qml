@@ -19,10 +19,98 @@ Rectangle {
     implicitHeight: Theme.titleBarHeight
     color: Theme.bgApp
 
-    // TODO(U4): logo + name, drag/double-click, mini indicator, min/max/close IconButtons
-    // (46×40, close hover Theme.closeButtonHover), bottom divider.
+    // The whole bar drags; buttons sit above and consume their own clicks.
+    MouseArea {
+        anchors.fill: parent
+        onPressed: (mouse) => {
+            if (root.window)
+                root.window.startSystemMove()
+            mouse.accepted = true
+        }
+        onDoubleClicked: root.maximizeToggled()
+    }
+
     BrandLogo {
-        x: 16
+        x: Theme.space16
         anchors.verticalCenter: parent.verticalCenter
+    }
+
+    Item {
+        visible: !root.compact
+        x: 44
+        width: appNameRow.implicitWidth
+        height: 20
+        anchors.verticalCenter: parent.verticalCenter
+
+        Row {
+            id: appNameRow
+            spacing: Theme.space4
+
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("字录")
+                font: Theme.bodyStrongFont
+                color: Theme.textPrimary
+            }
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("SubRec")
+                font: Theme.bodyFont
+                color: Theme.textTertiary
+            }
+        }
+    }
+
+    // §3.1 mini indicator: only while capturing and not on the record page; click -> P1.
+    StatusPill {
+        anchors.centerIn: parent
+        visible: RecorderView.capturing && Navigation.page !== "record"
+        uiState: RecorderView.uiState === "paused" ? "paused" : "running"
+        text: (RecorderView.uiState === "paused" ? qsTr("已暂停 ") : qsTr("录制中 "))
+              + RecorderView.elapsedText
+        clickable: true
+        onClicked: Navigation.open("record")
+    }
+
+    Row {
+        anchors.right: parent.right
+        anchors.top: parent.top
+        height: parent.height
+        spacing: 0
+
+        IconButton {
+            windowButton: true
+            iconName: "minus"
+            iconSize: 16
+            anchors.verticalCenter: parent.verticalCenter
+            toolTipText: ShellView.minimizeToTray ? qsTr("最小化到托盘") : qsTr("最小化")
+            onClicked: root.minimizeClicked()
+        }
+        IconButton {
+            windowButton: true
+            iconName: root.window && root.window.visibility === Window.Maximized
+                       ? "minimize-2" : "maximize-2"
+            iconSize: 16
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: root.maximizeToggled()
+        }
+        IconButton {
+            windowButton: true
+            iconName: "x"
+            iconSize: 16
+            hoverColor: Theme.closeButtonHover
+            anchors.verticalCenter: parent.verticalCenter
+            toolTipText: ShellView.closeAction === "tray" ? qsTr("关闭（最小化到托盘）")
+                        : ShellView.closeAction === "exit" ? qsTr("退出字录") : qsTr("关闭")
+            onClicked: root.closeClicked()
+        }
+    }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: 1
+        color: Theme.borderDefault
     }
 }

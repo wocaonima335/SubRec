@@ -11,31 +11,55 @@ Rectangle {
     implicitWidth: collapsed ? Theme.navCollapsedWidth : Theme.navWidth
     color: Theme.bgApp
 
-    // TODO(U4): three NavItems, dot colour, version text, right divider.
+    readonly property color __dotColor: RecorderView.uiState === "running" ? Theme.recordDefault
+                                      : RecorderView.uiState === "paused" ? Theme.warningFg
+                                      : "transparent"
+
     Column {
-        x: 12
-        y: 16
-        spacing: 4
+        x: Theme.space12
+        y: Theme.space16
+        spacing: Theme.space4
         NavItem {
-            text: "录制"
+            text: qsTr("录制")
             iconName: "video"
             collapsed: root.collapsed
             selected: Navigation.page === "record"
+            dotColor: root.__dotColor
             onClicked: Navigation.open("record")
         }
         NavItem {
-            text: "录像库"
+            text: qsTr("录像库")
             iconName: "library"
             collapsed: root.collapsed
             selected: Navigation.page === "library"
             onClicked: Navigation.open("library")
         }
         NavItem {
-            text: "设置"
+            text: qsTr("设置")
             iconName: "settings"
             collapsed: root.collapsed
             selected: Navigation.page === "settings"
             onClicked: Navigation.open("settings")
         }
+    }
+
+    // §3.1 version line at the bottom.
+    Text {
+        visible: !root.collapsed
+        anchors.left: parent.left
+        anchors.leftMargin: Theme.space24
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: Theme.space16
+        text: AppInfo.versionText
+        font: Theme.captionFont
+        color: Theme.textTertiary
+    }
+
+    Rectangle {
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        width: 1
+        color: Theme.borderDefault
     }
 }
