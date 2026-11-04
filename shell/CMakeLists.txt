@@ -17,3 +17,12 @@ target_link_libraries(shell_module PUBLIC Qt6::Widgets Qt6::Network Qt6::Quick)
 if(WIN32)
     target_link_libraries(shell_module PRIVATE user32)
 endif()
+
+# Minimize batch 2 (docs/UI_BATCH_PLAN.md: H1, H2, FB1, TB1). Stubs until those modules land.
+if(SUBREC_BUILD_NEW_UI)
+    target_sources(shell_module PRIVATE
+        key_chord.h key_chord.cpp
+        global_hotkeys.h global_hotkeys.cpp
+        floating_bar_policy.h floating_bar_policy.cpp
+        taskbar_overlay.h taskbar_overlay.cpp)
+endif()

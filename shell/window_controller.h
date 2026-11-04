@@ -3,6 +3,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <functional>
 #include <memory>
 
@@ -108,12 +109,26 @@ public slots:
     void toggleWindow();
     void beginExit(); // Show window before D1, or quit if no confirmation needed.
     void onSubtitleResult(bool ok, const QString &pathOrError); // N3, unconnected in batch 1.
+    // Batch 2 (module H4). Stub until H4 lands. N6: main.cpp passes
+    // HotkeyController::startupConflicts() display texts once after attach; empty list =
+    // no-op. Sent under notificationAllowed(); clicking it emits pageRequested("settings/hotkeys").
+    // Window visible: nothing is sent here (the new UI shows its own Toast).
+    void onHotkeyConflicts(const QStringList &actionTexts);
 
 signals:
     void closeChoiceRequested(bool capturing, const QString &timeText);
     void exitConfirmRequested(int variant, const QString &timeText); // 0..3 = D1a..D1d
     void windowShownChanged();
     void settingsPageRequested();
+    // Batch 2 (module H4). Declared now, not emitted yet.
+    // requestStart() refused (NoDevice in the hotkey/tray path, engine rejection, already
+    // starting). Window visible: the new UI shows a Toast; hidden: the controller sends N5
+    // itself (notificationAllowed rules) and still emits this. reason is Chinese UI text.
+    void startRejected(const QString &reason);
+    // A notification click or tray action wants a specific page: "record" | "library" |
+    // "settings/general" | "settings/subtitle" | "settings/hotkeys" (N2 -> library,
+    // N3 failed -> settings/subtitle, N6 -> settings/hotkeys). Emitted after showMainWindow().
+    void pageRequested(const QString &page);
 
 private:
     // Keep callbacks private to the controller, not in a public bridge/source.

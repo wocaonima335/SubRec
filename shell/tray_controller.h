@@ -29,7 +29,16 @@ public:
                 QSystemTrayIcon::MessageIcon icon);
     QMenu *menu() const; // Borrowed, owned by this object; for addMenu().
 
+    // Batch 2 (module H4). Stubs until H4 lands.
+    // Menu item 6 "显示悬浮条" (§3.3): visible only in capturing states and when the floating
+    // bar is not configured "never" by an unsupported system; checked = bar currently shown.
+    void setFloatingBarItem(bool visible, bool checked);
+    // Right-aligned shortcut texts on items 1/3/4 (§6.2), compact form "Ctrl+Alt+R"; "" hides.
+    void setShortcutTexts(const QString &toggleWindow, const QString &startStop,
+                          const QString &pauseResume);
+
 signals:
+    void floatingBarToggled(bool checked); // batch 2: item 6, this recording only
     void toggleWindowRequested();
     void startStopRequested();
     void pauseResumeRequested();

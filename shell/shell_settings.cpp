@@ -78,4 +78,20 @@ ExcludeMode ShellSettings::excludeMode() const
 
 bool ShellSettings::excludeSupported() const { return d->supported; }
 
+// TODO(FB1): persist ui/floatingBar, ui/barHintShown and ui/floatingBarPos/* like the
+// settings above.
+QString ShellSettings::floatingBarText() const
+{
+    return d->supported ? QStringLiteral("whenHidden") : QStringLiteral("never");
+}
+void ShellSettings::setFloatingBarText(const QString &) {}
+FloatingBarMode ShellSettings::floatingBarMode() const
+{
+    return d->supported ? FloatingBarMode::WhenHidden : FloatingBarMode::Never;
+}
+bool ShellSettings::barHintShown() const { return false; }
+void ShellSettings::setBarHintShown(bool) {}
+std::optional<QPoint> ShellSettings::floatingBarPosition(const QString &) const { return std::nullopt; }
+void ShellSettings::setFloatingBarPosition(const QString &, const QPoint &) {}
+
 } // namespace subrec::shell

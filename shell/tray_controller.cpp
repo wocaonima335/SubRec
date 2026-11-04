@@ -108,4 +108,8 @@ void TrayController::notify(NotifyId id, const QString &title, const QString &bo
     d->icon.showMessage(title, body, icon, 10000);
 }
 
+// TODO(H4): menu item 6 and shortcut texts.
+void TrayController::setFloatingBarItem(bool, bool) {}
+void TrayController::setShortcutTexts(const QString &, const QString &, const QString &) {}
+
 } // namespace subrec::shell

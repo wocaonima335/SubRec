@@ -10,4 +10,6 @@ void TrayController::setEnabled(bool) {}
 void TrayController::update(const ShellSnapshot &) {}
 void TrayController::notify(NotifyId, const QString &, const QString &, QSystemTrayIcon::MessageIcon) {}
 QMenu *TrayController::menu() const { return &d->menu; }
+void TrayController::setFloatingBarItem(bool, bool) {}
+void TrayController::setShortcutTexts(const QString &, const QString &, const QString &) {}
 }

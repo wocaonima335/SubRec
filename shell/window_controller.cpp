@@ -332,4 +332,7 @@ void WindowController::onSubtitleResult(bool ok, const QString &pathOrError)
         ok ? QSystemTrayIcon::Information : QSystemTrayIcon::Warning);
 }
 
+// TODO(H4): N6 text per MINIMIZE_DESIGN §3.5, click -> pageRequested("settings/hotkeys").
+void WindowController::onHotkeyConflicts(const QStringList &) {}
+
 } // namespace subrec::shell
