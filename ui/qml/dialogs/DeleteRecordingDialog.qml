@@ -13,17 +13,34 @@ AppDialog {
     primaryKind: "danger"
 
     function openFor(path: string, srt: string) {
-        root.filePath = path
-        root.srtPath = srt
-        open()
+        alsoSubtitle.checked = true;
+        root.filePath = path;
+        root.srtPath = srt;
+        open();
     }
 
     // TODO(U6): body with elided file name, "同时删除字幕文件" checkbox (default checked).
+    Column {
+        width: parent.width
+        spacing: Theme.space8
+        Text {
+            width: parent.width
+            text: root.filePath
+            color: Theme.textSecondary
+            elide: Text.ElideMiddle
+        }
+        AppCheckBox {
+            id: alsoSubtitle
+            visible: root.srtPath.length > 0
+            text: "同时删除字幕文件"
+            checked: true
+        }
+    }
     onAccepted: {
-        close()
-        const error = RecordingLibrary.moveToTrash(filePath, srtPath.length > 0)
+        close();
+        const error = RecordingLibrary.moveToTrash(filePath, srtPath.length > 0 && alsoSubtitle.checked);
         if (error.length > 0)
-            Toasts.show("danger", "无法删除", error, [], 0)
+            Toasts.show("danger", "无法删除", error, [], 0);
     }
     onRejected: close()
 }

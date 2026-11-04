@@ -4,6 +4,10 @@
 #include <QAbstractListModel>
 #include <QObject>
 #include <QString>
+#include <QDateTime>
+#include <QVector>
+#include <QFileSystemWatcher>
+#include <QTimer>
 #include <QtQml/qqmlregistration.h>
 
 QT_BEGIN_NAMESPACE
@@ -12,6 +16,13 @@ class QJSEngine;
 QT_END_NAMESPACE
 
 namespace subrec::ui {
+struct RecordingRow {
+    QString fileName, filePath, modifiedText, srtPath, subtitleState;
+    QDateTime modified;
+    qint64 sizeBytes = 0;
+    int subtitleProgress = 0;
+    bool isRecording = false;
+};
 
 // Module U6. One row per video file in the output folder (UI_REDESIGN §3.3).
 // Two instances live in RecordingLibrary: `all` (P2 table) and `recent` (P1 E area,
@@ -68,6 +79,15 @@ signals:
     void countChanged();
     void filterChanged();
     void sortChanged();
+
+private:
+    QString filter_;
+    QString sortKey_ = QStringLiteral("modified");
+    bool descending_ = true;
+    int limit_ = 0;
+    QVector<RecordingRow> visibleRows_;
+    void reset();
+    friend class RecordingLibrary;
 };
 
 // Module U6. GUI thread. QML singleton `RecordingLibrary`.
@@ -122,8 +142,19 @@ signals:
     void contentsChanged();
 
 private:
+    QVector<RecordingRow> rows_;
+    friend class RecordingListModel;
+    void rebuild();
     RecordingListModel *all_ = nullptr;    // child, never null
     RecordingListModel *recent_ = nullptr; // child, never null
+    QString folder_;
+    QString activePath_;
+    QString subtitlePath_;
+    QString subtitleState_;
+    int subtitleProgress_ = 0;
+    quint64 scanGeneration_ = 0;
+    QFileSystemWatcher watcher_;
+    QTimer refreshTimer_;
 };
 
 } // namespace subrec::ui
