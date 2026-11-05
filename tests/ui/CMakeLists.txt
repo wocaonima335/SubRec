@@ -28,6 +28,10 @@ set_target_properties(ui_test_shell_batch2 PROPERTIES AUTOMOC ON)
 target_compile_features(ui_test_shell_batch2 PUBLIC cxx_std_17)
 target_include_directories(ui_test_shell_batch2 PUBLIC ${subrec_root})
 target_link_libraries(ui_test_shell_batch2 PUBLIC Qt6::Gui Qt6::Widgets)
+if(WIN32)
+    # global_hotkeys.cpp (user32), taskbar_overlay.cpp (ole32, uuid, gdi32).
+    target_link_libraries(ui_test_shell_batch2 PRIVATE user32 ole32 uuid gdi32)
+endif()
 
 # Harness stand-in for the app's shell_module, so ui_module (which links shell_module when
 # that target exists) resolves WindowController/ShellSettings/... once B2, H3 and FB2 call
@@ -47,7 +51,7 @@ if(NOT TARGET shell_module)
     target_include_directories(shell_module PRIVATE "${subrec_root}/tests/shell")
     target_link_libraries(shell_module PUBLIC ui_test_shell_batch2 Qt6::Widgets Qt6::Quick)
     if(WIN32)
-        target_link_libraries(shell_module PRIVATE user32)
+        target_link_libraries(shell_module PRIVATE user32 ole32 uuid gdi32)
     endif()
 endif()
 
