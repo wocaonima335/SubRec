@@ -7,10 +7,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTORCC ON)
 
 option(SUBREC_BUILD_LIFECYCLE_TESTS "Build all in-tree CTest harnesses" ON)
-# New interface (ui/, QML module SubRec.Ui) and minimize batch-2 shell units. OFF keeps the
-# shipping build byte-for-byte unchanged; main.cpp does not load SubRec.Ui yet
-# (docs/UI_BATCH_PLAN.md modules INT-A / INT-B flip this).
-option(SUBREC_BUILD_NEW_UI "Build the SubRec.Ui module and batch-2 shell units (not loaded yet)" OFF)
+# New interface (ui/, QML module SubRec.Ui) and minimize batch-2 shell units. ON links
+# SubRec.Ui into appSubRec and starts on it (--old-ui falls back). OFF neither builds nor
+# loads SubRec.Ui and leaves out the batch-2-only shell sources, but shell_module still
+# carries the ungated H4/FB1 changes, e.g. N5 when a start is rejected synchronously while
+# the window is hidden (docs/UI_BATCH_PLAN.md INT-B).
+option(SUBREC_BUILD_NEW_UI "Build the SubRec.Ui module and batch-2 shell units and start on the new interface" OFF)
 option(SUBREC_STRIP_TEST_HOOKS
     "Compile video startup test hooks out of the application" OFF)
 if(SUBREC_STRIP_TEST_HOOKS)

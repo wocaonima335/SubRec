@@ -1,6 +1,8 @@
 # SubRec（字录）新界面 + 最小化第二批：实现批次计划
 
-> **状态：框架已提交，模块尚未开工。** 分支 `ui-redesign`（基于 `e60953a`）上的框架提交只有空壳：
+> **状态（2026-11-05）：第二批模块与 INT-A/INT-B 已合入 `ui-redesign`，审查中**（`SubRec_docs/UI_BATCH2_REVIEW.md`；必修 M1–M5 已修，见修订记录）。
+>
+> 最初的框架提交（基于 `e60953a`）只有空壳：
 > 全部 C++ 接口类（Q_OBJECT / Q_PROPERTY / 信号槽齐全，函数体返回默认值）、全部 QML 文件（冻结 API 注释 + 最小可加载内容 + `TODO(<模块>)`）、
 > 构建登记和接口冒烟测试。没有任何具体模块逻辑。
 >
@@ -80,7 +82,7 @@
 
 | 模块 | 负责人 | 输入 | 输出 | 依赖 | 验收标准 | 估时 |
 |---|---|---|---|---|---|---|
-| **INT-B** 构建登记 | Codex | — | 顶层 `CMakeLists.txt`：`SUBREC_BUILD_NEW_UI=ON` 时 `appSubRec` 链接 `ui_moduleplugin`、定义 `SUBREC_HAS_NEW_UI`；`tests/ui` 并入 `SUBREC_BUILD_LIFECYCLE_TESTS`；CI 登记 | 框架 | 两种构建预设（ON/OFF）都能编过；OFF 时产物与 `e60953a` 相同；ctest 含 `ui` 标签 | 1 |
+| **INT-B** 构建登记 | Codex | — | 顶层 `CMakeLists.txt`：`SUBREC_BUILD_NEW_UI=ON` 时 `appSubRec` 链接 `ui_moduleplugin`、定义 `SUBREC_HAS_NEW_UI`；`tests/ui` 并入 `SUBREC_BUILD_LIFECYCLE_TESTS`；CI 登记 | 框架 | 两种构建预设（ON/OFF）都能编过；OFF 时不编、不加载 SubRec.Ui，不编第二批专属源文件，目标列表和编译参数与 `e60953a` 相同。但 `shell_module` 含 H4/FB1 的无门控增量，产物不是逐字节相同；唯一可观察的差异是窗口隐藏时开始被同步拒绝会多一条 N5（第一批时这种情况没有任何提示；用户 2026-11-05 接受，审查 M5 (a)）；ctest 含 `ui` 标签 | 1 |
 | **INT-A** main.cpp 接入 | ZCode | 全部后端类的 `attach`/`setInstance`（空壳已有，可提前开工） | 创建并注入全部单例；`Q_IMPORT_QML_PLUGIN(SubRec_UiPlugin)`；`loadFromModule`；开始回调里先 `OutputNaming::prepareNextFile()`；接 `GlobalHotkeys`/`HotkeyController`/`FloatingBarPolicy`/`FloatingBarView`/`TaskbarOverlay`；AutoTest 调 `setUiSettingsIniPath()` 且不建热键；新旧界面切换按 §6 决定 1 | INT-B；合入前 B1–B3、U4 已合入 | 程序以新界面启动；AutoTest 现有脚本不回归；START INVARIANT 仍只有一条路径；旧界面仍可选（决定 1 推荐值） | 3 |
 
 ---
@@ -180,6 +182,8 @@ cmake --build build-ui && ctest --test-dir build-ui && cmake --build build-ui --
 
 **未验证**：任何 Windows 构建（MinGW 13.1 / MSVC）、Windows 运行、`appSubRec` 链接、PC 真机行为。第二批空壳里目前没有 Win32 代码（H2/TB1 只有 TODO），所以暂无需要宏隔离的内容；规则是 Win32/COM 代码只能写在对应 `.cpp` 里并用 `#ifdef Q_OS_WIN` 包住，头文件保持平台无关（H2、TB1 验收标准已写入）。
 
+> 注（2026-11-05）：本节是框架提交时的记录。之后 H2/TB1 已加入 Win32/COM 代码，INT-A/INT-B 已合入；OFF 构建与 `e60953a` 的差异按 §2.4 INT-B 验收（审查 M5）。第二批合入后的验证见 `SubRec_docs/UI_BATCH2_REVIEW.md`。
+
 ---
 
 ## 6. 用户决定项（2026-11-04 已定：全部 14 项按推荐值）
@@ -262,4 +266,5 @@ cmake --build build-ui && ctest --test-dir build-ui && cmake --build build-ui --
 | 日期 | 修订 |
 |---|---|
 | 2026-11-04 | 初稿：随框架提交。模块清单（B1–B4、U1/U2/U4–U8、H1–H4、FB1/FB2、TB1、INT-A/INT-B）、Codex/ZCode 分工与文件归属、冻结/共享文件规则、本机验证记录、14 项待决定事项、合并顺序、估时（编码墙钟约 41 h，PC3 7.5 h）。未对照 Penpot 原型 |
+| 2026-11-05 | 第二批审查（UI_BATCH2_REVIEW.md）后：状态行更新；INT-B 验收改为承认 OFF 下 `shell_module` 的无门控增量（同步拒绝时的 N5，用户接受 M5 (a)）；§5.2 加注说明其为框架时的记录 |
 
