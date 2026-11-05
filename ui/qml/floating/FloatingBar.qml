@@ -20,6 +20,9 @@ Window {
     height: FloatingBarView.hintVisible ? 136 : 40
     visible: false
     color: "transparent"
+    // Declared inside AppWindow, Qt would make the main window its transient parent (a
+    // Win32 owner), and owned windows are hidden while the owner is minimized (W3).
+    transientParent: null
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     title: qsTr("字录 悬浮条")
 
