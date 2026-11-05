@@ -23,12 +23,31 @@ Window {
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     title: qsTr("字录 悬浮条")
 
+    // Set when the user starts a system move; cleared when the bar is re-placed from
+    // preferredPosition, so programmatic placement is never written back as a user choice.
+    property bool userMoved: false
+
     Component.onCompleted: FloatingBarView.attachWindow(root)
+
+    // startSystemMove() gives no release event, so the position is saved once it has been
+    // stable for a moment after a user drag (savePosition snaps and re-applies it).
+    onXChanged: if (root.userMoved && root.visible) savePositionTimer.restart()
+    onYChanged: if (root.userMoved && root.visible) savePositionTimer.restart()
+    Timer {
+        id: savePositionTimer
+        interval: 200
+        onTriggered: {
+            if (root.userMoved && root.visible)
+                FloatingBarView.savePosition(root.x, root.y)
+        }
+    }
 
     // Position FIRST, then flip visibility (the exclusion was registered at attach time).
     Connections {
         target: FloatingBarView
         function onShownChanged() {
+            savePositionTimer.stop()
+            root.userMoved = false
             if (FloatingBarView.shown) {
                 const pos = FloatingBarView.preferredPosition(root.width, root.height)
                 root.x = pos.x
@@ -69,6 +88,7 @@ Window {
             anchors.fill: parent
             cursorShape: Qt.SizeAllCursor
             onPressed: (mouse) => {
+                root.userMoved = true
                 root.startSystemMove()
                 mouse.accepted = true
             }
