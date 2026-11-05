@@ -101,6 +101,12 @@ public:
             if (FAILED(CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER,
                                         IID_PPV_ARGS(&taskbar))))
                 return false;
+            // ITaskbarList requires HrInit before any other method is called.
+            if (FAILED(taskbar->HrInit())) {
+                taskbar->Release();
+                taskbar = nullptr;
+                return false;
+            }
         }
         return true;
     }
