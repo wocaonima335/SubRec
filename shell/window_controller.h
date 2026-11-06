@@ -101,7 +101,8 @@ public slots:
     void requestPause();
     void requestResume();
     void requestPauseResume(); // Running -> pause; Paused -> resume; otherwise no-op.
-    // Idle/Failed MUST delegate to requestStart(), never invoke actions_.start.
+    // Idle/Failed/NoDevice MUST delegate to requestStart(), never invoke actions_.start
+    // (requestStart() rejects NoDevice without calling the engine).
     // Running/Paused delegate to requestStop(); other states are no-ops.
     void requestStartStop();
     void showMainWindow(); // Restore geometry/maximized state, raise, requestActivate.
@@ -120,9 +121,9 @@ signals:
     void exitConfirmRequested(int variant, const QString &timeText); // 0..3 = D1a..D1d
     void windowShownChanged();
     void settingsPageRequested();
-    // Batch 2 (module H4). Declared now, not emitted yet.
-    // requestStart() refused (NoDevice in the hotkey/tray path, engine rejection, already
-    // starting). Window visible: the new UI shows a Toast; hidden: the controller sends N5
+    // Batch 2 (module H4).
+    // requestStart() refused (NoDevice from any entry, without calling the engine; or a
+    // synchronous engine rejection). Window visible: the new UI shows a Toast; hidden: the controller sends N5
     // itself (notificationAllowed rules) and still emits this. reason is Chinese UI text.
     void startRejected(const QString &reason);
     // A notification click or tray action wants a specific page: "record" | "library" |

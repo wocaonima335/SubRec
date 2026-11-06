@@ -75,6 +75,24 @@ int main(int argc, char **argv)
             CHECK(tray.property("lastNotification").toInt() == static_cast<int>(NotifyId::StartRejected));
             shell.onHotkeyConflicts({"Ctrl+Alt+R"});
             CHECK(tray.property("lastNotification").toInt() == static_cast<int>(NotifyId::HotkeyConflict));
+            // S1: NoDevice from the tray/hotkey/F9 path is rejected by the shell without
+            // calling the engine; hidden -> N5, visible -> startRejected only (Toast).
+            CHECK(starts == 2);
+            recorder.devices = {QVariantMap{{"kind", "screen"}, {"available", false}}};
+            emit recorder.captureDevicesChanged();
+            CHECK(source.snapshot().state == RecState::NoDevice);
+            shell.requestStartStop();
+            CHECK(rejected == 3 && starts == 2);
+            CHECK(tray.property("lastNotification").toInt() == static_cast<int>(NotifyId::StartRejected));
+            CHECK(source.snapshot().state == RecState::NoDevice);
+            shell.showMainWindow();
+            const int visibleCount = tray.property("notificationCount").toInt();
+            shell.requestStartStop();
+            CHECK(rejected == 4 && starts == 2);
+            CHECK(tray.property("notificationCount").toInt() == visibleCount);
+            shell.hideToTray();
+            recorder.devices = {QVariantMap{{"kind", "screen"}, {"available", true}}};
+            emit recorder.captureDevicesChanged();
             const int count = tray.property("notificationCount").toInt();
             recorder.setState("Running");
             shell.onHotkeyConflicts({"Ctrl+Alt+P"});
@@ -104,17 +122,36 @@ int main(int argc, char **argv)
             start = [] { return true; };
             shell.requestStart(); shell.requestStart(); CHECK(starts == 4); checkActive(true);
             recorder.setState("Preparing"); recorder.setState("Failed"); checkActive(false);
-            // M1: no usable video device must still reach the engine, which
-            // reports the error; exclusion is enabled before the call (callback).
+            // S1 (replaces batch-1 M1): no usable video device is rejected by the shell for
+            // every entry. The engine is not called (no output name is taken), the state
+            // stays NoDevice instead of Failed, exclusion/power are never taken, and
+            // startRejected carries the reason.
+            int rejected = 0;
+            QString rejectedReason;
+            QObject::connect(&shell, &WindowController::startRejected, [&](const QString &reason) {
+                rejectedReason = reason;
+                ++rejected;
+            });
             recorder.setState("Idle");
             recorder.devices = {QVariantMap{{"kind", "screen"}, {"available", false}}};
             emit recorder.captureDevicesChanged();
             CHECK(source.snapshot().state == RecState::NoDevice);
             start = [&] { recorder.setState("Preparing"); recorder.setState("Failed"); return false; };
-            shell.requestStart(); CHECK(starts == 5); checkActive(false);
+            shell.requestStart(); CHECK(starts == 4 && rejected == 1); checkActive(false);
+            CHECK(rejectedReason.contains(QStringLiteral("没有可用的视频来源")));
+            CHECK(source.snapshot().state == RecState::NoDevice);
             recorder.devices.clear(); recorder.setState("Idle"); emit recorder.captureDevicesChanged();
             CHECK(source.snapshot().state == RecState::NoDevice);
-            shell.requestStart(); CHECK(starts == 6); checkActive(false);
+            rejectedReason.clear();
+            shell.requestStartStop(); CHECK(starts == 4 && rejected == 2); checkActive(false);
+            CHECK(rejectedReason.contains(QStringLiteral("没有可用的视频来源")));
+            CHECK(source.snapshot().state == RecState::NoDevice);
+            // Regression: with a device back, Idle still reaches the engine.
+            recorder.devices = {QVariantMap{{"kind", "screen"}, {"available", true}}};
+            emit recorder.captureDevicesChanged();
+            CHECK(source.snapshot().state == RecState::Idle);
+            start = [&] { recorder.setState("Preparing"); return true; };
+            shell.requestStart(); CHECK(starts == 5 && rejected == 2); checkActive(true);
         } else if (mode == "actions") {
             shell.requestPause(); shell.requestResume(); shell.requestStop(); CHECK(pauses == 0 && resumes == 0 && stops == 0);
             shell.requestStart(); recorder.setState("Running");

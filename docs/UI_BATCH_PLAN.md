@@ -1,6 +1,6 @@
 # SubRec（字录）新界面 + 最小化第二批：实现批次计划
 
-> **状态（2026-11-05）：第二批模块与 INT-A/INT-B 已合入 `ui-redesign`，审查中**（`SubRec_docs/UI_BATCH2_REVIEW.md`；必修 M1–M5 已修，见修订记录）。
+> **状态（2026-11-05）：第二批模块与 INT-A/INT-B 已合入 `ui-redesign`，审查中**（`SubRec_docs/UI_BATCH2_REVIEW.md`；必修 M1–M5 已修，S1 已定并已修，见修订记录）。
 >
 > 最初的框架提交（基于 `e60953a`）只有空壳：
 > 全部 C++ 接口类（Q_OBJECT / Q_PROPERTY / 信号槽齐全，函数体返回默认值）、全部 QML 文件（冻结 API 注释 + 最小可加载内容 + `TODO(<模块>)`）、
@@ -267,4 +267,5 @@ cmake --build build-ui && ctest --test-dir build-ui && cmake --build build-ui --
 |---|---|
 | 2026-11-04 | 初稿：随框架提交。模块清单（B1–B4、U1/U2/U4–U8、H1–H4、FB1/FB2、TB1、INT-A/INT-B）、Codex/ZCode 分工与文件归属、冻结/共享文件规则、本机验证记录、14 项待决定事项、合并顺序、估时（编码墙钟约 41 h，PC3 7.5 h）。未对照 Penpot 原型 |
 | 2026-11-05 | 第二批审查（UI_BATCH2_REVIEW.md）后：状态行更新；INT-B 验收改为承认 OFF 下 `shell_module` 的无门控增量（同步拒绝时的 N5，用户接受 M5 (a)）；§5.2 加注说明其为框架时的记录 |
+| 2026-11-05 | 审查 S1 **已定**（用户决定）：没有可用的视频来源时 F9 / 全局热键 / 托盘 / 录制页一律由外壳层（`WindowController::requestStart`）拒绝，不调用引擎、不占文件名、不进入出错；可见 Toast（`startRejected`）、不可见 N5。H4 的"拒绝开始时可见/隐藏两条路径"测试按此覆盖 NoDevice。最小化稿 §3.9 已同步 |
 

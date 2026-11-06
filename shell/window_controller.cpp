@@ -316,8 +316,15 @@ void WindowController::requestStart()
     const auto state = d->snapshot().state;
     if (d->starting || d->startPending || d->shuttingDown
         || isCapturing(state) || !actions_.start) return;
-    // NoDevice is NOT rejected here: the engine reports the error and its fix
-    // suggestion (Failed + captureError), as before the shell (review M1).
+    // NoDevice is rejected here for every entry (F9, global hotkey, tray, QML): the
+    // engine is not called, so no output file name is taken and the state does not
+    // become Failed (MINIMIZE_DESIGN §3.9, batch-2 review S1).
+    if (state == RecState::NoDevice) {
+        const auto reason = QStringLiteral("没有可用的视频来源");
+        d->notify(NotifyId::StartRejected, QStringLiteral("无法开始录制"), reason, QSystemTrayIcon::Warning);
+        emit startRejected(reason);
+        return;
+    }
     QScopedValueRollback<bool> guard(d->starting, true);
     d->startPending = true;
     d->exclusion.setCapturing(true); // MUST precede the first synchronous frame grab.
@@ -326,8 +333,7 @@ void WindowController::requestStart()
     if (!accepted) {
         d->startPending = false;
         const auto reason = !d->snapshot().captureError.isEmpty() ? d->snapshot().captureError
-            : state == RecState::NoDevice ? QStringLiteral("没有可用的视频来源")
-            : QStringLiteral("无法开始录制");
+                                                                  : QStringLiteral("无法开始录制");
         d->notify(NotifyId::StartRejected, QStringLiteral("无法开始录制"), reason, QSystemTrayIcon::Warning);
         emit startRejected(reason);
     }
@@ -360,6 +366,7 @@ void WindowController::requestPauseResume()
 void WindowController::requestStartStop()
 {
     const auto state = d->snapshot().state;
+    // NoDevice also goes to requestStart(), which rejects it (startRejected / N5).
     if (state == RecState::Idle || state == RecState::Failed || state == RecState::NoDevice)
         requestStart();
     else
