@@ -22,6 +22,7 @@ jobs:
       - name: Configure
         run: cmake -S tests/ui -B build-ui -G Ninja -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror"
       - name: Build
+        id: build
         run: cmake --build build-ui --parallel 2
       - name: Test
         env:
@@ -38,6 +39,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: QML lint
+        # After a test failure too, so lint results are not lost; never on a failed or
+        # skipped build (no half-built tree) or a cancelled run. Failed tests still fail the job.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         shell: bash
         run: |
           set -eo pipefail
@@ -78,6 +82,7 @@ jobs:
           -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
           -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror"
       - name: Build
+        id: build
         run: cmake --build build-ui --parallel 2
       - name: Test
         timeout-minutes: 15
@@ -95,6 +100,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: QML lint
+        # After a test failure too, so lint results are not lost; never on a failed or
+        # skipped build (no half-built tree) or a cancelled run. Failed tests still fail the job.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         # Git Bash; same gate script as Linux (grep only, no rg).
         shell: bash
         run: |
