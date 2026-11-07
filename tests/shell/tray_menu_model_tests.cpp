@@ -78,7 +78,33 @@ int main(int argc, char **argv)
             QObject::connect(&tray, &TrayController::pauseResumeRequested, [&] { ++pauses; });
             QObject::connect(&tray, &TrayController::toggleWindowRequested, [&] { ++toggles; });
             const auto actions = tray.menu()->actions();
-            CHECK(actions.size() == 10); // Seven items, three separators; no floating bar/hotkeys.
+            // Seven items, three separators; no floating bar/hotkeys.
+            // Batch 2 adds the hidden-until-capturing floating-bar item.
+            CHECK(actions.size() == 11);
+            CHECK(!actions[5]->isVisible());
+            tray.setFloatingBarItem(true, true);
+            CHECK(!actions[5]->isVisible());
+            int floatingToggles = 0;
+            QObject::connect(&tray, &TrayController::floatingBarToggled, [&](bool) { ++floatingToggles; });
+            for (auto state : {RecState::Idle, RecState::NoDevice, RecState::Preparing, RecState::Running,
+                               RecState::Paused, RecState::Stopping, RecState::Failed}) {
+                s.state = state;
+                tray.update(s);
+                CHECK(actions[5]->isVisible() == isCapturing(state));
+            }
+            s.state = RecState::Running;
+            tray.update(s);
+            actions[5]->trigger();
+            CHECK(floatingToggles == 1);
+            tray.setShortcutTexts("Ctrl+Alt+W", "Ctrl+Alt+R", "Ctrl+Alt+P");
+            QMetaObject::invokeMethod(tray.menu(), "aboutToShow", Qt::DirectConnection);
+            CHECK(actions[0]->text().endsWith("\tCtrl+Alt+W"));
+            CHECK(actions[3]->text().endsWith("\tCtrl+Alt+R"));
+            CHECK(actions[4]->text().endsWith("\tCtrl+Alt+P"));
+            CHECK(actions[3]->shortcut().isEmpty());
+            tray.setShortcutTexts({}, {}, {});
+            s.state = RecState::Idle;
+            tray.update(s);
             CHECK(actions[0]->font().bold()); CHECK(!actions[2]->isEnabled());
             tray.update(s); CHECK(actions[3]->isEnabled()); CHECK(!actions[4]->isEnabled());
             actions[0]->trigger(); actions[3]->trigger();
@@ -91,5 +117,9 @@ int main(int argc, char **argv)
             CHECK(actions[2]->text() == QStringLiteral("正在保存…"));
         } else CHECK(false);
         return 0;
-    } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
+    } catch (const std::exception &e)
+    {
+        std::cerr << e.what() << '\n';
+        return 1;
+    }
 }

@@ -18,8 +18,13 @@ enum class NotifyId {
     TrayHint,       // N1
     Saved,          // N2
     SubtitleResult, // N3: reserved until subtitle integration
-    CaptureFailed  // N4
+    CaptureFailed,  // N4
+    StartRejected,  // N5 (batch 2): hotkey/tray start refused while the window is hidden
+    HotkeyConflict  // N6 (batch 2): a global hotkey failed to register at startup
 };
+// Batch 2, C5 ui/floatingBar: whenHidden | always | never. Effective Never when
+// capture exclusion is unsupported (build < 19041), see ShellSettings::floatingBarMode().
+enum class FloatingBarMode { WhenHidden, Always, Never };
 enum class CloseOutcome { AskUser, HideToTray, Exit };
 
 struct ShellSnapshot {

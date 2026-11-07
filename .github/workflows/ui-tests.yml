@@ -1,0 +1,111 @@
+name: ui-tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libegl1-mesa-dev
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+      - name: Configure
+        run: cmake -S tests/ui -B build-ui -G Ninja -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror"
+      - name: Build
+        id: build
+        run: cmake --build build-ui --parallel 2
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QSG_RHI_BACKEND: software
+        run: ctest --test-dir build-ui --output-on-failure --no-tests=error
+      # Per-test QtTest logs (tests/ui -o files); uploaded whether or not the tests passed.
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-logs-linux
+          path: build-ui/test-logs/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: QML lint
+        # After a test failure too, so lint results are not lost; never on a failed or
+        # skipped build (no half-built tree) or a cancelled run. Failed tests still fail the job.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -eo pipefail
+          cmake --build build-ui --target all_qmllint 2>&1 | tee /tmp/ui-qmllint.log
+          bash tools/ci/check_qmllint_log.sh /tmp/ui-qmllint.log
+
+  # Same standalone tests/ui build on Windows (Qt 6.8.0 + MinGW 13.1 + Ninja, installed the
+  # same way as windows-build.yml). No FFmpeg, no deploy/package/release. Exercises the
+  # WIN32-only code paths (H2 global hotkeys, TB1 taskbar overlay, capture exclusion, power
+  # request) and the WIN32 link lines of tests/ui/CMakeLists.txt.
+  ui-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+      - name: Install Qt and MinGW
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          host: windows
+          target: desktop
+          arch: win64_mingw
+          tools: 'tools_mingw1310'
+          cache: true
+      - name: Add MinGW and Ninja to PATH
+        shell: pwsh
+        run: |
+          choco install ninja -y --no-progress
+          "$env:IQTA_TOOLS\mingw1310_64\bin" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Configure
+        shell: pwsh
+        # -Werror as on Linux. Not yet run on MinGW: if MinGW-only warnings show up in the
+        # WIN32 branches, fix them rather than dropping -Werror.
+        run: >
+          cmake -S tests/ui -B build-ui -G Ninja
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
+          -DCMAKE_CXX_FLAGS="-Wall -Wextra -Werror"
+      - name: Build
+        id: build
+        run: cmake --build build-ui --parallel 2
+      - name: Test
+        timeout-minutes: 15
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QSG_RHI_BACKEND: software
+        run: ctest --test-dir build-ui --output-on-failure --no-tests=error
+      # QtTest console output did not reach ctest on this runner; the -o files do.
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-logs-windows
+          path: build-ui/test-logs/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: QML lint
+        # After a test failure too, so lint results are not lost; never on a failed or
+        # skipped build (no half-built tree) or a cancelled run. Failed tests still fail the job.
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        # Git Bash; same gate script as Linux (grep only, no rg).
+        shell: bash
+        run: |
+          set -eo pipefail
+          cmake --build build-ui --target all_qmllint 2>&1 | tee build-ui/ui-qmllint.log
+          bash tools/ci/check_qmllint_log.sh build-ui/ui-qmllint.log

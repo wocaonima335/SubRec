@@ -15,6 +15,31 @@
 #include "shell/tray_controller.h"
 #include "shell/window_controller.h"
 
+#ifdef SUBREC_HAS_NEW_UI
+// INT-A: new interface (UI_BATCH_PLAN.md §2.4). Everything below is inert unless the
+// top-level build links ui_moduleplugin and defines SUBREC_HAS_NEW_UI (INT-B).
+#include "shell/floating_bar_policy.h"
+#include "shell/global_hotkeys.h"
+#include "shell/shell_logic.h"
+#include "shell/taskbar_overlay.h"
+#include "ui/backend/app_info.h"
+#include "ui/backend/app_preferences.h"
+#include "ui/backend/audio_level_monitor.h"
+#include "ui/backend/desktop_actions.h"
+#include "ui/backend/floating_bar_view.h"
+#include "ui/backend/hotkey_controller.h"
+#include "ui/backend/model_catalog.h"
+#include "ui/backend/output_naming.h"
+#include "ui/backend/recorder_view.h"
+#include "ui/backend/recording_library.h"
+#include "ui/backend/settings_store.h"
+#include "ui/backend/shell_view.h"
+#include "ui/backend/subtitle_view.h"
+#include "ui/backend/theme_controller.h"
+#include <QtQml/qqmlextensionplugin.h>
+Q_IMPORT_QML_PLUGIN(SubRec_UiPlugin)
+#endif
+
 
 #include <QDebug>
 #include <QDir>
@@ -84,9 +109,44 @@ void init() { FFRecorder::getInstance().captureScheduler().initialize(); }
 // scheduler, and only RecordingActions (owned by WindowController) calls them.
 static QPointer<subrec::shell::WindowController> g_shell;
 
+// INT-A: OutputNaming singleton used by engineStart(); set once in main() before any
+// start can happen. Null (old-UI-only builds) keeps the pre-existing engine behaviour.
+#ifdef SUBREC_HAS_NEW_UI
+static QPointer<subrec::ui::OutputNaming> g_outputNaming;
+#endif
+
+#ifdef SUBREC_HAS_NEW_UI
+// {来源} token for the file-name template: the kind of the currently selected video
+// device ("屏幕" | "摄像头"), derived from the device list exactly like RecorderView.
+static QString sourceLabelForNextFile()
+{
+  const QVariantList devices = FFRecorder::getInstance().property("captureDevices").toList();
+  const QString selected = FFRecorder::getInstance().property("selectedVideoDeviceId").toString();
+  for (const QVariant &value : devices) {
+    const QVariantMap device = value.toMap();
+    if (device.value(QStringLiteral("id")).toString() != selected)
+      continue;
+    if (device.value(QStringLiteral("kind")).toString() == QLatin1String("camera"))
+      return QStringLiteral("摄像头");
+    break;
+  }
+  return QStringLiteral("屏幕");
+}
+#endif
+
 static bool engineStart()
 {
   qDebug() << "开始录制...";
+#ifdef SUBREC_HAS_NEW_UI
+  // R1: resolve the next unique file name BEFORE the scheduler grabs devices and frames.
+  // SUBREC_AUTOTEST_OUTPUT pins the name itself and must stay untouched; on failure
+  // prepareNextFile() returns "" without touching the recorder and the engine reports
+  // its usual error.
+  if (g_outputNaming
+      && qEnvironmentVariable("SUBREC_AUTOTEST_OUTPUT").trimmed().isEmpty()) {
+    g_outputNaming->prepareNextFile(sourceLabelForNextFile());
+  }
+#endif
   return FFRecorder::getInstance().captureScheduler().start();
 }
 static void engineStop()
@@ -980,6 +1040,141 @@ int main(int argc, char *argv[])
             QDesktopServices::openUrl(
                 QUrl::fromLocalFile(FFRecorder::getInstance().outputPath()));
           }));
+
+#ifdef SUBREC_HAS_NEW_UI
+  // INT-A: new-interface singletons, created before the engine and injected via
+  // setInstance() so QML resolves to these instances. AutoTest also isolates the ui/*
+  // settings store (same temporary dir as the shell settings). Nothing here runs in a
+  // build without INT-B's ui_moduleplugin link.
+  if (autoTestMode)
+    subrec::ui::setUiSettingsIniPath(
+        autoTestSettingsDir->filePath(QStringLiteral("ui.ini")));
+
+  subrec::ui::ThemeController themeController(nullptr);
+  subrec::ui::AppPreferences appPreferences(nullptr);
+  subrec::ui::RecorderView recorderView(nullptr);
+  subrec::ui::ShellView shellView(nullptr);
+  subrec::ui::OutputNaming outputNaming(nullptr);
+  subrec::ui::AudioLevelMonitor audioLevelMonitor(nullptr);
+  subrec::ui::RecordingLibrary recordingLibrary(nullptr);
+  subrec::ui::SubtitleView subtitleView(nullptr);
+  subrec::ui::ModelCatalog modelCatalog(nullptr);
+  subrec::ui::DesktopActions desktopActions(nullptr);
+  subrec::ui::AppInfo appInfo(nullptr);
+  recorderView.attach(&FFRecorder::getInstance(), &openSourceByControl);
+  shellView.attach(&windowController, &shellSettings,
+                   subrec::shell::TrayController::systemTrayAvailable());
+  outputNaming.attach(&FFRecorder::getInstance());
+  g_outputNaming = &outputNaming;
+  audioLevelMonitor.attach(
+      FFRecorder::getInstance().property("audioSampler").value<QObject *>());
+  QObject::connect(&recorderView, &subrec::ui::RecorderView::audioSamplerChanged,
+                   [&audioLevelMonitor] {
+                     audioLevelMonitor.attach(
+                         FFRecorder::getInstance().property("audioSampler").value<QObject *>());
+                   });
+  recordingLibrary.setFolder(outputNaming.outputDir());
+  // U6: the library follows the output folder (P3-2 changes it at runtime) and marks the
+  // file being written (L5: not playable, moveToTrash refuses it). currentOutputFile is
+  // "" outside capturing states.
+  QObject::connect(&outputNaming, &subrec::ui::OutputNaming::outputDirChanged,
+                   &recordingLibrary, [&outputNaming, &recordingLibrary] {
+                     recordingLibrary.setFolder(outputNaming.outputDir());
+                   });
+  recordingLibrary.setActiveRecording(recorderView.currentOutputFile());
+  QObject::connect(&recorderView, &subrec::ui::RecorderView::currentOutputFileChanged,
+                   &recordingLibrary, [&recorderView, &recordingLibrary] {
+                     recordingLibrary.setActiveRecording(recorderView.currentOutputFile());
+                   });
+  // U7: P3-6 log row and P3-7 licence links. Same log path rule as qtLogHandler(); the
+  // licence files sit next to the exe as packaged by windows-build.yml (Deploy step).
+  {
+    QString logPath = qEnvironmentVariable("SUBREC_LOG_FILE").trimmed();
+    if (logPath.isEmpty())
+      logPath = QCoreApplication::applicationDirPath() + "/SubRec.log";
+    appInfo.setLogFilePath(QDir::toNativeSeparators(QFileInfo(logPath).absoluteFilePath()));
+    const QDir appDir(QCoreApplication::applicationDirPath());
+    appInfo.setLicensePaths(appDir.filePath(QStringLiteral("LICENSE.txt")),
+                            appDir.filePath(QStringLiteral("THIRD_PARTY_LICENSES.md")));
+  }
+  // U8: catalog first — setModelCatalog() is ignored while settings are locked, which
+  // includes capturing. Then mirror the recorder's capturing state (uiStateChanged is
+  // the NOTIFY of RecorderView::capturing) so the asr/* settings lock while recording.
+  subtitleView.setModelCatalog(&modelCatalog);
+  subtitleView.setCapturing(recorderView.capturing());
+  QObject::connect(&recorderView, &subrec::ui::RecorderView::uiStateChanged, &subtitleView,
+                   [&recorderView, &subtitleView] {
+                     subtitleView.setCapturing(recorderView.capturing());
+                   });
+
+  // Batch 2: no hotkeys in AutoTest (§3.8); the floating bar follows the shell snapshot;
+  // the taskbar overlay mirrors the tray icon kind.
+  std::unique_ptr<subrec::shell::GlobalHotkeys> hotkeys;
+  if (!autoTestMode)
+    hotkeys = std::make_unique<subrec::shell::GlobalHotkeys>();
+  subrec::ui::HotkeyController hotkeyController(nullptr);
+  subrec::shell::FloatingBarPolicy floatingBarPolicy;
+  subrec::ui::FloatingBarView floatingBarView(nullptr);
+  floatingBarPolicy.setSettings(&shellSettings);
+  floatingBarView.attach(&floatingBarPolicy,
+      subrec::ui::FloatingBarView::Actions{
+          [&windowController] { windowController.requestPauseResume(); },
+          [&windowController] { windowController.requestStop(); },
+          [&windowController] { windowController.showMainWindow(); },
+          [&exclusion](QWindow *window) { exclusion.addWindow(window); }});
+  subrec::shell::TaskbarOverlay taskbarOverlay;
+  const auto overlayStateText = [](subrec::shell::RecState state) {
+    switch (state) {
+    case subrec::shell::RecState::Preparing: return QStringLiteral("准备中");
+    case subrec::shell::RecState::Running: return QStringLiteral("录制中");
+    case subrec::shell::RecState::Paused: return QStringLiteral("已暂停");
+    case subrec::shell::RecState::Stopping: return QStringLiteral("正在保存");
+    case subrec::shell::RecState::Failed: return QStringLiteral("出错");
+    case subrec::shell::RecState::NoDevice: return QStringLiteral("没有可用的视频来源");
+    case subrec::shell::RecState::Idle: break;
+    }
+    return QStringLiteral("就绪");
+  };
+  const auto pushShellState = [&] {
+    auto snapshot = shellState.snapshot();
+    snapshot.window = windowController.windowShown()
+                          ? subrec::shell::WindowVisibility::Shown
+                          : subrec::shell::WindowVisibility::HiddenToTray;
+    floatingBarPolicy.setSnapshot(snapshot);
+    taskbarOverlay.setKind(subrec::shell::trayIconFor(snapshot.state));
+    taskbarOverlay.setDescription(overlayStateText(snapshot.state));
+    floatingBarView.setLiveTexts(
+        recorderView.elapsedText(), recorderView.captureError(),
+        subtitleView.state() == QLatin1String("live") ? QStringLiteral("live")
+        : subtitleView.state() == QLatin1String("lagging") ? QStringLiteral("lagging")
+                                                           : QString());
+  };
+  QObject::connect(&shellState, &subrec::shell::ShellStateSource::changed, pushShellState);
+  // WhenHidden (C5) depends on the window: hiding/minimizing while paused changes nothing
+  // in the shell state or the elapsed text, so follow the window itself too.
+  QObject::connect(&windowController, &subrec::shell::WindowController::windowShownChanged,
+                   pushShellState);
+  QObject::connect(&recorderView, &subrec::ui::RecorderView::captureTimeTextChanged,
+                   pushShellState);
+  QObject::connect(&subtitleView, &subrec::ui::SubtitleView::serviceChanged, pushShellState);
+  if (hotkeys) {
+    // §3.9: the three hotkey actions map straight onto the WindowController entries.
+    QObject::connect(hotkeys.get(), &subrec::shell::GlobalHotkeys::triggered,
+                     &windowController, [&](subrec::shell::HotkeyAction action) {
+                       switch (action) {
+                       case subrec::shell::HotkeyAction::ToggleRecord:
+                         windowController.requestStartStop();
+                         break;
+                       case subrec::shell::HotkeyAction::TogglePause:
+                         windowController.requestPauseResume();
+                         break;
+                       case subrec::shell::HotkeyAction::ToggleWindow:
+                         windowController.toggleWindow();
+                         break;
+                       }
+                     });
+  }
+#endif
   g_shell = &windowController;
   if (singleInstance)
     QObject::connect(singleInstance.get(), &subrec::shell::SingleInstance::showRequested,
@@ -1011,7 +1206,39 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("shell", &windowController);
     engine.rootContext()->setContextProperty("shellSettings", &shellSettings);
     engine.rootContext()->setContextProperty("shellStartHidden", startHidden);
-    engine.loadFromModule("SubRec", "Main");
+
+#ifdef SUBREC_HAS_NEW_UI
+    // Decision 1: SUBREC_BUILD_NEW_UI builds start on the new interface; --old-ui goes
+    // back to qml/Main.qml. AutoTest stays on the old interface: its scenarios probe
+    // old-UI object names (captureErrorBanner, ...) and run with no hotkeys (§3.8).
+    const bool useNewUi =
+        !autoTestMode && !app.arguments().contains(QStringLiteral("--old-ui"));
+#else
+    const bool useNewUi = false;
+#endif
+
+    if (useNewUi) {
+#ifdef SUBREC_HAS_NEW_UI
+      // Inject the backend singletons BEFORE loadFromModule: QML's create() must hand
+      // out exactly these instances (singleton_provider.h).
+      subrec::ui::RecorderView::setInstance(&recorderView);
+      subrec::ui::ShellView::setInstance(&shellView);
+      subrec::ui::ThemeController::setInstance(&themeController);
+      subrec::ui::AppPreferences::setInstance(&appPreferences);
+      subrec::ui::OutputNaming::setInstance(&outputNaming);
+      subrec::ui::AudioLevelMonitor::setInstance(&audioLevelMonitor);
+      subrec::ui::RecordingLibrary::setInstance(&recordingLibrary);
+      subrec::ui::SubtitleView::setInstance(&subtitleView);
+      subrec::ui::ModelCatalog::setInstance(&modelCatalog);
+      subrec::ui::DesktopActions::setInstance(&desktopActions);
+      subrec::ui::AppInfo::setInstance(&appInfo);
+      subrec::ui::HotkeyController::setInstance(&hotkeyController);
+      subrec::ui::FloatingBarView::setInstance(&floatingBarView);
+      engine.loadFromModule("SubRec.Ui", "AppWindow");
+#endif
+    } else {
+      engine.loadFromModule("SubRec", "Main");
+    }
 
     if (!engine.rootObjects().isEmpty())
     {
@@ -1026,6 +1253,45 @@ int main(int argc, char *argv[])
 
       if (auto *mainWindow = qobject_cast<QQuickWindow *>(root)) {
         mainWindow->setObjectName(QStringLiteral("mainWindow"));
+#ifdef SUBREC_HAS_NEW_UI
+        if (useNewUi) {
+          // initialVisible is the new-UI contract for the C4/--minimized path; flip it
+          // before the shell attaches so startHidden() hides an already-created window.
+          if (startHidden)
+            root->setProperty("initialVisible", false);
+          hotkeyController.attach(hotkeys.get(), mainWindow);
+          if (hotkeys) {
+            const QStringList conflicts = hotkeyController.startupConflicts();
+            if (!conflicts.isEmpty())
+              windowController.onHotkeyConflicts(conflicts);
+          }
+          taskbarOverlay.attachWindow(mainWindow);
+          if (tray) {
+            // H4 tray: item 6 mirrors the bar and toggles it for this recording only
+            // (the policy drops the override at Idle/Failed); menu shortcut texts follow
+            // the bindings. Old UI has no bar and no hotkeys, so neither is set there.
+            auto *trayPtr = tray.get();
+            // Item 6 stays hidden where the bar cannot be excluded from capture (C5 is
+            // forced to "never" there, and the override must not bring it back).
+            const auto pushTrayExtras = [trayPtr, &floatingBarPolicy, &hotkeyController,
+                                         &shellSettings] {
+              trayPtr->setFloatingBarItem(shellSettings.excludeSupported(),
+                                          floatingBarPolicy.shouldShow());
+              trayPtr->setShortcutTexts(
+                  hotkeyController.shortcutLabel(subrec::ui::HotkeyController::ToggleWindow),
+                  hotkeyController.shortcutLabel(subrec::ui::HotkeyController::ToggleRecord),
+                  hotkeyController.shortcutLabel(subrec::ui::HotkeyController::TogglePause));
+            };
+            pushTrayExtras();
+            QObject::connect(trayPtr, &subrec::shell::TrayController::floatingBarToggled,
+                             &floatingBarPolicy, &subrec::shell::FloatingBarPolicy::setTrayOverride);
+            QObject::connect(&floatingBarPolicy, &subrec::shell::FloatingBarPolicy::shouldShowChanged,
+                             trayPtr, pushTrayExtras);
+            QObject::connect(&hotkeyController, &subrec::ui::HotkeyController::bindingsChanged,
+                             trayPtr, pushTrayExtras);
+          }
+        }
+#endif
         windowController.attachMainWindow(mainWindow); // also registers capture exclusion
         if (startHidden) windowController.startHidden();
       } else {

@@ -13,7 +13,31 @@ int main(int argc, char **argv)
         CHECK(argc == 2);
         IsolatedSettings isolated;
         const QString mode = QString::fromLocal8Bit(argv[1]);
-        if (mode == "defaults") {
+        if (mode == "floating") {
+            {
+                ShellSettings settings(true);
+                CHECK(settings.floatingBarText() == "whenHidden");
+                CHECK(settings.floatingBarMode() == FloatingBarMode::WhenHidden);
+                CHECK(!settings.barHintShown());
+                CHECK(!settings.floatingBarPosition("screen").has_value());
+                settings.setFloatingBarText("always");
+                settings.setFloatingBarText("invalid");
+                CHECK(settings.floatingBarMode() == FloatingBarMode::Always);
+                settings.setBarHintShown(true);
+                settings.setFloatingBarPosition("screen", QPoint(-120, 50));
+            }
+            ShellSettings restored(true);
+            CHECK(restored.floatingBarMode() == FloatingBarMode::Always);
+            CHECK(restored.barHintShown());
+            CHECK(restored.floatingBarPosition("screen") == QPoint(-120, 50));
+            ShellSettings oldSystem(false);
+            CHECK(oldSystem.floatingBarMode() == FloatingBarMode::Never);
+            QSettings raw(QSettings::IniFormat, QSettings::UserScope, "SubRec", "SubRec");
+            raw.setValue("ui/floatingBar", "invalid");
+            raw.sync();
+            ShellSettings invalid(true);
+            CHECK(invalid.floatingBarMode() == FloatingBarMode::WhenHidden);
+        } else if (mode == "defaults") {
             ShellSettings s(true);
             CHECK(s.trayEnabled()); CHECK(!s.minimizeToTray()); CHECK(!s.startMinimized());
             CHECK(s.closeActionText() == "ask" && s.closeAction() == CloseAction::Ask);
@@ -114,5 +138,9 @@ int main(int argc, char **argv)
             CHECK(normal->hideOnRecordStart() && normal->startMinimized());
         } else CHECK(false);
         return 0;
-    } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
+    } catch (const std::exception &e)
+    {
+        std::cerr << e.what() << '\n';
+        return 1;
+    }
 }

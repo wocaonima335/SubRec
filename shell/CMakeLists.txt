@@ -15,5 +15,15 @@ target_include_directories(shell_module PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
 target_include_directories(shell_module PRIVATE ${FFMPEG_INCLUDE_DIR} "${FFMPEG_ROOT}/include")
 target_link_libraries(shell_module PUBLIC Qt6::Widgets Qt6::Network Qt6::Quick)
 if(WIN32)
-    target_link_libraries(shell_module PRIVATE user32)
+    # ole32/uuid/gdi32: taskbar_overlay.cpp (CoCreateInstance, CLSID_TaskbarList, CreateBitmap).
+    target_link_libraries(shell_module PRIVATE user32 ole32 uuid gdi32)
+endif()
+
+# Minimize batch 2 (docs/UI_BATCH_PLAN.md: H1, H2, FB1, TB1). Stubs until those modules land.
+if(SUBREC_BUILD_NEW_UI)
+    target_sources(shell_module PRIVATE
+        key_chord.h key_chord.cpp
+        global_hotkeys.h global_hotkeys.cpp
+        floating_bar_policy.h floating_bar_policy.cpp
+        taskbar_overlay.h taskbar_overlay.cpp)
 endif()
