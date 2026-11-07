@@ -31,6 +31,6 @@ jobs:
       - name: QML lint
         shell: bash
         run: |
-          set -o pipefail
+          set -eo pipefail
           cmake --build build-ui --target all_qmllint 2>&1 | tee /tmp/ui-qmllint.log
-          if rg 'Warning:|Error:' /tmp/ui-qmllint.log; then exit 1; fi
+          bash tools/ci/check_qmllint_log.sh /tmp/ui-qmllint.log
