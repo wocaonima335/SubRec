@@ -1,9 +1,19 @@
 # Owned by Codex. Unit tests for B1–B4, U6–U8, H1, H3, FB1 (UI_BATCH_PLAN.md §2).
 # Pattern: add_executable(<name>_tests <name>_tests.cpp), link ui_module and/or
 # ui_test_shell_batch2, add_test(... LABELS "ui"). Empty until the modules land.
+
+# QtTest arguments: one plain-text log file per test in subrec_ui_test_log_dir (see
+# CMakeLists.txt) plus the usual plain text on stdout. Two -o loggers do not change the
+# exit code (number of failed functions). QtTest splits -o at the first ',', so the
+# build path must not contain one.
+function(subrec_ui_qtest_args out name)
+    set(${out} -o "${subrec_ui_test_log_dir}/${name}.txt,txt" -o "-,txt" PARENT_SCOPE)
+endfunction()
+
 add_executable(key_chord_tests ${CMAKE_CURRENT_LIST_DIR}/key_chord_tests.cpp)
 target_link_libraries(key_chord_tests PRIVATE ui_test_shell_batch2)
-add_test(NAME key_chord_tests COMMAND key_chord_tests)
+subrec_ui_qtest_args(key_chord_args key_chord_tests)
+add_test(NAME key_chord_tests COMMAND key_chord_tests ${key_chord_args})
 set_tests_properties(key_chord_tests PROPERTIES LABELS "ui")
 
 find_package(Qt6 REQUIRED COMPONENTS Test)
@@ -13,7 +23,8 @@ foreach(suite IN ITEMS recorder_view shell_view output_naming audio_level_monito
                        floating_bar_policy hotkey_controller recording_library subtitle_view)
     qt_add_executable(${suite}_tests ${CMAKE_CURRENT_LIST_DIR}/${suite}_tests.cpp)
     target_link_libraries(${suite}_tests PRIVATE ui_module ui_test_shell_batch2 Qt6::Test Qt6::Quick Qt6::Widgets)
-    add_test(NAME ${suite}_tests COMMAND ${suite}_tests)
+    subrec_ui_qtest_args(qtest_args ${suite}_tests)
+    add_test(NAME ${suite}_tests COMMAND ${suite}_tests ${qtest_args})
     set_tests_properties(${suite}_tests PROPERTIES TIMEOUT 30 LABELS "ui"
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
 endforeach()

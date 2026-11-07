@@ -68,6 +68,13 @@ add_test(NAME ui_interface_smoke COMMAND ui_interface_smoke)
 set_tests_properties(ui_interface_smoke PROPERTIES TIMEOUT 30 LABELS "ui"
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
 
+# QtTest suites also write a plain-text log per test here (subrec_ui_qtest_args in
+# tests_codex.cmake): on the Windows CI runner their console output never reached ctest,
+# so CI uploads this directory. Created at configure time because QtTest exits non-zero
+# when it cannot open its -o file.
+set(subrec_ui_test_log_dir "${CMAKE_CURRENT_BINARY_DIR}/test-logs")
+file(MAKE_DIRECTORY "${subrec_ui_test_log_dir}")
+
 # Per-owner test lists (UI_BATCH_PLAN.md §4): each file appends add_executable/add_test
 # for its own *_tests.cpp. Both start empty.
 include("${CMAKE_CURRENT_LIST_DIR}/tests_codex.cmake")

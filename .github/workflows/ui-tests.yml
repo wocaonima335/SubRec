@@ -28,6 +28,15 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QSG_RHI_BACKEND: software
         run: ctest --test-dir build-ui --output-on-failure --no-tests=error
+      # Per-test QtTest logs (tests/ui -o files); uploaded whether or not the tests passed.
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-logs-linux
+          path: build-ui/test-logs/
+          if-no-files-found: warn
+          retention-days: 14
       - name: QML lint
         shell: bash
         run: |
@@ -76,6 +85,15 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QSG_RHI_BACKEND: software
         run: ctest --test-dir build-ui --output-on-failure --no-tests=error
+      # QtTest console output did not reach ctest on this runner; the -o files do.
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-logs-windows
+          path: build-ui/test-logs/
+          if-no-files-found: warn
+          retention-days: 14
       - name: QML lint
         # Git Bash; same gate script as Linux (grep only, no rg).
         shell: bash
