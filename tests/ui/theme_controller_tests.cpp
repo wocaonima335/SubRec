@@ -1,7 +1,8 @@
 // U1 unit tests: ThemeController mode read/write, invalid-value handling, dark derivation
 // and live follow of QStyleHints::colorScheme (UI_REDESIGN §2.1, P3-1 "主题").
-// reduceMotion is read from Windows system settings only; on other platforms it is false
-// (this test just pins that fallback). No QtTest dependency: plain counters.
+// reduceMotion is read from Windows system settings only: on Windows the test reads the
+// same setting itself and compares; on other platforms it pins the false fallback.
+// No QtTest dependency: plain counters.
 #include "ui/backend/settings_store.h"
 #include "ui/backend/theme_controller.h"
 
@@ -10,6 +11,16 @@
 #include <QStyleHints>
 #include <QTemporaryDir>
 #include <cstdio>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#ifndef SPI_GETCLIENTAREAANIMATION
+#define SPI_GETCLIENTAREAANIMATION 0x1042
+#endif
+#endif
 
 using subrec::ui::ThemeController;
 
@@ -40,7 +51,23 @@ int main(int argc, char **argv)
         check(controller.systemDark() == (qGuiApp->styleHints()->colorScheme() == Qt::ColorScheme::Dark),
               "systemDark follows QStyleHints");
         check(controller.dark() == controller.systemDark(), "system mode: dark == systemDark");
+#ifdef Q_OS_WIN
+        // Independent read of the Windows "Animation effects" setting the controller uses.
+        // Readable: reduceMotion is its inverse. Unreadable: the controller falls back to false.
+        BOOL animated = TRUE;
+        if (SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animated, 0)) {
+            check(controller.reduceMotion() == !animated,
+                  "reduceMotion == !SPI_GETCLIENTAREAANIMATION when the OS setting is readable");
+            if (controller.reduceMotion() != !animated)
+                std::fprintf(stderr, "  SPI_GETCLIENTAREAANIMATION=%d, reduceMotion=%d\n",
+                             int(animated), int(controller.reduceMotion()));
+        } else {
+            check(!controller.reduceMotion(),
+                  "reduceMotion false when SPI_GETCLIENTAREAANIMATION cannot be read");
+        }
+#else
         check(!controller.reduceMotion(), "reduceMotion false when the OS setting is unreadable");
+#endif
     }
 
     // ---- write, persistence, invalid values ----
