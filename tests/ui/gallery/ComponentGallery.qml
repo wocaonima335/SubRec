@@ -39,7 +39,8 @@ Rectangle {
             spacing: Theme.space8
             AppButton { text: "加载中"; variant: "primary"; loading: true }
             AppButton { text: "禁用"; variant: "primary"; enabled: false; disabledReason: "没有可用的视频来源" }
-            AppButton { text: "带图标"; iconName: "refresh-cw" }
+            // No refresh glyph in the 25-icon set (ui/icons/ICONS_SOURCE.md): shown without icon.
+            AppButton { text: "刷新（暂无刷新图标）" }
             AppButton { text: "小·图标"; small: true; iconName: "download" }
         }
 
@@ -48,7 +49,8 @@ Rectangle {
         Row {
             spacing: Theme.space8
             IconButton { iconName: "folder-open"; toolTipText: "打开保存文件夹" }
-            IconButton { iconName: "trash-2"; dangerHover: true; toolTipText: "删除" }
+            // No delete glyph in the 25-icon set: danger-hover example kept, without icon.
+            IconButton { dangerHover: true; toolTipText: "删除（暂无删除图标）" }
             IconButton { iconName: "pause"; round: true }
             IconButton { iconName: "x"; enabled: false; toolTipText: "禁用" }
             AppIcon { name: "monitor"; size: 32; color: Theme.textSecondary }
@@ -60,7 +62,8 @@ Rectangle {
             spacing: Theme.space12
             Row {
                 spacing: Theme.space12
-                AppTextField { placeholderText: "搜索文件名"; leadingIconName: "search" }
+                // No search glyph in the 25-icon set: field shown without a leading icon.
+                AppTextField { placeholderText: "搜索文件名（暂无搜索图标）" }
                 AppTextField { text: "D:\\Videos\\SubRec"; mono: true }
             }
             Row {

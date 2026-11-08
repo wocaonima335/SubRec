@@ -28,10 +28,13 @@ subrec_ui_add_zcode_test(app_preferences_tests)
 
 # U2 control regressions (QtTest, real clicks offscreen). QtTest log args as in
 # tests_codex.cmake (subrec_ui_qtest_args is defined there and included first).
+# Qt6::Svg: QSvgRenderer for the icon resource checks (the qsvg image plugin the UI already
+# needs at run time comes from the same Qt Svg module).
+find_package(Qt6 REQUIRED COMPONENTS Svg)
 qt_add_executable(ui_controls_tests ui_controls_tests.cpp)
 target_compile_features(ui_controls_tests PRIVATE cxx_std_17)
 target_link_libraries(ui_controls_tests PRIVATE ui_module ui_moduleplugin ui_test_shell_batch2
-    Qt6::Test Qt6::Gui Qt6::Quick)
+    Qt6::Test Qt6::Gui Qt6::Quick Qt6::Svg)
 subrec_ui_qtest_args(ui_controls_args ui_controls_tests)
 add_test(NAME ui_controls_tests COMMAND ui_controls_tests ${ui_controls_args})
 set_tests_properties(ui_controls_tests PROPERTIES TIMEOUT 30 LABELS "ui"

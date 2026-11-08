@@ -5,7 +5,8 @@ import QtQuick.Controls.Basic
 // FROZEN API:
 //   errorText: non-empty -> error border + 12 px message 4 px below (adds 20 px to height)
 //   mono: `type/mono-sm`, elide middle when not focused (paths)
-//   leadingIconName: e.g. "search" (P2), text inset becomes 36
+//   leadingIconName: optional icon name from ui/icons/ICONS_SOURCE.md (the 25-icon set has no
+//     search glyph), text inset becomes 36
 //   locked: §3.2.5 locked state (value visible, not editable, tooltip "录制中不能修改")
 //   suffixText: fixed trailing text such as ".mp4" (P3-2)
 // Commit on editingFinished (focus loss / Enter), as P3-2 requires.

@@ -70,8 +70,9 @@ set(UI_ZCODE_SOURCES
     backend/floating_bar_view.h backend/floating_bar_view.cpp
 )
 
-# U1: Lucide-style SVGs (ISC licence; coordinator to record in THIRD_PARTY_LICENSES.md),
-# resource path :/qt/qml/SubRec/Ui/icons/.
+# U1: single-colour SVG icons from the iconfont.cn Ant Design icon collection (cid=9402),
+# normalised to 24x24 / viewBox 0 0 1024 1024 / fill="currentColor"; source, mapping and
+# licence status in ui/icons/ICONS_SOURCE.md. Resource path :/qt/qml/SubRec/Ui/icons/.
 set(UI_ZCODE_RESOURCES
     icons/app-window.svg
     icons/camera.svg
@@ -80,14 +81,9 @@ set(UI_ZCODE_RESOURCES
     icons/chevron-down.svg
     icons/circle-alert.svg
     icons/circle-check.svg
-    icons/circle.svg
     icons/download.svg
-    icons/external-link.svg
-    icons/file-text.svg
     icons/folder-open.svg
-    icons/grip-vertical.svg
     icons/info.svg
-    icons/keyboard.svg
     icons/library.svg
     icons/maximize-2.svg
     icons/mic-off.svg
@@ -98,13 +94,7 @@ set(UI_ZCODE_RESOURCES
     icons/monitor.svg
     icons/pause.svg
     icons/play.svg
-    icons/power.svg
-    icons/refresh-cw.svg
-    icons/search.svg
     icons/settings.svg
-    icons/sliders-horizontal.svg
-    icons/square.svg
-    icons/trash-2.svg
     icons/triangle-alert.svg
     icons/video.svg
     icons/volume-2.svg

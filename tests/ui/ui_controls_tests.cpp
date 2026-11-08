@@ -6,8 +6,10 @@
 #include "ui/backend/font_policy.h"
 #include "ui/backend/recorder_view.h"
 #include "ui/backend/settings_store.h"
+#include <QFile>
 #include <QJSValue>
 #include <QScreen>
+#include <QSvgRenderer>
 #include <cmath>
 #include <QQmlComponent>
 #include <QQmlEngine>
@@ -302,6 +304,42 @@ Item {
         QCOMPARE(image->property("sourceSize").toSize(), QSize(expected, expected));
         QVERIFY(image->property("smooth").toBool());
         QTRY_COMPARE(image->property("status").toInt(), 1); // Image.Ready: the SVG loaded
+    }
+
+    // Icon resources (ui/icons/ICONS_SOURCE.md): exactly the 25 semantics the UI uses, each
+    // a valid SVG with the 1024 viewBox of the iconfont source, drawn in currentColor with no
+    // DOCTYPE; the 11 removed Lucide-only names are gone (no fallback path at run time).
+    void iconResourcesComplete()
+    {
+        const QString dir = QStringLiteral(":/qt/qml/SubRec/Ui/icons/");
+        const QStringList used{
+            QStringLiteral("video"), QStringLiteral("library"), QStringLiteral("settings"),
+            QStringLiteral("minus"), QStringLiteral("maximize-2"), QStringLiteral("minimize-2"),
+            QStringLiteral("x"), QStringLiteral("check"), QStringLiteral("chevron-down"),
+            QStringLiteral("circle-alert"), QStringLiteral("triangle-alert"), QStringLiteral("circle-check"),
+            QStringLiteral("info"), QStringLiteral("captions"), QStringLiteral("pause"),
+            QStringLiteral("play"), QStringLiteral("app-window"), QStringLiteral("folder-open"),
+            QStringLiteral("monitor-off"), QStringLiteral("monitor"), QStringLiteral("camera"),
+            QStringLiteral("volume-2"), QStringLiteral("mic"), QStringLiteral("mic-off"),
+            QStringLiteral("download")};
+        QCOMPARE(used.size(), 25);
+        for (const QString &name : used) {
+            const QString path = dir + name + QStringLiteral(".svg");
+            QFile file(path);
+            QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(path));
+            const QByteArray data = file.readAll();
+            QVERIFY2(data.contains("fill=\"currentColor\""), qPrintable(path));
+            QVERIFY2(!data.contains("<!DOCTYPE"), qPrintable(path));
+            QSvgRenderer renderer(path);
+            QVERIFY2(renderer.isValid(), qPrintable(path));
+            QCOMPARE(renderer.viewBoxF(), QRectF(0, 0, 1024, 1024));
+        }
+        for (const char *removed : {"circle", "external-link", "file-text", "grip-vertical", "keyboard",
+                                    "power", "refresh-cw", "search", "sliders-horizontal", "square",
+                                    "trash-2"}) {
+            const QString path = dir + QLatin1String(removed) + QStringLiteral(".svg");
+            QVERIFY2(!QFile::exists(path), qPrintable(path));
+        }
     }
 
     // §2.2: fallback lists via substitutions, application font families, Bold-only weights.

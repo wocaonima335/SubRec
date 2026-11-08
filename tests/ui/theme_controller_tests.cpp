@@ -146,26 +146,28 @@ int main(int argc, char **argv)
 #endif
 
     // ---- §2.8 icon set: every name rasterises, unknown names stay empty ----
+    // The 25 semantics the UI uses (ui/icons/ICONS_SOURCE.md); each must exist and really
+    // rasterise (read() returns a non-null image).
     {
         const QString iconDir = QStringLiteral(":/qt/qml/SubRec/Ui/icons");
         const QStringList expected{
-            QStringLiteral("monitor"), QStringLiteral("monitor-off"), QStringLiteral("camera"),
+            QStringLiteral("video"), QStringLiteral("library"), QStringLiteral("settings"),
+            QStringLiteral("minus"), QStringLiteral("maximize-2"), QStringLiteral("minimize-2"),
+            QStringLiteral("x"), QStringLiteral("check"), QStringLiteral("chevron-down"),
+            QStringLiteral("circle-alert"), QStringLiteral("triangle-alert"), QStringLiteral("circle-check"),
+            QStringLiteral("info"), QStringLiteral("captions"), QStringLiteral("pause"),
+            QStringLiteral("play"), QStringLiteral("app-window"), QStringLiteral("folder-open"),
+            QStringLiteral("monitor-off"), QStringLiteral("monitor"), QStringLiteral("camera"),
             QStringLiteral("volume-2"), QStringLiteral("mic"), QStringLiteral("mic-off"),
-            QStringLiteral("captions"), QStringLiteral("circle"), QStringLiteral("square"),
-            QStringLiteral("pause"), QStringLiteral("play"), QStringLiteral("video"),
-            QStringLiteral("library"), QStringLiteral("settings"), QStringLiteral("folder-open"),
-            QStringLiteral("external-link"), QStringLiteral("trash-2"), QStringLiteral("refresh-cw"),
-            QStringLiteral("download"), QStringLiteral("x"), QStringLiteral("minus"),
-            QStringLiteral("maximize-2"), QStringLiteral("minimize-2"), QStringLiteral("circle-alert"),
-            QStringLiteral("circle-check"), QStringLiteral("info"), QStringLiteral("triangle-alert"),
-            QStringLiteral("chevron-down"), QStringLiteral("check"), QStringLiteral("file-text"),
-            QStringLiteral("app-window"), QStringLiteral("power"), QStringLiteral("keyboard"),
-            QStringLiteral("grip-vertical"), QStringLiteral("search"), QStringLiteral("sliders-horizontal")};
+            QStringLiteral("download")};
+        check(expected.size() == 25, "25 icon semantics listed");
         for (const QString &name : expected) {
             QImageReader reader(iconDir + QLatin1Char('/') + name + QStringLiteral(".svg"));
             const QSize size = reader.size();
-            check(reader.canRead() && size.width() > 0, "§2.8 icon present and rasterisable");
-            if (!(reader.canRead() && size.width() > 0))
+            const bool readable = reader.canRead() && size.width() > 0;
+            const QImage image = readable ? reader.read() : QImage();
+            check(readable && !image.isNull(), "§2.8 icon present and rasterisable");
+            if (!readable || image.isNull())
                 std::fprintf(stderr, "  icon: %s\n", qUtf8Printable(name));
         }
         QImageReader unknown(iconDir + QStringLiteral("/no-such-icon.svg"));
