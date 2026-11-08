@@ -40,8 +40,8 @@ ColumnLayout {
         control: AppSwitch {
             backendChecked: SubtitleView.enabled
             enabled: SubtitleView.serviceAttached && !SubtitleView.settingsLocked
-            onToggled: function () {
-                SubtitleView.enabled = checked;
+            onToggledTo: function (value) {
+                SubtitleView.enabled = value;
             }
         }
     }
@@ -169,8 +169,8 @@ ColumnLayout {
         control: AppSwitch {
             backendChecked: SubtitleView.srtBom
             enabled: !SubtitleView.settingsLocked
-            onToggled: function () {
-                SubtitleView.srtBom = checked;
+            onToggledTo: function (value) {
+                SubtitleView.srtBom = value;
             }
         }
     }
@@ -179,8 +179,8 @@ ColumnLayout {
         control: AppSwitch {
             backendChecked: SubtitleView.keepSpool
             enabled: !SubtitleView.settingsLocked
-            onToggled: function () {
-                SubtitleView.keepSpool = checked;
+            onToggledTo: function (value) {
+                SubtitleView.keepSpool = value;
             }
         }
     }

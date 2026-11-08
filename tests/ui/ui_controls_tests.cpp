@@ -109,6 +109,74 @@ Item {
         host->setProperty("backend", QStringLiteral("a"));
         QCOMPARE(combo->property("currentIndex").toInt(), 0);
     }
+
+    // AppSwitch: a click must reach the backend with the requested state (toggledTo), the
+    // knob must follow the backend, a rejected write snaps back, and a locked switch
+    // reports nothing. `legacyRead` records what `checked` reads inside an owner's plain
+    // onToggled - the pattern GeneralSettings used before - as evidence for the handler
+    // order (logged, not asserted: the order is exactly what must not be relied on).
+    void switchClickReachesBackend()
+    {
+        QQmlEngine engine;
+        QQuickWindow window;
+        window.resize(200, 100);
+        auto host = createHosted(engine, window, R"(
+import QtQuick
+import SubRec.Ui
+Item {
+    id: host
+    width: 200; height: 100
+    property bool backend: false
+    property bool reject: false
+    property bool legacyRead: false
+    property int requests: 0
+    AppSwitch {
+        objectName: "sw"
+        x: 20; y: 20
+        backendChecked: host.backend
+        onToggled: host.legacyRead = checked
+        onToggledTo: function (value) { host.requests++; if (!host.reject) host.backend = value }
+    }
+}
+)");
+        QVERIFY(host);
+        auto *sw = host->findChild<QQuickItem *>(QStringLiteral("sw"));
+        QVERIFY(sw);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QSignalSpy toggledTo(sw, SIGNAL(toggledTo(bool)));
+
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, centerOf(sw));
+        QTRY_COMPARE(toggledTo.count(), 1);
+        QCOMPARE(toggledTo.at(0).at(0).toBool(), true);
+        QCOMPARE(host->property("backend").toBool(), true);
+        QCOMPARE(sw->property("checked").toBool(), true);
+        qInfo("legacy owner onToggled read checked=%d after an off->on click (1 = new state, "
+              "0 = the component re-bound first)", int(host->property("legacyRead").toBool()));
+
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, centerOf(sw));
+        QTRY_COMPARE(toggledTo.count(), 2);
+        QCOMPARE(toggledTo.at(1).at(0).toBool(), false);
+        QCOMPARE(host->property("backend").toBool(), false);
+        QCOMPARE(sw->property("checked").toBool(), false);
+
+        // Backend refuses: the knob snaps back to the backend value.
+        host->setProperty("reject", true);
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, centerOf(sw));
+        QTRY_COMPARE(toggledTo.count(), 3);
+        QCOMPARE(host->property("backend").toBool(), false);
+        QCOMPARE(sw->property("checked").toBool(), false);
+
+        // Locked: no request reaches the owner, the knob stays on the backend value.
+        host->setProperty("reject", false);
+        sw->setProperty("locked", true);
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, centerOf(sw));
+        QTest::qWait(50);
+        QCOMPARE(toggledTo.count(), 3);
+        QCOMPARE(host->property("requests").toInt(), 3);
+        QCOMPARE(host->property("backend").toBool(), false);
+        QCOMPARE(sw->property("checked").toBool(), false);
+    }
 };
 
 QTEST_MAIN(UiControlsTests)

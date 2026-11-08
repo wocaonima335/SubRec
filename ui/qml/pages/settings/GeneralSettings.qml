@@ -55,8 +55,8 @@ ColumnLayout {
         control: AppSwitch {
             backendChecked: ShellView.trayEnabled
             enabled: ShellView.trayAvailable
-            onToggled: function () {
-                ShellView.trayEnabled = checked;
+            onToggledTo: function (value) {
+                ShellView.trayEnabled = value;
             }
         }
     }
@@ -65,8 +65,8 @@ ColumnLayout {
         control: AppSwitch {
             backendChecked: ShellView.minimizeToTray
             enabled: ShellView.trayAvailable && ShellView.trayEnabled
-            onToggled: function () {
-                ShellView.minimizeToTray = checked;
+            onToggledTo: function (value) {
+                ShellView.minimizeToTray = value;
             }
         }
     }
@@ -74,8 +74,8 @@ ColumnLayout {
         title: "录制开始时隐藏窗口"
         control: AppSwitch {
             backendChecked: ShellView.hideOnRecordStart
-            onToggled: function () {
-                ShellView.hideOnRecordStart = checked;
+            onToggledTo: function (value) {
+                ShellView.hideOnRecordStart = value;
             }
         }
     }
@@ -162,8 +162,8 @@ ColumnLayout {
         control: AppSwitch {
             backendChecked: ShellView.startMinimized
             enabled: ShellView.trayAvailable && ShellView.trayEnabled
-            onToggled: function () {
-                ShellView.startMinimized = checked;
+            onToggledTo: function (value) {
+                ShellView.startMinimized = value;
             }
         }
     }
@@ -197,8 +197,8 @@ ColumnLayout {
         title: "录制中退出时确认"
         control: AppSwitch {
             backendChecked: ShellView.confirmExitWhileRecording
-            onToggled: function () {
-                ShellView.confirmExitWhileRecording = checked;
+            onToggledTo: function (value) {
+                ShellView.confirmExitWhileRecording = value;
             }
         }
     }
