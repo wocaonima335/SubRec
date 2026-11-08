@@ -310,9 +310,20 @@ Item {
     {
         const QFont before = QGuiApplication::font();
         subrec::ui::applyUiFontPolicy();
-        QCOMPARE(QFont::substitutes(QStringLiteral("Microsoft YaHei UI")),
-                 QStringList({QStringLiteral("Segoe UI"), QStringLiteral("Microsoft YaHei")}));
-        QCOMPARE(QFont::substitutes(QStringLiteral("Cascadia Mono")), QStringList({QStringLiteral("Consolas")}));
+        // Qt stores substitute names lower-cased (qtbase v6.8.0 src/gui/text/qfont.cpp:
+        // insertSubstitutions() appends substituteName.toLower(), :2014-2026; substitutes()
+        // looks up familyName.toLower(), :1975-1979). Compare against the product's own
+        // fallback lists, element by element lower-cased: same names, order and count.
+        const auto lowered = [](const QStringList &names) {
+            QStringList result;
+            for (const QString &name : names)
+                result << name.toLower();
+            return result;
+        };
+        const QStringList ui = subrec::ui::uiFontFamilies();
+        const QStringList mono = subrec::ui::monoFontFamilies();
+        QCOMPARE(QFont::substitutes(ui.first()), lowered(ui.mid(1)));
+        QCOMPARE(QFont::substitutes(mono.first()), lowered(mono.mid(1)));
         QCOMPARE(QGuiApplication::font().families(), subrec::ui::uiFontFamilies());
 
         QQmlEngine engine;
