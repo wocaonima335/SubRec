@@ -55,6 +55,7 @@ ColumnLayout {
         }
     }
     Text {
+        font: Theme.captionFont
         text: "示例：" + OutputNaming.previewFileName
         color: Theme.textSecondary
     }
@@ -64,6 +65,7 @@ ColumnLayout {
     FormRow {
         title: "输出格式"
         control: Text {
+            font: Theme.captionFont
             text: "MP4（H.264 视频 + AAC 音频）"
             color: Theme.textSecondary
         }
@@ -72,6 +74,7 @@ ColumnLayout {
         title: "视频编码器"
         description: RecorderView.selectedVideoEncoderDetail
         control: Text {
+            font: Theme.captionFont
             text: RecorderView.selectedVideoEncoder.length > 0 ? RecorderView.selectedVideoEncoder + (RecorderView.selectedVideoEncoderIsHardware ? "（硬件）" : "（软件）") : "开始录制后确定"
             color: Theme.textSecondary
         }

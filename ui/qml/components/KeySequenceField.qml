@@ -44,6 +44,7 @@ Rectangle {
         anchors.margins: Theme.space8
         spacing: Theme.space4
         Text {
+            font: Theme.bodyFont
             Layout.fillWidth: true
             text: HotkeyController.capturingAction === root.action ? (HotkeyController.captureText.length > 0 ? HotkeyController.captureText : "请按下组合键…") : root.bindingText.length > 0 ? root.bindingText : "未设置"
             color: Theme.textPrimary

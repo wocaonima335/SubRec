@@ -31,7 +31,7 @@ Button {
     // 12 px SemiBold small / 14 px SemiBold normal (sizes from Theme tokens).
     font.family: Theme.fontFamily
     font.pixelSize: small ? Theme.captionFont.pixelSize : Theme.bodyStrongFont.pixelSize
-    font.weight: Font.DemiBold
+    font.weight: Font.Bold
 
     // §2.5 "禁用": whole control 40 % opacity, default arrow cursor.
     opacity: enabled ? 1.0 : 0.4

@@ -49,16 +49,20 @@ QtObject {
     readonly property color tooltipBg: dark ? "#3A404C" : "#1A1D23"
     readonly property color previewChipBg: Qt.rgba(0, 0, 0, 0.60)
 
-    // §2.2 typography
+    // §2.2 typography. Fallback lists live in ui/backend/font_policy.h (applied once at
+    // start-up by main.cpp): "Microsoft YaHei UI" -> "Segoe UI" -> "Microsoft YaHei" and
+    // "Cascadia Mono" -> "Consolas" via QFont substitutions, so these single names fall back
+    // without scanning installed fonts. Weights: Font.Normal and Font.Bold only (YaHei UI
+    // has no 600 face; DemiBold was synthesised or mapped unpredictably).
     readonly property string fontFamily: "Microsoft YaHei UI"
-    readonly property string monoFamily: "Cascadia Mono" // U1: fall back to Consolas when missing
-    readonly property font timerFont: Qt.font({ family: monoFamily, pixelSize: 32, weight: Font.DemiBold })
-    readonly property font h1Font: Qt.font({ family: fontFamily, pixelSize: 20, weight: Font.DemiBold })
-    readonly property font h2Font: Qt.font({ family: fontFamily, pixelSize: 16, weight: Font.DemiBold })
+    readonly property string monoFamily: "Cascadia Mono"
+    readonly property font timerFont: Qt.font({ family: monoFamily, pixelSize: 32, weight: Font.Bold })
+    readonly property font h1Font: Qt.font({ family: fontFamily, pixelSize: 20, weight: Font.Bold })
+    readonly property font h2Font: Qt.font({ family: fontFamily, pixelSize: 16, weight: Font.Bold })
     readonly property font bodyFont: Qt.font({ family: fontFamily, pixelSize: 14 })
-    readonly property font bodyStrongFont: Qt.font({ family: fontFamily, pixelSize: 14, weight: Font.DemiBold })
+    readonly property font bodyStrongFont: Qt.font({ family: fontFamily, pixelSize: 14, weight: Font.Bold })
     readonly property font captionFont: Qt.font({ family: fontFamily, pixelSize: 12 })
-    readonly property font badgeFont: Qt.font({ family: fontFamily, pixelSize: 11, weight: Font.DemiBold })
+    readonly property font badgeFont: Qt.font({ family: fontFamily, pixelSize: 11, weight: Font.Bold })
     readonly property font monoSmallFont: Qt.font({ family: monoFamily, pixelSize: 12 })
 
     // §2.3 spacing and sizes

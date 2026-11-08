@@ -21,10 +21,12 @@ AppDialog {
         width: parent.width
         spacing: Theme.space8
         Text {
+            font: Theme.bodyFont
             text: "需要下载模型才能启用 AI 字幕。"
             color: Theme.textPrimary
         }
         Text {
+            font: Theme.captionFont
             text: String(ModelCatalog.modelInfo(root.modelId).sizeText || "下载大小以模型清单为准")
             color: Theme.textSecondary
         }

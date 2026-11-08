@@ -13,6 +13,7 @@ ColumnLayout {
 
     // TODO(H3): rows.
     Text {
+        font: Theme.captionFont
         text: "全局快捷键在应用最小化后仍然有效。"
         color: Theme.textSecondary
     }
@@ -75,6 +76,7 @@ ColumnLayout {
             text: "F9"
         }
         Text {
+            font: Theme.captionFont
             text: "开始/停止录制"
             color: Theme.textSecondary
         }
@@ -84,6 +86,7 @@ ColumnLayout {
             text: "F10"
         }
         Text {
+            font: Theme.captionFont
             text: "暂停/继续录制"
             color: Theme.textSecondary
         }
@@ -96,6 +99,7 @@ ColumnLayout {
             text: "1 / 2 / 3"
         }
         Text {
+            font: Theme.captionFont
             text: "切换页面"
             color: Theme.textSecondary
         }

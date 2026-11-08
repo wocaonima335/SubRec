@@ -59,12 +59,14 @@ Rectangle {
             font: Theme.captionFont
         }
         Text {
+            font: Theme.captionFont
             Layout.fillWidth: true
             text: root.errorText.length > 0 ? root.errorText : root.summary
             color: Theme.textSecondary
             elide: Text.ElideRight
         }
         Text {
+            font: Theme.captionFont
             visible: root.status === "downloading"
             text: Math.round(root.progress * 100) + "% · " + Math.round(root.bytesDone / 1048576) + " / " + Math.round(root.bytesTotal / 1048576) + " MB"
             color: Theme.textSecondary

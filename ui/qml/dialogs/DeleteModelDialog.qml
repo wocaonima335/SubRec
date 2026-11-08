@@ -21,16 +21,19 @@ AppDialog {
         width: parent.width
         spacing: Theme.space8
         Text {
+            font: Theme.bodyFont
             width: parent.width
             text: String(ModelCatalog.modelInfo(root.modelId).displayName || "")
             color: Theme.textPrimary
             elide: Text.ElideRight
         }
         Text {
+            font: Theme.captionFont
             text: String(ModelCatalog.modelInfo(root.modelId).sizeText || "")
             color: Theme.textSecondary
         }
         Text {
+            font: Theme.bodyFont
             width: parent.width
             visible: SubtitleView.enabled && SubtitleView.modelId === root.modelId
             text: "删除后字幕将不可用，重新下载模型后才能生成字幕。"

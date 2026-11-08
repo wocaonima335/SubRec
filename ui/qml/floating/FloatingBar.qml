@@ -188,7 +188,7 @@ Window {
             font.family: Theme.monoFamily
             font.pixelSize: 14
             font.weight: root.state === "running" || root.state === "paused"
-                          || root.state === "stopping" ? Font.DemiBold : Font.Normal
+                          || root.state === "stopping" ? Font.Bold : Font.Normal
             color: root.state === "saved" ? Theme.successFg
                  : root.state === "failed" ? Theme.dangerFg
                  : root.state === "paused" ? Theme.warningFg

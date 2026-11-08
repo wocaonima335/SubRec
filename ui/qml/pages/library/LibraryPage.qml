@@ -60,6 +60,7 @@ Item {
         }
 
         Text {
+            font: Theme.captionFont
             text: RecordingLibrary.summaryText
             color: Theme.textSecondary
         }

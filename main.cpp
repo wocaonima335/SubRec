@@ -27,6 +27,7 @@
 #include "ui/backend/audio_level_monitor.h"
 #include "ui/backend/desktop_actions.h"
 #include "ui/backend/floating_bar_view.h"
+#include "ui/backend/font_policy.h"
 #include "ui/backend/hotkey_controller.h"
 #include "ui/backend/model_catalog.h"
 #include "ui/backend/output_naming.h"
@@ -980,8 +981,20 @@ int main(int argc, char *argv[])
 {
   qInstallMessageHandler(qtLogHandler);
   const bool debugLog = subrec::logging::configure(argc, argv);
+#ifdef SUBREC_HAS_NEW_UI
+  // Fractional scale factors (125 %, 150 %) are used as-is instead of being rounded; this is
+  // Qt 6's default, set explicitly so the new UI's pixel sizes never depend on it. Must
+  // precede the application object.
+  QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
+      Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+#endif
   QApplication app(argc, argv); // Widgets: QSystemTrayIcon/QMenu need QApplication (§4.1, R9)
   subrec::logging::reportLevel(debugLog);
+#ifdef SUBREC_HAS_NEW_UI
+  // §2.2 font fallback lists (YaHei UI -> Segoe UI -> YaHei; Cascadia Mono -> Consolas) and
+  // the UI family list as the application font for text without an explicit font.
+  subrec::ui::applyUiFontPolicy();
+#endif
   // The native Windows style rejects the custom control delegates used by the QML pages.
   // Basic is deterministic across platforms and keeps Browse/style customization working.
   QQuickStyle::setStyle(QStringLiteral("Basic"));

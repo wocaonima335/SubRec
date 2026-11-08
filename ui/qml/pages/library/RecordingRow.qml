@@ -50,22 +50,26 @@ Rectangle {
         spacing: Theme.space12
 
         Text {
+            font: Theme.bodyFont
             Layout.fillWidth: true
             text: root.fileName
             elide: Text.ElideMiddle
             color: Theme.textPrimary
         }
         Text {
+            font: Theme.captionFont
             Layout.preferredWidth: 150
             text: root.modifiedText
             color: Theme.textSecondary
         }
         Text {
+            font: Theme.captionFont
             Layout.preferredWidth: 100
             text: root.sizeText
             color: Theme.textSecondary
         }
         Text {
+            font: Theme.captionFont
             Layout.preferredWidth: 90
             text: root.isRecording ? "录制中" : ({
                     none: "无字幕",

@@ -24,6 +24,7 @@ AppDialog {
         width: parent.width
         spacing: Theme.space8
         Text {
+            font: Theme.captionFont
             width: parent.width
             text: root.filePath
             color: Theme.textSecondary

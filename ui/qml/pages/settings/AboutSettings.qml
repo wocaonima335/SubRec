@@ -19,6 +19,7 @@ ColumnLayout {
         color: Theme.textPrimary
     }
     Text {
+        font: Theme.captionFont
         text: AppInfo.versionText
         color: Theme.textSecondary
     }

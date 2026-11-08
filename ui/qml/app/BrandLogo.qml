@@ -17,6 +17,6 @@ Rectangle {
         color: Theme.textOnAccent
         font.family: Theme.fontFamily
         font.pixelSize: root.size >= 48 ? 28 : 12
-        font.weight: Font.DemiBold
+        font.weight: Font.Bold
     }
 }

@@ -30,6 +30,7 @@ AppDialog {
         width: parent.width
         spacing: Theme.space8
         Text {
+            font: Theme.bodyFont
             text: String(root.info.licenseName || "")
             color: Theme.textPrimary
         }
@@ -38,6 +39,7 @@ AppDialog {
             height: 240
             contentWidth: availableWidth
             Text {
+                font: Theme.captionFont
                 width: parent.width
                 text: String(root.info.licenseText || "").length > 0 ? String(root.info.licenseText) : "请在浏览器中阅读许可原文。"
                 color: Theme.textSecondary

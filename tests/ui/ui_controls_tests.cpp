@@ -3,9 +3,12 @@
 // that binds it to a "backend" property the way the settings pages do. The ui.* settings
 // store is redirected to a temporary INI file (the Theme singleton reads ThemeController).
 #include <QtTest>
+#include "ui/backend/font_policy.h"
 #include "ui/backend/recorder_view.h"
 #include "ui/backend/settings_store.h"
 #include <QJSValue>
+#include <QScreen>
+#include <cmath>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -269,6 +272,72 @@ Item {
             QCOMPARE(modelRows(microphone).value(1).toMap().value(QStringLiteral("enabled")).toBool(), false);
         }
         subrec::ui::RecorderView::setInstance(nullptr);
+    }
+
+    // AppIcon rasterises its SVG at size x device pixel ratio (offscreen: ratio 1).
+    void iconRasterisesAtDevicePixels()
+    {
+        QQmlEngine engine;
+        QQuickWindow window;
+        window.resize(100, 100);
+        auto host = createHosted(engine, window, R"(
+import QtQuick
+import SubRec.Ui
+Item {
+    width: 100; height: 100
+    AppIcon { objectName: "icon"; name: "settings"; size: 20 }
+}
+)");
+        QVERIFY(host);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        auto *icon = host->findChild<QQuickItem *>(QStringLiteral("icon"));
+        QVERIFY(icon);
+        QCOMPARE(icon->implicitWidth(), 20.0);
+        const qreal ratio = qMax<qreal>(1.0, window.screen() ? window.screen()->devicePixelRatio() : 1.0);
+        const int expected = int(std::ceil(20 * ratio));
+        QTRY_COMPARE(icon->property("pixelSize").toInt(), expected);
+        auto *image = icon->findChild<QQuickItem *>(QStringLiteral("appIconImage"));
+        QVERIFY(image);
+        QCOMPARE(image->property("sourceSize").toSize(), QSize(expected, expected));
+        QVERIFY(image->property("smooth").toBool());
+        QTRY_COMPARE(image->property("status").toInt(), 1); // Image.Ready: the SVG loaded
+    }
+
+    // §2.2: fallback lists via substitutions, application font families, Bold-only weights.
+    // Last test: it changes process-wide font state (restored at the end).
+    void fontPolicyAndThemeWeights()
+    {
+        const QFont before = QGuiApplication::font();
+        subrec::ui::applyUiFontPolicy();
+        QCOMPARE(QFont::substitutes(QStringLiteral("Microsoft YaHei UI")),
+                 QStringList({QStringLiteral("Segoe UI"), QStringLiteral("Microsoft YaHei")}));
+        QCOMPARE(QFont::substitutes(QStringLiteral("Cascadia Mono")), QStringList({QStringLiteral("Consolas")}));
+        QCOMPARE(QGuiApplication::font().families(), subrec::ui::uiFontFamilies());
+
+        QQmlEngine engine;
+        QQmlComponent component(&engine);
+        component.setData(R"(
+import QtQuick
+import SubRec.Ui
+QtObject {
+    property string family: Theme.fontFamily
+    property int h1: Theme.h1Font.weight
+    property int h2: Theme.h2Font.weight
+    property int strong: Theme.bodyStrongFont.weight
+    property int badge: Theme.badgeFont.weight
+    property int timer: Theme.timerFont.weight
+    property int body: Theme.bodyFont.weight
+}
+)", QUrl(QStringLiteral("qrc:/ui_controls_tests/Fonts.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        std::unique_ptr<QObject> fonts(component.create());
+        QVERIFY(fonts);
+        QCOMPARE(fonts->property("family").toString(), subrec::ui::uiFontFamilies().first());
+        for (const char *name : {"h1", "h2", "strong", "badge", "timer"})
+            QCOMPARE(fonts->property(name).toInt(), int(QFont::Bold));
+        QCOMPARE(fonts->property("body").toInt(), int(QFont::Normal));
+        QGuiApplication::setFont(before);
     }
 };
 

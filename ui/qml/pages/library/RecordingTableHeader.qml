@@ -45,6 +45,7 @@ Rectangle {
             onClicked: root.sortRequested("size")
         }
         Text {
+            font: Theme.captionFont
             Layout.preferredWidth: 90
             objectName: "subtitleColumn"
             text: "字幕"
@@ -67,11 +68,13 @@ Rectangle {
             anchors.fill: parent
             spacing: Theme.space4
             Text {
+                font: Theme.captionFont
                 anchors.verticalCenter: parent.verticalCenter
                 text: sortHeader.text
                 color: Theme.textSecondary
             }
             Text {
+                font: Theme.captionFont
                 anchors.verticalCenter: parent.verticalCenter
                 visible: sortHeader.active
                 text: sortHeader.descending ? "↓" : "↑"

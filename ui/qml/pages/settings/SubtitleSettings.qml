@@ -18,6 +18,7 @@ ColumnLayout {
 
     // TODO(U8): rows.
     Text {
+        font: Theme.captionFont
         text: "在本机离线识别语音，停止录制后在视频旁生成同名 .srt 字幕。录音不会上传，只有下载模型时需要联网。"
         color: Theme.textSecondary
         wrapMode: Text.WordWrap

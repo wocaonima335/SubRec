@@ -99,6 +99,7 @@ ColumnLayout {
     FormRow {
         title: "同时录制两路音频"
         control: Text {
+            font: Theme.captionFont
             text: RecorderView.audioMixingAvailable ? "支持" : "仅一路混音"
             color: Theme.textSecondary
         }
@@ -111,6 +112,7 @@ ColumnLayout {
         body: "请检查系统权限和设备连接。"
     }
     Text {
+        font: Theme.captionFont
         text: "共 " + RecorderView.captureDevices.length + " 个设备"
         color: Theme.textSecondary
     }
