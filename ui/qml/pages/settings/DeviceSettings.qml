@@ -4,8 +4,10 @@ import QtQuick.Layouts
 // Module U7 (Codex). P3-3 音频与设备 (UI_REDESIGN §3.5 P3-3).
 //   视频设备 🔒: AppComboBox of screens + cameras, secondaryText "屏幕"/"摄像头"
 //     -> RecorderView.selectVideoCaptureDevice
-//   系统声音设备 🔒 / 麦克风设备 🔒: RecorderView.devicesOfKind("system-audio"/"microphone")
-//     -> selectAudioCaptureDevice / selectMicrophoneCaptureDevice
+//   系统声音设备 🔒 / 麦克风设备 🔒: RecorderView.captureDevices filtered by kind
+//     ("system-audio"/"microphone") -> selectAudioCaptureDevice / selectMicrophoneCaptureDevice
+//   The option lists read the captureDevices PROPERTY so they rebuild on
+//   captureDevicesChanged (a binding does not track Q_INVOKABLE devicesOfKind() calls).
 //   能否同时录两路: read-only from RecorderView.audioMixingAvailable
 //   设备列表: "共 {n} 个设备" + "刷新设备" (RecorderView.refreshCaptureDevices); empty list ->
 //     warning InlineAlert.
@@ -13,15 +15,33 @@ import QtQuick.Layouts
 ColumnLayout {
     id: root
     spacing: Theme.space16
-    function options(devices) {
-        return devices.map(function (device) {
-            return {
-                text: device.displayName,
-                value: device.id,
-                enabled: device.available,
-                secondaryText: device.unavailableReason || device.kind
-            };
+    // Second line: unavailable reason, else the kind in Chinese (kinds from
+    // capture/capture_types.cpp captureDeviceKindName; anything else is shown as-is).
+    readonly property var kindNames: ({
+            "screen": "屏幕",
+            "camera": "摄像头",
+            "system-audio": "系统声音",
+            "microphone": "麦克风"
+        })
+    function kindText(kind) {
+        return root.kindNames[kind] !== undefined ? root.kindNames[kind] : kind;
+    }
+    // devices: RecorderView.captureDevices; kinds: list of kinds, in this order.
+    function options(devices, kinds) {
+        var result = [];
+        kinds.forEach(function (kind) {
+            devices.forEach(function (device) {
+                if (device.kind !== kind)
+                    return;
+                result.push({
+                    text: device.displayName,
+                    value: device.id,
+                    enabled: device.available,
+                    secondaryText: device.unavailableReason ? device.unavailableReason : root.kindText(device.kind)
+                });
+            });
         });
+        return result;
     }
 
     // TODO(U7): rows.
@@ -31,7 +51,8 @@ ColumnLayout {
     FormRow {
         title: "视频设备"
         control: AppComboBox {
-            model: root.options(RecorderView.devicesOfKind("screen").concat(RecorderView.devicesOfKind("camera")))
+            objectName: "videoDeviceCombo"
+            model: root.options(RecorderView.captureDevices, ["screen", "camera"])
             locked: RecorderView.capturing
             enabled: !RecorderView.capturing
             currentIndex: indexOfValue(RecorderView.selectedVideoDeviceId)
@@ -48,7 +69,8 @@ ColumnLayout {
     FormRow {
         title: "系统声音"
         control: AppComboBox {
-            model: root.options(RecorderView.devicesOfKind("system-audio"))
+            objectName: "systemAudioCombo"
+            model: root.options(RecorderView.captureDevices, ["system-audio"])
             locked: RecorderView.capturing
             enabled: !RecorderView.capturing
             currentIndex: indexOfValue(RecorderView.selectedAudioDeviceId)
@@ -62,7 +84,8 @@ ColumnLayout {
     FormRow {
         title: "麦克风"
         control: AppComboBox {
-            model: root.options(RecorderView.devicesOfKind("microphone"))
+            objectName: "microphoneCombo"
+            model: root.options(RecorderView.captureDevices, ["microphone"])
             locked: RecorderView.capturing
             enabled: !RecorderView.capturing
             currentIndex: indexOfValue(RecorderView.selectedMicrophoneDeviceId)

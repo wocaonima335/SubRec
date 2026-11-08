@@ -3,7 +3,9 @@
 // that binds it to a "backend" property the way the settings pages do. The ui.* settings
 // store is redirected to a temporary INI file (the Theme singleton reads ThemeController).
 #include <QtTest>
+#include "ui/backend/recorder_view.h"
 #include "ui/backend/settings_store.h"
+#include <QJSValue>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickItem>
@@ -35,7 +37,42 @@ QPoint centerOf(const QQuickItem *item)
     return item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint();
 }
 
+// AppComboBox `model` (a JS array assigned from QML) as a list of maps.
+QVariantList modelRows(const QObject *combo)
+{
+    QVariant value = combo->property("model");
+    if (value.canConvert<QJSValue>())
+        value = value.value<QJSValue>().toVariant();
+    return value.toList();
+}
+
+QVariantMap device(const QString &id, const QString &kind, bool available = true,
+                   const QString &reason = {})
+{
+    return {{QStringLiteral("id"), id}, {QStringLiteral("displayName"), id},
+            {QStringLiteral("kind"), kind}, {QStringLiteral("available"), available},
+            {QStringLiteral("unavailableReason"), reason}};
+}
+
 } // namespace
+
+// Minimal device source in the shape RecorderView reads from FFRecorder (property names
+// and maps as in capture/capture_types.cpp CaptureDevice::toVariantMap); same idea as the
+// FakeRecorder of recorder_view_tests.cpp, reduced to the device properties.
+class FakeDeviceSource : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantList captureDevices MEMBER captureDevices NOTIFY captureDevicesChanged)
+    Q_PROPERTY(QString selectedVideoDeviceId MEMBER selectedVideoDeviceId NOTIFY captureDevicesChanged)
+    Q_PROPERTY(QString selectedAudioDeviceId MEMBER selectedAudioDeviceId NOTIFY captureDevicesChanged)
+    Q_PROPERTY(QString selectedMicrophoneDeviceId MEMBER selectedMicrophoneDeviceId NOTIFY captureDevicesChanged)
+public:
+    QVariantList captureDevices;
+    QString selectedVideoDeviceId = QStringLiteral("screen-1");
+    QString selectedAudioDeviceId = QStringLiteral("wasapi:default");
+    QString selectedMicrophoneDeviceId = QStringLiteral("mic-1");
+signals:
+    void captureDevicesChanged();
+};
 
 class UiControlsTests : public QObject {
     Q_OBJECT
@@ -176,6 +213,62 @@ Item {
         QCOMPARE(host->property("requests").toInt(), 3);
         QCOMPARE(host->property("backend").toBool(), false);
         QCOMPARE(sw->property("checked").toBool(), false);
+    }
+
+    // DeviceSettings: the three device lists follow captureDevicesChanged and label the
+    // second line with the Chinese kind name (or the unavailable reason).
+    void deviceListsFollowCaptureDevices()
+    {
+        FakeDeviceSource source;
+        source.captureDevices = {device("screen-1", "screen"), device("wasapi:default", "system-audio"),
+                                 device("mic-1", "microphone")};
+        subrec::ui::RecorderView view(nullptr);
+        view.attach(&source, {});
+        subrec::ui::RecorderView::setInstance(&view);
+        {
+            QQmlEngine engine;
+            QQuickWindow window;
+            window.resize(900, 700);
+            QQmlComponent component(&engine);
+            component.loadFromModule("SubRec.Ui", "DeviceSettings");
+            QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+            std::unique_ptr<QObject> page(component.create());
+            QVERIFY(page);
+            auto *pageItem = qobject_cast<QQuickItem *>(page.get());
+            QVERIFY(pageItem);
+            pageItem->setParentItem(window.contentItem());
+            pageItem->setWidth(800);
+
+            auto *video = page->findChild<QObject *>(QStringLiteral("videoDeviceCombo"));
+            auto *system = page->findChild<QObject *>(QStringLiteral("systemAudioCombo"));
+            auto *microphone = page->findChild<QObject *>(QStringLiteral("microphoneCombo"));
+            QVERIFY(video && system && microphone);
+            QCOMPARE(video->property("count").toInt(), 1);
+            QCOMPARE(system->property("count").toInt(), 1);
+            QCOMPARE(microphone->property("count").toInt(), 1);
+            const auto secondLine = [](QObject *combo, int row) {
+                return modelRows(combo).value(row).toMap().value(QStringLiteral("secondaryText")).toString();
+            };
+            QCOMPARE(secondLine(video, 0), QStringLiteral("屏幕"));
+            QCOMPARE(secondLine(system, 0), QStringLiteral("系统声音"));
+            QCOMPARE(secondLine(microphone, 0), QStringLiteral("麦克风"));
+
+            // A refresh that finds more devices must reach the lists without reloading the page.
+            source.captureDevices = {device("camera-1", "camera"), device("screen-1", "screen"),
+                                     device("wasapi:default", "system-audio"), device("mic-1", "microphone"),
+                                     device("mic-2", "microphone", false, QStringLiteral("设备被占用"))};
+            emit source.captureDevicesChanged();
+            QTRY_COMPARE(microphone->property("count").toInt(), 2);
+            QCOMPARE(video->property("count").toInt(), 2);
+            QCOMPARE(system->property("count").toInt(), 1);
+            // Screens first, then cameras (page order), whatever the source order.
+            QCOMPARE(modelRows(video).value(0).toMap().value(QStringLiteral("value")).toString(),
+                     QStringLiteral("screen-1"));
+            QCOMPARE(secondLine(video, 1), QStringLiteral("摄像头"));
+            QCOMPARE(secondLine(microphone, 1), QStringLiteral("设备被占用"));
+            QCOMPARE(modelRows(microphone).value(1).toMap().value(QStringLiteral("enabled")).toBool(), false);
+        }
+        subrec::ui::RecorderView::setInstance(nullptr);
     }
 };
 
