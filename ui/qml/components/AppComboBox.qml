@@ -12,6 +12,7 @@ import QtQuick.Controls.Basic
 //   placeholderText: shown when currentIndex < 0 (e.g. "没有找到麦克风")
 //   disabledReason: tooltip while disabled
 // Select with currentIndex / indexOfValue(); react to `activated(index)` (user action only).
+// A user pick does not break an owner's `currentIndex:` binding (ComboBox sets it from C++).
 ComboBox {
     id: root
     property bool compact: false
@@ -140,13 +141,10 @@ ComboBox {
             radius: Theme.radiusXs
             color: option.highlighted && option.enabled ? Theme.bgHover : "transparent"
         }
-
-        onClicked: {
-            if (root.currentIndex !== index)
-                root.currentIndex = index
-            root.activated(index)
-            root.popup.close()
-        }
+        // No onClicked here: ComboBox connects every delegate it creates through
+        // delegateModel and, on click, sets currentIndex, emits activated(index) and closes
+        // the popup itself. Doing it here as well would emit activated twice and assigning
+        // currentIndex from QML would break the owner's currentIndex binding.
     }
 
     popup: Popup {
@@ -163,10 +161,14 @@ ComboBox {
             border.color: Theme.borderDefault
         }
 
+        // The rows are ComboBox's own delegates, reached through delegateModel (the raw
+        // `model` array has no delegate here, so the list used to render nothing). Only
+        // populated while open, as in the Qt ComboBox customization example.
         contentItem: ListView {
+            objectName: "comboPopupList"
             clip: true
             implicitHeight: contentHeight
-            model: root.model
+            model: root.popup.visible ? root.delegateModel : null
             currentIndex: root.highlightedIndex
             spacing: 0
             ScrollIndicator.vertical: ScrollIndicator {}
