@@ -3,8 +3,8 @@ import QtQuick
 
 // Module U5 (ZCode). P1 area D (Card, inner width 248): three sections.
 // - 视频来源: SegmentedControl [屏幕][摄像头] (currentValue = RecorderView.selectedVideoKind,
-//   activated -> RecorderView.openSource(kind)); AppComboBox of RecorderView.devicesOfKind(kind)
-//   -> selectVideoCaptureDevice.
+//   activated -> RecorderView.openSource(kind)); AppComboBox of the devices of that kind
+//   (options() below, from RecorderView.captureDevices) -> selectVideoCaptureDevice.
 // - 音频: per plan decision 3 the engine gives ONE mix level, so the audio group shows a
 //   single shared LevelMeter at its top; below it the 系统声音 / 麦克风 rows (AppSwitch ->
 //   RecorderView.setAudioMode(...) following the old OptionsArea rules A1–A6, mixing needs
@@ -22,10 +22,36 @@ Card {
 
     readonly property bool locked: RecorderView.capturing
     readonly property string audioMode: RecorderView.audioMode
-    readonly property var videoDevices: RecorderView.devicesOfKind(
+    // AppComboBox options ({text, value, enabled, secondaryText?}; AppComboBox presets
+    // textRole "text" / valueRole "value"). The raw device maps of RecorderView have no
+    // text/value fields, so used directly they gave empty rows, each showing the check mark
+    // (undefined === undefined). Built from the captureDevices PROPERTY so the lists follow
+    // captureDevicesChanged (a binding does not track Q_INVOKABLE devicesOfKind() calls).
+    // Same shape as DeviceSettings.qml options(); the second line is only the unavailable
+    // reason here, the kind is implied by the section.
+    function options(devices, kind) {
+        var result = [];
+        devices.forEach(function (device) {
+            if (device.kind !== kind)
+                return;
+            var option = { text: device.displayName, value: device.id, enabled: device.available };
+            if (device.unavailableReason)
+                option.secondaryText = device.unavailableReason;
+            result.push(option);
+        });
+        return result;
+    }
+    function indexOfId(options, id) {
+        for (var i = 0; i < options.length; ++i) {
+            if (options[i].value === id)
+                return i;
+        }
+        return -1;
+    }
+    readonly property var videoDevices: root.options(RecorderView.captureDevices,
         RecorderView.selectedVideoKind === "camera" ? "camera" : "screen")
-    readonly property var systemDevices: RecorderView.devicesOfKind("system-audio")
-    readonly property var micDevices: RecorderView.devicesOfKind("microphone")
+    readonly property var systemDevices: root.options(RecorderView.captureDevices, "system-audio")
+    readonly property var micDevices: root.options(RecorderView.captureDevices, "microphone")
 
     // §3.2.5 audio rules.
     readonly property bool systemOn: audioMode === "system" || audioMode === "both"
@@ -89,15 +115,17 @@ Card {
         }
         AppComboBox {
             id: videoCombo
+            objectName: "sourceVideoCombo"
             topPadding: Theme.space8
             width: parent.width
             model: root.videoDevices
-            placeholderText: root.videoDevices.length === 0 ? qsTr("没有设备") : ""
+            currentIndex: root.indexOfId(root.videoDevices, RecorderView.selectedVideoDeviceId)
+            placeholderText: root.videoDevices.length === 0 ? qsTr("没有设备") : qsTr("未选择设备")
             locked: root.locked
             onActivated: (index) => {
-                const device = root.videoDevices[index]
-                if (device && !root.locked)
-                    RecorderView.selectVideoCaptureDevice(device.id)
+                const option = model[index]
+                if (option && option.enabled && !root.locked)
+                    RecorderView.selectVideoCaptureDevice(option.value)
             }
         }
 
@@ -155,14 +183,16 @@ Card {
             topPadding: Theme.space8
             width: parent.width
             compact: true
+            objectName: "sourceSystemAudioCombo"
             model: root.systemDevices
-            placeholderText: root.systemDevices.length === 0 ? qsTr("没有找到播放设备") : ""
+            currentIndex: root.indexOfId(root.systemDevices, RecorderView.selectedAudioDeviceId)
+            placeholderText: root.systemDevices.length === 0 ? qsTr("没有找到播放设备") : qsTr("未选择设备")
             locked: root.locked
             enabled: root.systemOn
             onActivated: (index) => {
-                const device = root.systemDevices[index]
-                if (device && !root.locked)
-                    RecorderView.selectAudioCaptureDevice(device.id)
+                const option = model[index]
+                if (option && option.enabled && !root.locked)
+                    RecorderView.selectAudioCaptureDevice(option.value)
             }
         }
 
@@ -197,14 +227,16 @@ Card {
             topPadding: Theme.space8
             width: parent.width
             compact: true
+            objectName: "sourceMicrophoneCombo"
             model: root.micDevices
-            placeholderText: root.micDevices.length === 0 ? qsTr("没有找到麦克风") : ""
+            currentIndex: root.indexOfId(root.micDevices, RecorderView.selectedMicrophoneDeviceId)
+            placeholderText: root.micDevices.length === 0 ? qsTr("没有找到麦克风") : qsTr("未选择设备")
             locked: root.locked
             enabled: root.micOn
             onActivated: (index) => {
-                const device = root.micDevices[index]
-                if (device && !root.locked)
-                    RecorderView.selectMicrophoneCaptureDevice(device.id)
+                const option = model[index]
+                if (option && option.enabled && !root.locked)
+                    RecorderView.selectMicrophoneCaptureDevice(option.value)
             }
         }
 

@@ -276,6 +276,107 @@ Item {
         subrec::ui::RecorderView::setInstance(nullptr);
     }
 
+    // AppComboBox with options in the {text, value} shape the pages build: every popup row
+    // shows its text and only the current value's row shows the check mark. (Raw device
+    // maps without text/value gave empty rows, each checked - record page, PC3 report.)
+    void comboRowsShowTextAndSingleCheck()
+    {
+        QQmlEngine engine;
+        QQuickWindow window;
+        window.resize(400, 400);
+        auto host = createHosted(engine, window, R"(
+import QtQuick
+import SubRec.Ui
+Item {
+    width: 400; height: 400
+    AppComboBox {
+        objectName: "combo"
+        x: 20; y: 20
+        model: [ { text: "Screen 1", value: "screen-1", enabled: true },
+                 { text: "Screen 2", value: "screen-2", enabled: true },
+                 { text: "Screen 3", value: "screen-3", enabled: true } ]
+        currentIndex: 1
+    }
+}
+)");
+        QVERIFY(host);
+        auto *combo = host->findChild<QQuickItem *>(QStringLiteral("combo"));
+        QVERIFY(combo);
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QCOMPARE(combo->property("currentValue").toString(), QStringLiteral("screen-2"));
+        QCOMPARE(combo->property("currentText").toString(), QStringLiteral("Screen 2"));
+        auto *popup = combo->property("popup").value<QObject *>();
+        QVERIFY(popup);
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, centerOf(combo));
+        QTRY_VERIFY(popup->property("visible").toBool());
+        auto *list = popup->property("contentItem").value<QQuickItem *>();
+        QVERIFY(list);
+        QTRY_COMPARE(list->property("count").toInt(), 3);
+        int checked = 0;
+        for (int i = 0; i < 3; ++i) {
+            QQuickItem *row = nullptr;
+            QTRY_VERIFY(QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem *, row),
+                                                  Q_ARG(int, i)) && row);
+            auto *text = row->findChild<QQuickItem *>(QStringLiteral("comboOptionText"));
+            auto *mark = row->findChild<QQuickItem *>(QStringLiteral("comboCheckMark"));
+            QVERIFY(text && mark);
+            QCOMPARE(text->property("text").toString(), QStringLiteral("Screen %1").arg(i + 1));
+            QCOMPARE(mark->isVisible(), i == 1);
+            checked += mark->isVisible() ? 1 : 0;
+        }
+        QCOMPARE(checked, 1);
+    }
+
+    // SourcePanel (record page) maps RecorderView's raw device maps to {text, value} options
+    // from the captureDevices property: names visible, current index on the selected id,
+    // and the lists follow captureDevicesChanged.
+    void sourcePanelMapsDevices()
+    {
+        FakeDeviceSource source;
+        source.captureDevices = {device("screen-1", "screen"), device("screen-2", "screen"),
+                                 device("wasapi:default", "system-audio"), device("mic-1", "microphone")};
+        source.selectedVideoDeviceId = QStringLiteral("screen-2");
+        subrec::ui::RecorderView view(nullptr);
+        view.attach(&source, {});
+        subrec::ui::RecorderView::setInstance(&view);
+        {
+            QQmlEngine engine;
+            QQuickWindow window;
+            window.resize(400, 900);
+            QQmlComponent component(&engine);
+            component.loadFromModule("SubRec.Ui", "SourcePanel");
+            QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+            std::unique_ptr<QObject> panel(component.create());
+            QVERIFY(panel);
+            auto *panelItem = qobject_cast<QQuickItem *>(panel.get());
+            QVERIFY(panelItem);
+            panelItem->setParentItem(window.contentItem());
+            panelItem->setWidth(280);
+
+            auto *video = panel->findChild<QObject *>(QStringLiteral("sourceVideoCombo"));
+            auto *system = panel->findChild<QObject *>(QStringLiteral("sourceSystemAudioCombo"));
+            auto *microphone = panel->findChild<QObject *>(QStringLiteral("sourceMicrophoneCombo"));
+            QVERIFY(video && system && microphone);
+            QCOMPARE(video->property("count").toInt(), 2);
+            const QVariantList rows = modelRows(video);
+            QCOMPARE(rows.value(0).toMap().value(QStringLiteral("text")).toString(), QStringLiteral("screen-1"));
+            QCOMPARE(rows.value(1).toMap().value(QStringLiteral("value")).toString(), QStringLiteral("screen-2"));
+            QCOMPARE(video->property("currentIndex").toInt(), 1);
+            QCOMPARE(video->property("currentText").toString(), QStringLiteral("screen-2"));
+            QCOMPARE(system->property("currentText").toString(), QStringLiteral("wasapi:default"));
+            QCOMPARE(microphone->property("currentText").toString(), QStringLiteral("mic-1"));
+
+            source.captureDevices.append(device("mic-2", "microphone"));
+            source.selectedMicrophoneDeviceId = QStringLiteral("mic-2");
+            emit source.captureDevicesChanged();
+            QTRY_COMPARE(microphone->property("count").toInt(), 2);
+            QTRY_COMPARE(microphone->property("currentIndex").toInt(), 1);
+            QCOMPARE(microphone->property("currentText").toString(), QStringLiteral("mic-2"));
+        }
+        subrec::ui::RecorderView::setInstance(nullptr);
+    }
+
     // AppIcon rasterises its SVG at size x device pixel ratio (offscreen: ratio 1).
     void iconRasterisesAtDevicePixels()
     {

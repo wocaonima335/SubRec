@@ -96,6 +96,9 @@ ComboBox {
 
             AppIcon {
                 id: checkMark
+                objectName: "comboCheckMark"
+                // Needs `value` in every option: with valueRole "value" and options lacking it,
+                // undefined === undefined marked every row (record page bug, see SourcePanel).
                 visible: option.modelData.value === root.currentValue
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
@@ -111,6 +114,7 @@ ComboBox {
                 spacing: 0
 
                 Text {
+                    objectName: "comboOptionText"
                     width: parent.width > 0 ? parent.width : implicitWidth
                     text: option.modelData.text
                     font: Theme.bodyFont
