@@ -67,3 +67,5 @@
 | `window-restore.svg` | 两个错叠的方框（还原） | `199c3ca6cf28180de3b16d02b525b125fd2fa3ca4b21a0f76838a6aef38aba30` |
 
 格式与上面的规范化输出相同：`viewBox 0 0 1024 1024`，宽高 24，`fill="currentColor"`，只有一个 `<path d>`，没有 DOCTYPE 和脚本；另外在 `<svg>` 上加了 `fill-rule="evenodd"`，方框内部按奇偶规则挖空，不依赖子路径的绕向。坐标都是 64 的整数倍、线宽 64，在 16 px 下正好是 1 px，对齐像素格。maximize-2 和 minimize-2 两个文件仍然保留。
+
+标题栏的四个窗口按钮（最小化、最大化、还原、关闭）现在不再用 SVG，而是由 `ui/qml/components/CaptionGlyph.qml` 按物理像素描线绘制（几何见 `ui/backend/caption_glyph_geometry.h`）。上面两个窗口图标和 `minus`、`x` 仍作为资源保留，图标总数不变。

@@ -78,27 +78,28 @@ Rectangle {
         height: parent.height
         spacing: 0
 
+        // Caption glyphs (CaptionGlyph: strokes on the device-pixel grid), not SVG icons.
         IconButton {
+            objectName: "titleBarMinimize"
             windowButton: true
-            iconName: "minus"
-            iconSize: 16
+            captionKind: "minimize"
             anchors.verticalCenter: parent.verticalCenter
             toolTipText: ShellView.minimizeToTray ? qsTr("最小化到托盘") : qsTr("最小化")
             onClicked: root.minimizeClicked()
         }
         IconButton {
+            objectName: "titleBarMaximize"
             windowButton: true
-            // Standard window glyphs (single box / two boxes), drawn by the project.
-            iconName: root.window && root.window.visibility === Window.Maximized
-                       ? "window-restore" : "window-maximize"
-            iconSize: 16
+            // Single box / two boxes.
+            captionKind: root.window && root.window.visibility === Window.Maximized
+                         ? "restore" : "maximize"
             anchors.verticalCenter: parent.verticalCenter
             onClicked: root.maximizeToggled()
         }
         IconButton {
+            objectName: "titleBarClose"
             windowButton: true
-            iconName: "x"
-            iconSize: 16
+            captionKind: "close"
             hoverColor: Theme.closeButtonHover
             anchors.verticalCenter: parent.verticalCenter
             toolTipText: ShellView.closeAction === "tray" ? qsTr("关闭（最小化到托盘）")

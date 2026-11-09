@@ -7,6 +7,9 @@ import QtQuick.Controls.Basic
 //   iconName, iconSize (16), toolTipText (500 ms delay)
 //   round: circle background (floating bar); dangerHover: hover icon/background danger colours
 //   (P2 delete, FB stop); hoverColor: override, e.g. Theme.closeButtonHover for the title bar.
+//   captionKind: "" (default) shows the AppIcon `iconName`; "minimize" | "maximize" |
+//   "restore" | "close" shows a CaptionGlyph instead (title bar, 16 px, centred on whole
+//   logical px), same colours.
 AbstractButton {
     id: root
     property string iconName: ""
@@ -17,6 +20,11 @@ AbstractButton {
     property color hoverColor: Theme.bgHover
     // 46×40 window caption buttons (§3.1); 32×32 everywhere else.
     property bool windowButton: false
+    property string captionKind: ""
+
+    readonly property color __contentColor: root.dangerHover && root.hovered ? Theme.dangerFg
+                                          : root.hovered ? Theme.textPrimary
+                                          : Theme.textSecondary
 
     implicitWidth: windowButton ? 46 : 32
     implicitHeight: windowButton ? 40 : 32
@@ -31,12 +39,29 @@ AbstractButton {
              : "transparent"
     }
 
-    contentItem: AppIcon {
-        name: root.iconName
-        size: root.iconSize
-        color: root.dangerHover && root.hovered ? Theme.dangerFg
-             : root.hovered ? Theme.textPrimary
-             : Theme.textSecondary
+    // The AppIcon keeps the geometry it had as the contentItem itself (fills the item).
+    contentItem: Item {
+        implicitWidth: root.iconSize
+        implicitHeight: root.iconSize
+        AppIcon {
+            objectName: "iconButtonIcon"
+            anchors.fill: parent
+            visible: root.captionKind.length === 0
+            name: root.captionKind.length === 0 ? root.iconName : ""
+            size: root.iconSize
+            color: root.__contentColor
+        }
+        Loader {
+            objectName: "captionGlyphLoader"
+            // Implicit 16 × 16; alignWhenCentered keeps the position on whole logical px.
+            anchors.centerIn: parent
+            active: root.captionKind.length > 0
+            sourceComponent: CaptionGlyph {
+                objectName: "captionGlyph"
+                kind: root.captionKind
+                color: root.__contentColor
+            }
+        }
     }
 
     HoverHandler {

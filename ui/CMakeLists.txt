@@ -49,6 +49,14 @@ target_include_directories(ui_module
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/.."
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/backend")
 target_link_libraries(ui_module PUBLIC Qt6::Qml Qt6::Quick Qt6::QuickControls2)
+# CaptionGlyph.qml imports QtQuick.Shapes (part of qtdeclarative). The QML import is
+# resolved from the Qt kit's qml directory at run time; linking the module's C++ library
+# (Qt's internal target QuickShapesPrivate) only records the dependency for the linker and
+# deployment. Optional, so a kit without that CMake package still configures.
+find_package(Qt6 QUIET COMPONENTS QuickShapesPrivate)
+if(TARGET Qt6::QuickShapesPrivate)
+    target_link_libraries(ui_module PUBLIC Qt6::QuickShapesPrivate)
+endif()
 # Backend implementations call shell classes (ShellView, HotkeyController, FloatingBarView).
 if(TARGET shell_module)
     target_link_libraries(ui_module PRIVATE shell_module)

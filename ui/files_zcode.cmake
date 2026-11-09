@@ -10,6 +10,7 @@ set(UI_ZCODE_QML
     qml/components/Spinner.qml
     qml/components/AppButton.qml
     qml/components/IconButton.qml
+    qml/components/CaptionGlyph.qml
     qml/components/AppTextField.qml
     qml/components/AppComboBox.qml
     qml/components/AppSwitch.qml
