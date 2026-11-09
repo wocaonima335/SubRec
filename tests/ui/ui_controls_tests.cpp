@@ -378,6 +378,37 @@ Item {
         subrec::ui::RecorderView::setInstance(nullptr);
     }
 
+    // Settings sub-navigation: dense NavItems (36 px) 4 px apart, selection follows
+    // Navigation.settingsPage, a click opens the page.
+    void settingsNavIsDense()
+    {
+        QQmlEngine engine;
+        QQuickWindow window;
+        window.resize(1100, 800);
+        QQmlComponent component(&engine);
+        component.loadFromModule("SubRec.Ui", "SettingsPage");
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        std::unique_ptr<QObject> page(component.create());
+        QVERIFY(page);
+        auto *pageItem = qobject_cast<QQuickItem *>(page.get());
+        QVERIFY(pageItem);
+        pageItem->setParentItem(window.contentItem());
+        pageItem->setSize(QSizeF(1100, 800));
+        window.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&window));
+
+        auto *general = page->findChild<QQuickItem *>(QStringLiteral("settingsNav_general"));
+        auto *output = page->findChild<QQuickItem *>(QStringLiteral("settingsNav_output"));
+        QVERIFY(general && output);
+        QCOMPARE(general->property("dense").toBool(), true);
+        QTRY_COMPARE(general->height(), 36.0);
+        QCOMPARE(output->y() - general->y(), 36.0 + 4.0);
+
+        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, centerOf(output));
+        QTRY_VERIFY(output->property("selected").toBool());
+        QVERIFY(!general->property("selected").toBool());
+    }
+
     // Preview letterbox (opengl/preview_letterbox.h, used by FFGLRenderer for keepRatio).
     void previewLetterboxGeometry()
     {

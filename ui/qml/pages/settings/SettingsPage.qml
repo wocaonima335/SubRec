@@ -22,8 +22,12 @@ Item {
             Layout.preferredWidth: 180
             Layout.fillHeight: true
             title: "设置"
-            ColumnLayout {
-                anchors.fill: parent
+            // §3.4: 7 dense NavItems (36 px) with the main NavRail's Theme.space4 spacing.
+            // These were AppButtons spread over the card height by a ColumnLayout.
+            Column {
+                objectName: "settingsSubNav"
+                width: parent.width
+                spacing: Theme.space4
                 Repeater {
                     model: [
                         {
@@ -55,13 +59,15 @@ Item {
                             value: "about"
                         },
                     ]
-                    delegate: AppButton {
+                    delegate: NavItem {
                         id: navigationButton
                         required property var modelData
+                        objectName: "settingsNav_" + navigationButton.modelData.value
                         visible: modelData.value !== "subtitle" || SubtitleView.serviceAttached
-                        Layout.fillWidth: true
+                        width: parent ? parent.width : implicitWidth
+                        dense: true
                         text: navigationButton.modelData.text
-                        variant: Navigation.settingsPage === navigationButton.modelData.value ? "primary" : "ghost"
+                        selected: Navigation.settingsPage === navigationButton.modelData.value
                         onClicked: Navigation.open("settings/" + navigationButton.modelData.value)
                     }
                 }
