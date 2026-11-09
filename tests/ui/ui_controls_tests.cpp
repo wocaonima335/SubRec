@@ -397,9 +397,14 @@ Item {
         window.show();
         QVERIFY(QTest::qWaitForWindowExposed(&window));
 
-        auto *general = page->findChild<QQuickItem *>(QStringLiteral("settingsNav_general"));
-        auto *output = page->findChild<QQuickItem *>(QStringLiteral("settingsNav_output"));
-        QVERIFY(general && output);
+        // The sub-navigation Column, then its items (plain QML children, so findChild reaches
+        // them; Repeater delegates would not be QObject children).
+        auto *subNav = page->findChild<QQuickItem *>(QStringLiteral("settingsSubNav"));
+        QVERIFY2(subNav, "settingsSubNav not found");
+        auto *general = subNav->findChild<QQuickItem *>(QStringLiteral("settingsNav_general"));
+        auto *output = subNav->findChild<QQuickItem *>(QStringLiteral("settingsNav_output"));
+        QVERIFY2(general, "settingsNav_general not found under settingsSubNav");
+        QVERIFY2(output, "settingsNav_output not found under settingsSubNav");
         QCOMPARE(general->property("dense").toBool(), true);
         QTRY_COMPARE(general->height(), 36.0);
         QCOMPARE(output->y() - general->y(), 36.0 + 4.0);

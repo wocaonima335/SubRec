@@ -22,54 +22,70 @@ Item {
             Layout.preferredWidth: 180
             Layout.fillHeight: true
             title: "设置"
-            // §3.4: 7 dense NavItems (36 px) with the main NavRail's Theme.space4 spacing.
-            // These were AppButtons spread over the card height by a ColumnLayout.
+            // §3.4: 7 dense NavItems (36 px) with the main NavRail's Theme.space4 spacing,
+            // written out like NavRail.qml. Not a Repeater: delegates created by a Repeater are
+            // not QObject children of the Column, so QObject::findChild (tests, AutoTest probes)
+            // cannot reach them by objectName.
             Column {
                 objectName: "settingsSubNav"
                 width: parent.width
                 spacing: Theme.space4
-                Repeater {
-                    model: [
-                        {
-                            text: "常规",
-                            value: "general"
-                        },
-                        {
-                            text: "录制与输出",
-                            value: "output"
-                        },
-                        {
-                            text: "音频与设备",
-                            value: "devices"
-                        },
-                        {
-                            text: "AI 字幕",
-                            value: "subtitle"
-                        },
-                        {
-                            text: "快捷键",
-                            value: "hotkeys"
-                        },
-                        {
-                            text: "高级",
-                            value: "advanced"
-                        },
-                        {
-                            text: "关于",
-                            value: "about"
-                        },
-                    ]
-                    delegate: NavItem {
-                        id: navigationButton
-                        required property var modelData
-                        objectName: "settingsNav_" + navigationButton.modelData.value
-                        visible: modelData.value !== "subtitle" || SubtitleView.serviceAttached
-                        width: parent ? parent.width : implicitWidth
-                        dense: true
-                        text: navigationButton.modelData.text
-                        selected: Navigation.settingsPage === navigationButton.modelData.value
-                        onClicked: Navigation.open("settings/" + navigationButton.modelData.value)
-                    }
+                NavItem {
+                    objectName: "settingsNav_general"
+                    width: parent.width
+                    dense: true
+                    text: "常规"
+                    selected: Navigation.settingsPage === "general"
+                    onClicked: Navigation.open("settings/general")
+                }
+                NavItem {
+                    objectName: "settingsNav_output"
+                    width: parent.width
+                    dense: true
+                    text: "录制与输出"
+                    selected: Navigation.settingsPage === "output"
+                    onClicked: Navigation.open("settings/output")
+                }
+                NavItem {
+                    objectName: "settingsNav_devices"
+                    width: parent.width
+                    dense: true
+                    text: "音频与设备"
+                    selected: Navigation.settingsPage === "devices"
+                    onClicked: Navigation.open("settings/devices")
+                }
+                NavItem {
+                    objectName: "settingsNav_subtitle"
+                    visible: SubtitleView.serviceAttached
+                    width: parent.width
+                    dense: true
+                    text: "AI 字幕"
+                    selected: Navigation.settingsPage === "subtitle"
+                    onClicked: Navigation.open("settings/subtitle")
+                }
+                NavItem {
+                    objectName: "settingsNav_hotkeys"
+                    width: parent.width
+                    dense: true
+                    text: "快捷键"
+                    selected: Navigation.settingsPage === "hotkeys"
+                    onClicked: Navigation.open("settings/hotkeys")
+                }
+                NavItem {
+                    objectName: "settingsNav_advanced"
+                    width: parent.width
+                    dense: true
+                    text: "高级"
+                    selected: Navigation.settingsPage === "advanced"
+                    onClicked: Navigation.open("settings/advanced")
+                }
+                NavItem {
+                    objectName: "settingsNav_about"
+                    width: parent.width
+                    dense: true
+                    text: "关于"
+                    selected: Navigation.settingsPage === "about"
+                    onClicked: Navigation.open("settings/about")
                 }
             }
         }
