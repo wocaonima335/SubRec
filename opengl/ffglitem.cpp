@@ -6,6 +6,7 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QMetaObject>
+#include <QThread>
 
 namespace {
 quint64 fnv1a64(const char *data, int size, int samples = 64)
@@ -113,7 +114,32 @@ void FFGLItem::setYUVData(const QByteArray &y, const QByteArray &u, const QByteA
     vData = v;
     width = w;
     height = h;
+    lk.unlock();
+    noteFrameSize(w, h);
     update();
+}
+
+void FFGLItem::noteFrameSize(int w, int h)
+{
+    if (w <= 0 || h <= 0)
+        return;
+    if (QThread::currentThread() != thread()) {
+        QMetaObject::invokeMethod(this, [this, w, h] { noteFrameSize(w, h); }, Qt::QueuedConnection);
+        return;
+    }
+    if (w == m_frameWidth && h == m_frameHeight)
+        return;
+    m_frameWidth = w;
+    m_frameHeight = h;
+    setAspect(float(w) / float(h));
+    emit frameSizeChanged();
+}
+
+void FFGLItem::itemChange(ItemChange change, const ItemChangeData &value)
+{
+    QQuickFramebufferObject::itemChange(change, value);
+    if (change == ItemDevicePixelRatioHasChanged)
+        update();
 }
 
 void FFGLItem::applyPendingPreviewFrame()
@@ -138,6 +164,7 @@ void FFGLItem::applyPendingPreviewFrame()
     }
 
     bridge.markApplied(version, frame.width, frame.height, frame.fingerprint);
+    noteFrameSize(frame.width, frame.height);
     update();
     bridge.finishDispatch(version);
 }
@@ -153,6 +180,9 @@ void FFGLItem::setFrame(AVFrame *frame)
     yData = QByteArray(reinterpret_cast<const char *>(frame->data[0]), width * height);
     uData = QByteArray(reinterpret_cast<const char *>(frame->data[1]), width * height / 4);
     vData = QByteArray(reinterpret_cast<const char *>(frame->data[2]), width * height / 4);
+    const int frameW = width, frameH = height;
+    lk.unlock();
+    noteFrameSize(frameW, frameH);
     update();
     av_frame_unref(frame);
     av_frame_free(&frame);

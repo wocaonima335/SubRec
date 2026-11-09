@@ -9,8 +9,13 @@ import GLPreview 1.0
 // (main.cpp binds PreviewBridge to it by that name) and keepRatio (letterbox, §3.2.2 B).
 Item {
     id: root
+    // Size of the frames being previewed (0 until the first frame, or with the test double
+    // that has no such properties); RecordPage sizes the preview area from it.
+    readonly property int frameWidth: glView.frameWidth !== undefined ? glView.frameWidth : 0
+    readonly property int frameHeight: glView.frameHeight !== undefined ? glView.frameHeight : 0
 
     GLView {
+        id: glView
         objectName: "previewView"
         width: root.width   // not anchors: grouped properties of an unresolved type do not lint
         height: root.height

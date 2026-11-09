@@ -31,6 +31,12 @@ void FFGLRenderer::render()
         m_glInitialized = true;
     }
 
+    // Draw in the FBO's own pixel size. QQuickFramebufferObject sizes the FBO from the item
+    // size times the window's device pixel ratio, while synchronize() reads the logical
+    // item size: on a 125 % / 150 % screen the old full-item viewport covered only part of
+    // the FBO and the rest stayed black (cleared). The logical size is only a fallback.
+    if (QOpenGLFramebufferObject *fbo = framebufferObject())
+        m_fboSize = fbo->size();
     if (m_fboSize.isEmpty() || m_fboSize.width() <= 0 || m_fboSize.height() <= 0) {
         return;
     }
@@ -38,6 +44,10 @@ void FFGLRenderer::render()
     glViewport(0, 0, m_fboSize.width(), m_fboSize.height());
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
+    // keepRatio: letterbox the frame in the centre of the FBO (the rest stays black);
+    // otherwise stretch to the whole FBO as before.
+    const QRect target = viewportFor(m_fboSize);
+    glViewport(target.x(), target.y(), target.width(), target.height());
 
     ensureProgram();
     ensureBuffers();
@@ -92,8 +102,14 @@ void FFGLRenderer::synchronize(QQuickFramebufferObject *item)
     m_imgHeight = glItem->height;
     m_previewVersion = glItem->previewVersion;
     m_previewFingerprint = glItem->previewFingerprint;
+    m_keepRatio = glItem->m_keepRatio;
 
     PreviewBridge::instance().markSynchronized(m_previewVersion, m_imgWidth, m_imgHeight, m_previewFingerprint);
+}
+
+QRect FFGLRenderer::viewportFor(const QSize &fbo) const
+{
+    return preview::letterboxRect(fbo, QSize(m_imgWidth, m_imgHeight), m_keepRatio);
 }
 
 void FFGLRenderer::ensureProgram()

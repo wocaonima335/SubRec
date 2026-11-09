@@ -3,6 +3,7 @@
 // that binds it to a "backend" property the way the settings pages do. The ui.* settings
 // store is redirected to a temporary INI file (the Theme singleton reads ThemeController).
 #include <QtTest>
+#include "opengl/preview_letterbox.h"
 #include "ui/backend/font_policy.h"
 #include "ui/backend/recorder_view.h"
 #include "ui/backend/settings_store.h"
@@ -375,6 +376,23 @@ Item {
             QCOMPARE(microphone->property("currentText").toString(), QStringLiteral("mic-2"));
         }
         subrec::ui::RecorderView::setInstance(nullptr);
+    }
+
+    // Preview letterbox (opengl/preview_letterbox.h, used by FFGLRenderer for keepRatio).
+    void previewLetterboxGeometry()
+    {
+        using preview::letterboxRect;
+        // No frame yet, or keepRatio off: the whole target (stretch).
+        QCOMPARE(letterboxRect(QSize(1600, 900), QSize(), true), QRect(0, 0, 1600, 900));
+        QCOMPARE(letterboxRect(QSize(1600, 900), QSize(2560, 1080), false), QRect(0, 0, 1600, 900));
+        // Same ratio: full target.
+        QCOMPARE(letterboxRect(QSize(1600, 900), QSize(1920, 1080), true), QRect(0, 0, 1600, 900));
+        // 21:9 source in 16:9: bars top and bottom, centred.
+        QCOMPARE(letterboxRect(QSize(1600, 900), QSize(2560, 1080), true), QRect(0, 112, 1600, 675));
+        // Portrait source in a square: bars left and right, centred.
+        QCOMPARE(letterboxRect(QSize(900, 900), QSize(1080, 1920), true), QRect(197, 0, 506, 900));
+        // Device-pixel target (150 % of 736x414): still fills the width for 16:9.
+        QCOMPARE(letterboxRect(QSize(1104, 621), QSize(1920, 1080), true), QRect(0, 0, 1104, 621));
     }
 
     // AppIcon rasterises its SVG at size x device pixel ratio (offscreen: ratio 1).

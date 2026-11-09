@@ -2,6 +2,7 @@
 #define FFGLRENDERER_H
 
 #include "ffglitem.h"
+#include "preview_letterbox.h"
 
 #include <QOpenGLFunctions>
 #include <QOpenGLFunctions_4_5_Core>
@@ -20,6 +21,7 @@ private:
     void ensureBuffers();
     void ensureTextures();
     void maybeLogRenderedOutput();
+    QRect viewportFor(const QSize &fbo) const;
 
 private:
     QSize m_fboSize;
@@ -31,6 +33,7 @@ private:
     int m_imgWidth = 0, m_imgHeight = 0;
     quint64 m_previewVersion = 0;
     quint64 m_previewFingerprint = 0;
+    bool m_keepRatio = false;
     bool m_glInitialized = false;
     qint64 m_lastRenderOutputLogMs = 0;
     quint64 m_lastRenderOutputVersion = 0;

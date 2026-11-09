@@ -13,12 +13,18 @@ Flickable {
     clip: false
 
     // §2.7: the source panel keeps its 280 px at narrow widths (decision 8); the preview
-    // absorbs the remaining width and keeps 16:9.
+    // absorbs the remaining width. Its height follows the source frame's aspect ratio once a
+    // frame is known (screens of different sizes/ratios no longer leave large bars in a fixed
+    // 16:9 box), else 16:9; clamped between 32:9 and 1:1 so a portrait or very wide source
+    // cannot break the layout (the GL view letterboxes whatever remains, keepRatio).
     readonly property int sideMargin: Theme.pagePadding
     readonly property int gap: Theme.space16
     readonly property int sourcePanelWidth: Theme.sourcePanelWidth
     readonly property int previewWidth: width - sideMargin * 2 - gap - sourcePanelWidth
-    readonly property int previewHeight: Math.round(previewWidth * 9 / 16)
+    readonly property real previewRatio: previewPanel.frameWidth > 0 && previewPanel.frameHeight > 0
+                                         ? previewPanel.frameHeight / previewPanel.frameWidth
+                                         : 9 / 16
+    readonly property int previewHeight: Math.round(previewWidth * Math.min(1, Math.max(9 / 32, previewRatio)))
 
     Column {
         id: layout
@@ -83,6 +89,7 @@ Flickable {
             Column {
                 spacing: Theme.space16
                 PreviewPanel {
+                    id: previewPanel
                     width: root.previewWidth
                     height: root.previewHeight
                 }

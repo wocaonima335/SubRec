@@ -3,6 +3,7 @@ qt_add_library(opengl_module STATIC
   ffglitem.h
   ffglrenderer.h
   ffglrenderer.cpp
+  preview_letterbox.h
 )
 
 target_link_libraries(opengl_module PUBLIC Qt6::Gui Qt6::Quick queue_module)

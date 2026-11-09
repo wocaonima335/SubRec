@@ -23,7 +23,12 @@ Rectangle {
                 : state === "failed" ? Theme.dangerBorder
                 : Theme.borderDefault
 
+    // Source frame size, for RecordPage's preview height (0 = unknown, use 16:9).
+    readonly property int frameWidth: surface.frameWidth
+    readonly property int frameHeight: surface.frameHeight
+
     PreviewSurface {
+        id: surface
         anchors.fill: parent
         anchors.margins: 1
     }

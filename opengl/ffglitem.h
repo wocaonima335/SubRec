@@ -58,6 +58,10 @@ class FFGLItem : public QQuickFramebufferObject
     Q_OBJECT
     Q_PROPERTY(bool keepRatio READ keepRatio WRITE setKeepRatio NOTIFY keepRatioChanged)
     Q_PROPERTY(float aspect READ aspect WRITE setAspect NOTIFY aspectChanged)
+    // Size of the last frame handed to the item (0 until the first frame). GUI thread.
+    // aspect follows it (width / height) so QML can size the preview to the source.
+    Q_PROPERTY(int frameWidth READ frameWidth NOTIFY frameSizeChanged)
+    Q_PROPERTY(int frameHeight READ frameHeight NOTIFY frameSizeChanged)
 public:
     FFGLItem() = default;
     Renderer *createRenderer() const override;
@@ -81,6 +85,9 @@ public:
         }
     }
 
+    int frameWidth() const { return m_frameWidth; }
+    int frameHeight() const { return m_frameHeight; }
+
     Q_INVOKABLE void setYUVData(
         const QByteArray &y, const QByteArray &u, const QByteArray &v, int w, int h);
     Q_INVOKABLE void applyPendingPreviewFrame();
@@ -89,6 +96,16 @@ public:
 signals:
     void keepRatioChanged();
     void aspectChanged();
+    void frameSizeChanged();
+
+protected:
+    // Moving the window to a screen with another device pixel ratio changes the FBO size
+    // QQuickFramebufferObject needs; request a repaint so it is recreated at once.
+    void itemChange(ItemChange change, const ItemChangeData &value) override;
+
+private:
+    // Publishes frameWidth/frameHeight/aspect; safe to call from any thread.
+    void noteFrameSize(int w, int h);
 
 public:
     mutable QMutex mtx;
@@ -97,7 +114,9 @@ public:
     quint64 previewVersion = 0;
     quint64 previewFingerprint = 0;
     bool m_keepRatio = false;
-    float m_aspect = 1.60f / 9.0f;
+    float m_aspect = 16.0f / 9.0f; // was 1.60f / 9.0f (a typo for 16:9, never read)
+    int m_frameWidth = 0;
+    int m_frameHeight = 0;
 };
 
 class PreviewBridge : public QObject
