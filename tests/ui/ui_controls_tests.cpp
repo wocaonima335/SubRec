@@ -4,9 +4,11 @@
 // store is redirected to a temporary INI file (the Theme singleton reads ThemeController).
 #include <QtTest>
 #include "opengl/preview_letterbox.h"
+#include "ui/backend/caption_glyph_geometry.h"
 #include "ui/backend/font_policy.h"
 #include "ui/backend/recorder_view.h"
 #include "ui/backend/settings_store.h"
+#include <QColor>
 #include <QFile>
 #include <QJSValue>
 #include <QScreen>
@@ -19,6 +21,8 @@
 #include <QTemporaryDir>
 #include <QtQml/QQmlExtensionPlugin>
 #include <memory>
+#include <utility>
+#include <vector>
 Q_IMPORT_QML_PLUGIN(SubRec_UiPlugin)
 
 namespace {
@@ -50,6 +54,24 @@ QVariantList modelRows(const QObject *combo)
     if (value.canConvert<QJSValue>())
         value = value.value<QJSValue>().toVariant();
     return value.toList();
+}
+
+// CaptionGlyph `polylines` (a JS array of arrays of Qt.point) as C++ polylines.
+std::vector<subrec::ui::caption::Polyline> qmlPolylines(const QObject *glyph)
+{
+    const auto plain = [](QVariant value) {
+        if (value.canConvert<QJSValue>())
+            value = value.value<QJSValue>().toVariant();
+        return value;
+    };
+    std::vector<subrec::ui::caption::Polyline> result;
+    for (const QVariant &line : plain(glyph->property("polylines")).toList()) {
+        subrec::ui::caption::Polyline points;
+        for (const QVariant &point : plain(line).toList())
+            points.push_back(plain(point).toPointF());
+        result.push_back(points);
+    }
+    return result;
 }
 
 QVariantMap device(const QString &id, const QString &kind, bool available = true,
@@ -497,6 +519,226 @@ Item {
             const QString path = dir + QLatin1String(removed) + QStringLiteral(".svg");
             QVERIFY2(!QFile::exists(path), qPrintable(path));
         }
+    }
+
+    // Caption glyph geometry (ui/backend/caption_glyph_geometry.h): strokes a whole number of
+    // device pixels wide, every path coordinate on the device-pixel grid.
+    void captionGlyphGeometry()
+    {
+        namespace cg = subrec::ui::caption;
+        using Lines = std::vector<cg::Polyline>;
+        using P = QPointF;
+        const auto isWhole = [](qreal v) { return qAbs(v - std::round(v)) < 1e-9; };
+        const QStringList kinds{QStringLiteral("minimize"), QStringLiteral("maximize"),
+                                QStringLiteral("restore"), QStringLiteral("close")};
+
+        // Stroke: the nearest whole device pixel, at least 1; logical width x ratio gives it back.
+        const std::vector<std::pair<qreal, int>> strokes{{1.0, 1}, {1.25, 1}, {1.5, 2}, {1.75, 2},
+                                                         {2.0, 2}, {2.5, 3}, {3.0, 3}};
+        for (const auto &[dpr, px] : strokes) {
+            const QString where = QStringLiteral("dpr %1").arg(dpr);
+            QVERIFY2(cg::physicalStrokePx(dpr) == px, qPrintable(where));
+            const qreal device = cg::logicalStroke(dpr) * dpr;
+            QVERIFY2(isWhole(device) && qRound(device) == px && device >= 1.0, qPrintable(where));
+        }
+
+        // Snapping: on the grid, idempotent, at most half a device pixel away.
+        for (qreal dpr : {1.0, 1.25, 1.5, 1.75, 2.0}) {
+            const qreal half = cg::physicalStrokePx(dpr) / 2.0;
+            for (int i = 0; i <= 160; ++i) {
+                const qreal v = i / 10.0;
+                const QString where = QStringLiteral("dpr %1, v %2").arg(dpr).arg(v);
+                const qreal edge = cg::snapToPhysicalEdge(v, dpr);
+                QVERIFY2(isWhole(edge * dpr), qPrintable(where));
+                QVERIFY2(qAbs(edge - v) <= 0.5 / dpr + 1e-9, qPrintable(where));
+                QVERIFY2(qAbs(cg::snapToPhysicalEdge(edge, dpr) - edge) < 1e-9, qPrintable(where));
+                const qreal centre = cg::snapToPhysicalCenter(v, dpr);
+                QVERIFY2(isWhole(centre * dpr - half), qPrintable(where));
+                QVERIFY2(qAbs(centre - v) <= 0.5 / dpr + 1e-9, qPrintable(where));
+                QVERIFY2(qAbs(cg::snapToPhysicalCenter(centre, dpr) - centre) < 1e-9, qPrintable(where));
+            }
+        }
+
+        // 100 %: the Windows 11 shapes on a 10 px box at (3, 3) in the 16 px item, 1 px strokes.
+        QVERIFY(cg::glyphPolylines(QStringLiteral("minimize"), 1.0) == Lines({{P(3, 8.5), P(13, 8.5)}}));
+        QVERIFY(cg::glyphPolylines(QStringLiteral("maximize"), 1.0)
+                == Lines({{P(8, 3.5), P(12.5, 3.5), P(12.5, 12.5), P(3.5, 12.5), P(3.5, 3.5), P(8, 3.5)}}));
+        QVERIFY(cg::glyphPolylines(QStringLiteral("restore"), 1.0)
+                == Lines({{P(7, 5.5), P(10.5, 5.5), P(10.5, 12.5), P(3.5, 12.5), P(3.5, 5.5), P(7, 5.5)},
+                          {P(5.5, 5), P(5.5, 3.5), P(12.5, 3.5), P(12.5, 10.5), P(11, 10.5)}}));
+        QVERIFY(cg::glyphPolylines(QStringLiteral("close"), 1.0)
+                == Lines({{P(3.5, 3.5), P(12.5, 12.5)}, {P(12.5, 3.5), P(3.5, 12.5)}}));
+        // 125 %: box edges at device px 4 and 16 (12 px box), stroke 1 device px = 0.8 logical.
+        QVERIFY(cg::glyphPolylines(QStringLiteral("minimize"), 1.25) == Lines({{P(3.2, 8.4), P(12.8, 8.4)}}));
+        QVERIFY(cg::glyphPolylines(QStringLiteral("maximize"), 1.25)
+                == Lines({{P(8, 3.6), P(12.4, 3.6), P(12.4, 12.4), P(3.6, 12.4), P(3.6, 3.6), P(8, 3.6)}}));
+
+        // Every kind at every scale: inside the item, each coordinate a device-pixel edge or a
+        // stroke centre; the straight kinds only have horizontal and vertical segments.
+        for (qreal dpr : {1.0, 1.25, 1.5, 1.75, 2.0}) {
+            const qreal half = cg::physicalStrokePx(dpr) / 2.0;
+            for (const QString &kind : kinds) {
+                const QString where = QStringLiteral("%1 @ %2").arg(kind).arg(dpr);
+                const Lines lines = cg::glyphPolylines(kind, dpr);
+                QVERIFY2(!lines.empty(), qPrintable(where));
+                for (const cg::Polyline &line : lines) {
+                    QVERIFY2(line.size() >= 2, qPrintable(where));
+                    for (std::size_t i = 0; i < line.size(); ++i) {
+                        for (qreal c : {line[i].x(), line[i].y()}) {
+                            QVERIFY2(c >= 0 && c <= 16, qPrintable(where));
+                            QVERIFY2(isWhole(c * dpr) || isWhole(c * dpr - half), qPrintable(where));
+                        }
+                        if (kind != QLatin1String("close") && i > 0) {
+                            QVERIFY2(qFuzzyCompare(line[i].x(), line[i - 1].x())
+                                         || qFuzzyCompare(line[i].y(), line[i - 1].y()),
+                                     qPrintable(where));
+                        }
+                    }
+                }
+            }
+            // Maximize: closed (ends where it starts), outer box within 1 device px of 10 logical px.
+            const cg::Polyline box = cg::glyphPolylines(QStringLiteral("maximize"), dpr).front();
+            QVERIFY(box.front() == box.back());
+            const qreal outer = (box[1].x() - box[3].x()) * dpr + 2 * half;
+            QVERIFY2(isWhole(outer) && qAbs(outer - 10 * dpr) <= 1.0, qPrintable(QString::number(dpr)));
+            // Restore: the back box starts on the front box's top edge, ends on its right edge,
+            // and at least one free device pixel separates the two top strokes.
+            const Lines restore = cg::glyphPolylines(QStringLiteral("restore"), dpr);
+            QCOMPARE(restore.size(), std::size_t(2));
+            const cg::Polyline &front = restore[0];
+            const cg::Polyline &back = restore[1];
+            QVERIFY(front.front() == front.back());
+            QVERIFY(qFuzzyCompare(back.front().y(), front[0].y() - half / dpr));
+            QVERIFY(qFuzzyCompare(back.back().x(), front[1].x() + half / dpr));
+            QVERIFY((front[0].y() - back[1].y()) * dpr >= 2 * half + 1 - 1e-9);
+        }
+
+        // Anything else draws nothing.
+        QVERIFY(cg::glyphPolylines(QStringLiteral("x"), 1.0).empty());
+    }
+
+    // CaptionGlyph.qml computes the same stroke and paths as the header and hands them to
+    // its ShapePath unchanged (flat caps, miter joins, no fill, `color` as the stroke).
+    void captionGlyphMatchesHeader()
+    {
+        namespace cg = subrec::ui::caption;
+        QQmlEngine engine;
+        QQmlComponent component(&engine);
+        component.loadFromModule("SubRec.Ui", "CaptionGlyph");
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        const QColor stroke(0x12, 0x34, 0x56);
+        for (const char *kind : {"minimize", "maximize", "restore", "close"}) {
+            for (qreal dpr : {1.0, 1.25, 1.5, 1.75, 2.0}) {
+                const QString where = QStringLiteral("%1 @ %2").arg(QLatin1String(kind)).arg(dpr);
+                std::unique_ptr<QObject> glyph(component.createWithInitialProperties(
+                    {{QStringLiteral("kind"), QString::fromLatin1(kind)},
+                     {QStringLiteral("devicePixelRatio"), dpr},
+                     {QStringLiteral("color"), stroke}}));
+                QVERIFY2(glyph, qPrintable(where));
+                QVERIFY2(glyph->property("strokePhysical").toInt() == cg::physicalStrokePx(dpr), qPrintable(where));
+                QVERIFY2(qFuzzyCompare(glyph->property("strokeLogical").toReal(), cg::logicalStroke(dpr)),
+                         qPrintable(where));
+
+                const std::vector<cg::Polyline> expected = cg::glyphPolylines(QLatin1String(kind), dpr);
+                const std::vector<cg::Polyline> actual = qmlPolylines(glyph.get());
+                QVERIFY2(actual.size() == expected.size(), qPrintable(where));
+                for (std::size_t i = 0; i < expected.size(); ++i) {
+                    QVERIFY2(actual[i].size() == expected[i].size(), qPrintable(where));
+                    for (std::size_t j = 0; j < expected[i].size(); ++j) {
+                        QVERIFY2(qAbs(actual[i][j].x() - expected[i][j].x()) < 1e-9
+                                     && qAbs(actual[i][j].y() - expected[i][j].y()) < 1e-9,
+                                 qPrintable(where));
+                    }
+                }
+
+                auto *shape = glyph->findChild<QQuickItem *>(QStringLiteral("captionGlyphShape"));
+                QVERIFY2(shape, qPrintable(where));
+                QCOMPARE(shape->position(), QPointF(0, 0));
+                QCOMPARE(shape->size(), QSizeF(16, 16));
+                // Aliased except the diagonal X.
+                QCOMPARE(shape->antialiasing(), qstrcmp(kind, "close") == 0);
+                auto *path = glyph->findChild<QObject *>(QStringLiteral("captionGlyphPath"));
+                QVERIFY2(path, qPrintable(where));
+                QVERIFY2(qFuzzyCompare(path->property("strokeWidth").toReal(), cg::logicalStroke(dpr)),
+                         qPrintable(where));
+                QCOMPARE(path->property("strokeColor").value<QColor>(), stroke);
+                QCOMPARE(path->property("fillColor").value<QColor>().alpha(), 0);
+                QCOMPARE(path->property("capStyle").toInt(), int(Qt::FlatCap));
+                QCOMPARE(path->property("joinStyle").toInt(), int(Qt::MiterJoin));
+            }
+        }
+    }
+
+    // Title bar: the three window buttons show CaptionGlyphs (not AppIcons) at whole logical
+    // px, and the maximize button switches maximize <-> restore with the window state. A plain
+    // IconButton still shows its AppIcon.
+    void titleBarCaptionGlyphs()
+    {
+        QQmlEngine engine;
+        QQmlComponent component(&engine);
+        component.setData(R"(
+import QtQuick
+import SubRec.Ui
+Window {
+    id: host
+    width: 800; height: 300
+    TitleBar { window: host; width: host.width }
+    IconButton { objectName: "plainButton"; y: 100; iconName: "settings" }
+}
+)", QUrl(QStringLiteral("qrc:/ui_controls_tests/TitleBarHost.qml")));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        std::unique_ptr<QObject> root(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(root.get());
+        QVERIFY(window);
+        window->show();
+        QVERIFY(QTest::qWaitForWindowExposed(window));
+
+        const auto part = [&](const char *button, const char *name) -> QQuickItem * {
+            auto *b = root->findChild<QQuickItem *>(QLatin1String(button));
+            auto *content = b ? b->property("contentItem").value<QQuickItem *>() : nullptr;
+            return content ? content->findChild<QQuickItem *>(QLatin1String(name)) : nullptr;
+        };
+        const auto glyphOf = [&](const char *button) -> QQuickItem * {
+            QQuickItem *loader = part(button, "captionGlyphLoader");
+            return loader ? qobject_cast<QQuickItem *>(loader->property("item").value<QObject *>()) : nullptr;
+        };
+
+        const std::vector<std::pair<const char *, const char *>> buttons{
+            {"titleBarMinimize", "minimize"}, {"titleBarMaximize", "maximize"}, {"titleBarClose", "close"}};
+        for (const auto &[name, kind] : buttons) {
+            auto *button = root->findChild<QQuickItem *>(QLatin1String(name));
+            QVERIFY2(button, name);
+            QCOMPARE(button->property("captionKind").toString(), QString::fromLatin1(kind));
+            QCOMPARE(button->size(), QSizeF(46, 40));
+            QQuickItem *glyph = glyphOf(name);
+            QVERIFY2(glyph, name);
+            QCOMPARE(glyph->property("kind").toString(), QString::fromLatin1(kind));
+            QCOMPARE(glyph->size(), QSizeF(16, 16));
+            QCOMPARE(glyph->mapToItem(button, QPointF(0, 0)), QPointF(15, 12));
+            QQuickItem *icon = part(name, "iconButtonIcon");
+            QVERIFY2(icon, name);
+            QVERIFY2(!icon->property("visible").toBool(), name);
+            // Same colour rule as the AppIcon branch.
+            QCOMPARE(glyph->property("color").value<QColor>(), icon->property("color").value<QColor>());
+        }
+
+        auto *maximize = root->findChild<QQuickItem *>(QStringLiteral("titleBarMaximize"));
+        QVERIFY(maximize);
+        window->showMaximized();
+        QTRY_COMPARE(maximize->property("captionKind").toString(), QStringLiteral("restore"));
+        QVERIFY(glyphOf("titleBarMaximize"));
+        QTRY_COMPARE(glyphOf("titleBarMaximize")->property("kind").toString(), QStringLiteral("restore"));
+        window->showNormal();
+        QTRY_COMPARE(maximize->property("captionKind").toString(), QStringLiteral("maximize"));
+        QTRY_COMPARE(glyphOf("titleBarMaximize")->property("kind").toString(), QStringLiteral("maximize"));
+
+        QVERIFY(root->findChild<QQuickItem *>(QStringLiteral("plainButton")));
+        QVERIFY(!glyphOf("plainButton"));
+        QQuickItem *plainIcon = part("plainButton", "iconButtonIcon");
+        QVERIFY(plainIcon);
+        QVERIFY(plainIcon->property("visible").toBool());
+        QVERIFY(plainIcon->width() > 0 && plainIcon->height() > 0);
+        QCOMPARE(plainIcon->property("name").toString(), QStringLiteral("settings"));
     }
 
     // §2.2: fallback lists via substitutions, application font families, Bold-only weights.
