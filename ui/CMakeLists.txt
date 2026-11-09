@@ -41,6 +41,9 @@ qt_add_qml_module(ui_module
         ${UI_ZCODE_SOURCES}
         ${UI_CODEX_SOURCES}
     RESOURCES ${UI_ZCODE_RESOURCES} ${UI_CODEX_RESOURCES}
+    # CaptionGlyph.qml imports QtQuick.Shapes: recorded as a qmldir "depends" and given to
+    # the QML tooling (qmllint, qmlcachegen, deployment import scanning).
+    DEPENDENCIES QtQuick.Shapes
 )
 
 # Repo root for "ui/backend/..." and "shell/..." includes; backend/ for the generated
@@ -49,13 +52,14 @@ target_include_directories(ui_module
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/.."
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/backend")
 target_link_libraries(ui_module PUBLIC Qt6::Qml Qt6::Quick Qt6::QuickControls2)
-# CaptionGlyph.qml imports QtQuick.Shapes (part of qtdeclarative). The QML import is
-# resolved from the Qt kit's qml directory at run time; linking the module's C++ library
-# (Qt's internal target QuickShapesPrivate) only records the dependency for the linker and
-# deployment. Optional, so a kit without that CMake package still configures.
-find_package(Qt6 QUIET COMPONENTS QuickShapesPrivate)
-if(TARGET Qt6::QuickShapesPrivate)
-    target_link_libraries(ui_module PUBLIC Qt6::QuickShapesPrivate)
+# QtQuick.Shapes is required. Qt 6.8 has no public C++ module for it (its only CMake
+# packages, Qt6QuickShapesPrivate and the qmlshapesplugin plugin target, are internal), and
+# ui_module uses no Shapes C++ API, so nothing is linked: the QML import is loaded from the
+# kit's qml directory at run time. Configure fails here if the kit lacks the module.
+set(subrec_qt_shapes_qmldir "${QT6_INSTALL_PREFIX}/${QT6_INSTALL_QML}/QtQuick/Shapes/qmldir")
+if(NOT EXISTS "${subrec_qt_shapes_qmldir}")
+    message(FATAL_ERROR "SubRec.Ui: QML module QtQuick.Shapes not found in the Qt kit "
+        "(${subrec_qt_shapes_qmldir}); it is part of qtdeclarative.")
 endif()
 # Backend implementations call shell classes (ShellView, HotkeyController, FloatingBarView).
 if(TARGET shell_module)
