@@ -52,15 +52,28 @@ AbstractButton {
             color: root.__contentColor
         }
         Loader {
+            id: captionGlyphLoader
             objectName: "captionGlyphLoader"
             // Implicit 16 × 16; alignWhenCentered keeps the position on whole logical px.
             anchors.centerIn: parent
             active: root.captionKind.length > 0
+            // Bind kind/color outside sourceComponent so qmllint does not see outer-id
+            // access inside the nested Component (unqualified).
             sourceComponent: CaptionGlyph {
                 objectName: "captionGlyph"
-                kind: root.captionKind
-                color: root.__contentColor
             }
+        }
+        Binding {
+            target: captionGlyphLoader.item
+            property: "kind"
+            value: root.captionKind
+            when: captionGlyphLoader.status === Loader.Ready
+        }
+        Binding {
+            target: captionGlyphLoader.item
+            property: "color"
+            value: root.__contentColor
+            when: captionGlyphLoader.status === Loader.Ready
         }
     }
 
