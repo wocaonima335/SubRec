@@ -306,8 +306,8 @@ Item {
         QTRY_COMPARE(image->property("status").toInt(), 1); // Image.Ready: the SVG loaded
     }
 
-    // Icon resources (ui/icons/ICONS_SOURCE.md): exactly the 25 semantics the UI uses, each
-    // a valid SVG with the 1024 viewBox of the iconfont source, drawn in currentColor with no
+    // Icon resources (ui/icons/ICONS_SOURCE.md): the 27 icons (25 iconfont + 2 project-drawn),
+    // each a valid SVG with the 1024 viewBox, drawn in currentColor with no
     // DOCTYPE; the 11 removed Lucide-only names are gone (no fallback path at run time).
     void iconResourcesComplete()
     {
@@ -321,8 +321,10 @@ Item {
             QStringLiteral("play"), QStringLiteral("app-window"), QStringLiteral("folder-open"),
             QStringLiteral("monitor-off"), QStringLiteral("monitor"), QStringLiteral("camera"),
             QStringLiteral("volume-2"), QStringLiteral("mic"), QStringLiteral("mic-off"),
-            QStringLiteral("download")};
-        QCOMPARE(used.size(), 25);
+            QStringLiteral("download"),
+            // Drawn by the project (title bar maximize / restore).
+            QStringLiteral("window-maximize"), QStringLiteral("window-restore")};
+        QCOMPARE(used.size(), 27);
         for (const QString &name : used) {
             const QString path = dir + name + QStringLiteral(".svg");
             QFile file(path);

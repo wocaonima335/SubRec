@@ -1,6 +1,6 @@
 # ui/icons 图标来源与许可状态
 
-这 25 个 SVG 是新界面（`SubRec.Ui`，`SUBREC_BUILD_NEW_UI=ON`）里 `AppIcon` 用到的**全部**图标，通过 `ui/files_zcode.cmake` 登记为模块资源（`:/qt/qml/SubRec/Ui/icons/`）。之前的 Lucide 图标已全部移除，运行时不存在 Lucide 回退。
+这 27 个 SVG 是新界面（`SubRec.Ui`，`SUBREC_BUILD_NEW_UI=ON`）里 `AppIcon` 可用的**全部**图标：25 个来自下述 iconfont 集合，2 个由项目自绘（见文末"项目自绘图标"），通过 `ui/files_zcode.cmake` 登记为模块资源（`:/qt/qml/SubRec/Ui/icons/`）。之前的 Lucide 图标已全部移除，运行时不存在 Lucide 回退。
 
 ## 来源
 - 页面：iconfont.cn「Ant Design 官方图标库」，<https://www.iconfont.cn/collections/detail?cid=9402>，创建者显示为"竹尔"，页面简介为"Ant Design 3.0 全新线性图标体系"，共 599 个图标。
@@ -57,3 +57,13 @@
 - 唯一的依据是页面评论区的**非正式回复**：用户问"可以用作商业吗？"，创建者"竹尔"答"可以的"；另有其他用户（非创建者）说"可以免费商用的"。有人追问"商用需要申请授权书吗"，没有看到作者回答。这只是评论，**不是许可证**。
 - 因此**不能**把这些图标标成 MIT、GPL、ISC 或其他任何开源许可。署名要求、修改许可（本项目改了尺寸属性和 fill）、再分发条件都未知。
 - **与 GPL-3.0 程序一起分发是否兼容，风险尚未解决**。正式对外分发含这些图标的构建之前，需要通过合适渠道取得书面许可，或者换成许可明确的图标。
+
+## 项目自绘图标（不是 iconfont 素材）
+标题栏的最大化和还原按钮原先用的是 maximize-2（fullscreen，四角箭头）和 minimize-2（fullscreen-exit），这不是常见的窗口按钮形状。所以项目自己画了两枚标准窗口控件图标，属于本项目作品，按项目许可（GPL-3.0）发布，不涉及上面的 iconfont 许可问题。
+
+| 运行文件 | 图形 | SHA256 |
+|---|---|---|
+| `window-maximize.svg` | 单个方框（最大化） | `db8bb718dae3a4871ea0ee55df0b5ad5dee066587f86c848f9359446185cea95` |
+| `window-restore.svg` | 两个错叠的方框（还原） | `b9024443e852375ae3e471dbb18cc3540bd48b45240bd6d520854ad1f5e4a4f1` |
+
+格式与上面的规范化输出相同：`viewBox 0 0 1024 1024`，宽高 24，`fill="currentColor"`，只有一个 `<path d>`，没有 DOCTYPE 和脚本。坐标都是 64 的整数倍、线宽 64，在 16 px 下正好是 1 px，对齐像素格。maximize-2 和 minimize-2 两个文件仍然保留。

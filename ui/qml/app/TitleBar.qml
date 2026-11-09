@@ -88,8 +88,9 @@ Rectangle {
         }
         IconButton {
             windowButton: true
+            // Standard window glyphs (single box / two boxes), drawn by the project.
             iconName: root.window && root.window.visibility === Window.Maximized
-                       ? "minimize-2" : "maximize-2"
+                       ? "window-restore" : "window-maximize"
             iconSize: 16
             anchors.verticalCenter: parent.verticalCenter
             onClicked: root.maximizeToggled()

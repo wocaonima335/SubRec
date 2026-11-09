@@ -146,7 +146,7 @@ int main(int argc, char **argv)
 #endif
 
     // ---- §2.8 icon set: every name rasterises, unknown names stay empty ----
-    // The 25 semantics the UI uses (ui/icons/ICONS_SOURCE.md); each must exist and really
+    // The 27 icons of ui/icons (ui/icons/ICONS_SOURCE.md); each must exist and really
     // rasterise (read() returns a non-null image).
     {
         const QString iconDir = QStringLiteral(":/qt/qml/SubRec/Ui/icons");
@@ -159,8 +159,10 @@ int main(int argc, char **argv)
             QStringLiteral("play"), QStringLiteral("app-window"), QStringLiteral("folder-open"),
             QStringLiteral("monitor-off"), QStringLiteral("monitor"), QStringLiteral("camera"),
             QStringLiteral("volume-2"), QStringLiteral("mic"), QStringLiteral("mic-off"),
-            QStringLiteral("download")};
-        check(expected.size() == 25, "25 icon semantics listed");
+            QStringLiteral("download"),
+            // Drawn by the project (title bar maximize / restore).
+            QStringLiteral("window-maximize"), QStringLiteral("window-restore")};
+        check(expected.size() == 27, "27 icon names listed");
         for (const QString &name : expected) {
             QImageReader reader(iconDir + QLatin1Char('/') + name + QStringLiteral(".svg"));
             const QSize size = reader.size();

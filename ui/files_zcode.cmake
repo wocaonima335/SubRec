@@ -72,7 +72,8 @@ set(UI_ZCODE_SOURCES
 
 # U1: single-colour SVG icons from the iconfont.cn Ant Design icon collection (cid=9402),
 # normalised to 24x24 / viewBox 0 0 1024 1024 / fill="currentColor"; source, mapping and
-# licence status in ui/icons/ICONS_SOURCE.md. Resource path :/qt/qml/SubRec/Ui/icons/.
+# licence status in ui/icons/ICONS_SOURCE.md (window-maximize / window-restore are drawn by the
+# project, not iconfont). Resource path :/qt/qml/SubRec/Ui/icons/.
 set(UI_ZCODE_RESOURCES
     icons/app-window.svg
     icons/camera.svg
@@ -98,5 +99,7 @@ set(UI_ZCODE_RESOURCES
     icons/triangle-alert.svg
     icons/video.svg
     icons/volume-2.svg
+    icons/window-maximize.svg
+    icons/window-restore.svg
     icons/x.svg
 )
