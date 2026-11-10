@@ -233,6 +233,11 @@ void TaskbarOverlay::attachWindow(QWindow *window)
 #endif
         return;
     }
+#ifdef Q_OS_WIN
+    // winId() may synchronously deliver PlatformSurface / WinIdChange; resolve the HWND
+    // before installing the event filter so attach applies exactly once, via reapply().
+    d->haveHwnd = window->winId() != 0;
+#endif
     window->installEventFilter(this);
 #ifdef Q_OS_WIN
     d->taskbarCreatedMessage = RegisterWindowMessageW(L"TaskbarButtonCreated");
@@ -240,7 +245,6 @@ void TaskbarOverlay::attachWindow(QWindow *window)
         d->nativeFilter = new Private::TaskbarCreatedFilter(d.get());
         QCoreApplication::instance()->installNativeEventFilter(d->nativeFilter);
     }
-    d->haveHwnd = window->winId() != 0;
 #endif
     reapply();
 }
