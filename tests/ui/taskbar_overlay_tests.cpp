@@ -33,6 +33,25 @@ struct SessionCounters {
 
 SessionCounters g_session;
 
+void dumpCounts(const char *step)
+{
+    std::fprintf(stderr, "COUNTS %s: acquire=%d setOverlay=%d release=%d\n",
+                 step, g_session.acquire, g_session.setOverlay, g_session.release);
+}
+
+// Same condition (actual == expected) and the same expected values as before;
+// on failure also print both numbers and the three running counters.
+void checkEq(int actual, int expected, const char *what)
+{
+    check(actual == expected, what);
+    if (actual != expected) {
+        std::fprintf(stderr,
+                     "  actual=%d expected=%d (acquire=%d setOverlay=%d release=%d)\n",
+                     actual, expected, g_session.acquire, g_session.setOverlay,
+                     g_session.release);
+    }
+}
+
 TaskbarOverlay::Session testAcquire()
 {
     ++g_session.acquire;
@@ -95,27 +114,32 @@ int main(int argc, char **argv)
         TaskbarOverlay overlay;
         overlay.setTestAcquire(&testAcquire);
         QWindow window;
+        dumpCounts("before attach");
         overlay.attachWindow(&window);
-        check(g_session.acquire == 1, "attach acquires a session");
-        check(g_session.setOverlay == 1, "attach calls SetOverlayIcon");
-        check(g_session.release == 1, "attach releases the session (no cache)");
+        dumpCounts("after attach");
+        checkEq(g_session.acquire, 1, "attach acquires a session");
+        checkEq(g_session.setOverlay, 1, "attach calls SetOverlayIcon");
+        checkEq(g_session.release, 1, "attach releases the session (no cache)");
 
         overlay.setKind(TrayIconKind::Recording);
-        check(g_session.acquire == 2, "setKind acquires a new session");
-        check(g_session.setOverlay == 2, "setKind calls SetOverlayIcon on the new session");
-        check(g_session.release == 2, "setKind releases after apply (no cache)");
+        dumpCounts("after setKind Recording");
+        checkEq(g_session.acquire, 2, "setKind acquires a new session");
+        checkEq(g_session.setOverlay, 2, "setKind calls SetOverlayIcon on the new session");
+        checkEq(g_session.release, 2, "setKind releases after apply (no cache)");
 
         g_session.hr = static_cast<int>(0x80004005); // E_FAIL
         overlay.setKind(TrayIconKind::Idle);
-        check(g_session.acquire == 3, "failed apply still acquires");
-        check(g_session.setOverlay == 3, "failed apply still calls SetOverlayIcon");
-        check(g_session.release == 3, "failed SetOverlayIcon still releases");
+        dumpCounts("after setKind Idle (E_FAIL)");
+        checkEq(g_session.acquire, 3, "failed apply still acquires");
+        checkEq(g_session.setOverlay, 3, "failed apply still calls SetOverlayIcon");
+        checkEq(g_session.release, 3, "failed SetOverlayIcon still releases");
 
         g_session.hr = 0;
         overlay.setKind(TrayIconKind::Recording);
-        check(g_session.acquire == 4, "apply after a failure acquires again");
-        check(g_session.setOverlay == 4, "apply after a failure calls SetOverlayIcon again");
-        check(g_session.release == 4, "apply after a failure still releases");
+        dumpCounts("after setKind Recording (retry)");
+        checkEq(g_session.acquire, 4, "apply after a failure acquires again");
+        checkEq(g_session.setOverlay, 4, "apply after a failure calls SetOverlayIcon again");
+        checkEq(g_session.release, 4, "apply after a failure still releases");
     }
 
     if (g_failures == 0) std::printf("taskbar_overlay_tests: all checks passed\n");
