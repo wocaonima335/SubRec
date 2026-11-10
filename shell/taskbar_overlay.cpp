@@ -42,9 +42,61 @@ HICON pixmapToHicon(const QPixmap &pixmap)
 
 namespace subrec::shell {
 
-// TB1 (X7). Off Windows everything is a no-op storing nothing. The Windows half is
-// compile-checked with MinGW -fsyntax-only and exercised on PC3 (five states, HWND
-// recreation, Explorer restart); <windows.h>/COM stay confined to this file.
+namespace {
+
+TaskbarOverlay::AcquireFn g_testAcquire = nullptr;
+
+#ifdef Q_OS_WIN
+TaskbarOverlay::Session acquireProduction()
+{
+    ITaskbarList3 *taskbar = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&taskbar)))
+        || !taskbar)
+        return {};
+    // ITaskbarList requires HrInit before any other method is called.
+    if (FAILED(taskbar->HrInit())) {
+        taskbar->Release();
+        return {};
+    }
+    TaskbarOverlay::Session session;
+    session.handle = taskbar;
+    session.setOverlayIcon = [](void *handle, quintptr hwnd, void *icon, const void *text) -> int {
+        auto *list = static_cast<ITaskbarList3 *>(handle);
+        return static_cast<int>(list->SetOverlayIcon(reinterpret_cast<HWND>(hwnd),
+                                                     static_cast<HICON>(icon),
+                                                     static_cast<PCWSTR>(text)));
+    };
+    session.release = [](void *handle) {
+        if (handle)
+            static_cast<ITaskbarList3 *>(handle)->Release();
+    };
+    return session;
+}
+#endif
+
+TaskbarOverlay::Session acquireSession()
+{
+    if (g_testAcquire)
+        return g_testAcquire();
+#ifdef Q_OS_WIN
+    return acquireProduction();
+#else
+    return {};
+#endif
+}
+
+} // namespace
+
+void TaskbarOverlay::setTestAcquire(AcquireFn fn)
+{
+    g_testAcquire = fn;
+}
+
+// TB1 (X7). Off Windows everything is a no-op storing nothing, unless a test acquire is
+// injected. The Windows half is compile-checked with MinGW -fsyntax-only and exercised on
+// PC3. ITaskbarList3 is never cached across applies (a stale vtable at SetOverlayIcon
+// crashed 47056c1 after stop/Idle following a display-scale change).
 class TaskbarOverlay::Private {
 public:
     QWindow *window = nullptr;
@@ -52,12 +104,12 @@ public:
     QString description;
 
 #ifdef Q_OS_WIN
-    ITaskbarList3 *taskbar = nullptr;
     UINT taskbarCreatedMessage = 0;
     bool haveHwnd = false;
 
     // Explorer restarts re-create the taskbar button and broadcast TaskbarButtonCreated;
-    // that message never becomes a QEvent, so a native filter watches for it.
+    // that message never becomes a QEvent, so a native filter watches for it. DPI and
+    // display changes go the same path so the next apply does not reuse a stale COM object.
     class TaskbarCreatedFilter : public QAbstractNativeEventFilter {
     public:
         explicit TaskbarCreatedFilter(Private *owner) : owner_(owner) {}
@@ -66,9 +118,17 @@ public:
             if (eventType != "windows_generic_MSG")
                 return false;
             const auto *msg = static_cast<const MSG *>(message);
+            if (!msg)
+                return false;
+            const HWND ours = owner_->hwndFor();
             if (owner_->taskbarCreatedMessage != 0
                 && msg->message == owner_->taskbarCreatedMessage) {
-                owner_->onTaskbarButtonCreated();
+                owner_->apply();
+                return false;
+            }
+            if (ours && msg->hwnd == ours
+                && (msg->message == WM_DPICHANGED || msg->message == WM_DISPLAYCHANGE)) {
+                owner_->apply();
             }
             return false;
         }
@@ -77,62 +137,64 @@ public:
     };
     TaskbarCreatedFilter *nativeFilter = nullptr;
 
-    void onTaskbarButtonCreated()
-    {
-        releaseTaskbar(); // the old button is gone
-        apply();
-    }
-
-    void releaseTaskbar()
-    {
-        if (taskbar) {
-            taskbar->Release();
-            taskbar = nullptr;
-        }
-    }
-
-    bool ensureTaskbar()
-    {
-        if (!window)
-            return false;
-        if (!taskbar) {
-            // CoInitialize was done by QGuiApplication on the GUI thread; the threaded COM
-            // apartment of Qt matches ITaskbarList3's requirements.
-            if (FAILED(CoCreateInstance(CLSID_TaskbarList, nullptr, CLSCTX_INPROC_SERVER,
-                                        IID_PPV_ARGS(&taskbar))))
-                return false;
-            // ITaskbarList requires HrInit before any other method is called.
-            if (FAILED(taskbar->HrInit())) {
-                taskbar->Release();
-                taskbar = nullptr;
-                return false;
-            }
-        }
-        return true;
-    }
-
     HWND hwndFor() const
     {
         return window ? reinterpret_cast<HWND>(window->winId()) : nullptr;
     }
+#endif
 
     void apply()
     {
-        if (!ensureTaskbar())
+        const bool testing = g_testAcquire != nullptr;
+#ifdef Q_OS_WIN
+        quintptr hwnd = 0;
+        HICON icon = nullptr;
+        const void *text = nullptr;
+        if (!testing) {
+            hwnd = reinterpret_cast<quintptr>(hwndFor());
+            if (!hwnd || !haveHwnd)
+                return;
+            const QPixmap pixmap = makeTrayIcon(kind).pixmap(16, 16);
+            icon = pixmapToHicon(pixmap);
+            text = description.utf16();
+        }
+#else
+        quintptr hwnd = 0;
+        void *icon = nullptr;
+        const void *text = nullptr;
+        if (!testing)
             return;
-        const HWND hwnd = hwndFor();
-        if (!hwnd || !haveHwnd)
+#endif
+
+        Session session = acquireSession();
+        if (!session.handle && !session.setOverlayIcon && !session.release) {
+#ifdef Q_OS_WIN
+            if (icon)
+                DestroyIcon(icon);
+#endif
             return;
-        const QPixmap pixmap = makeTrayIcon(kind).pixmap(16, 16);
-        const HICON icon = pixmapToHicon(pixmap);
-        const PCWSTR text = reinterpret_cast<PCWSTR>(
-            const_cast<ushort *>(description.utf16()));
-        // Idle clears the overlay; the kind-to-icon mapping mirrors trayIconFor (§6.1).
-        taskbar->SetOverlayIcon(hwnd, kind == TrayIconKind::Idle ? nullptr : icon, text);
+        }
+
+        struct ReleaseGuard {
+            Session session;
+            ~ReleaseGuard()
+            {
+                if (session.release)
+                    session.release(session.handle);
+            }
+        } guard{session};
+
+        if (session.setOverlayIcon) {
+            // Idle clears the overlay (nullptr icon). HRESULT failure: skip; the guard
+            // still releases. Do not cache the pointer.
+            void *overlayIcon = (kind == TrayIconKind::Idle) ? nullptr : static_cast<void *>(icon);
+            (void)session.setOverlayIcon(session.handle, hwnd, overlayIcon, text);
+        }
+#ifdef Q_OS_WIN
         if (icon)
             DestroyIcon(icon);
-    }
 #endif
+    }
 };
 
 TaskbarOverlay::TaskbarOverlay(QObject *parent) : QObject(parent), d(std::make_unique<Private>()) {}
@@ -145,7 +207,6 @@ TaskbarOverlay::~TaskbarOverlay()
         delete d->nativeFilter;
         d->nativeFilter = nullptr;
     }
-    d->releaseTaskbar();
 #endif
 }
 
@@ -167,7 +228,6 @@ void TaskbarOverlay::attachWindow(QWindow *window)
     d->window = window;
     if (!window) {
 #ifdef Q_OS_WIN
-        d->releaseTaskbar();
         d->haveHwnd = false;
 #endif
         return;
@@ -198,10 +258,7 @@ void TaskbarOverlay::setDescription(const QString &text)
 
 void TaskbarOverlay::reapply()
 {
-#ifdef Q_OS_WIN
     d->apply();
-#endif
-    // Nothing to do off Windows; the stored kind/description stay for a future window.
 }
 
 bool TaskbarOverlay::eventFilter(QObject *watched, QEvent *event)
@@ -210,11 +267,11 @@ bool TaskbarOverlay::eventFilter(QObject *watched, QEvent *event)
     if (watched == d->window) {
         // HWND recreated (QEvent::PlatformSurface / SurfaceCreated) and Explorer restart
         // (TaskbarButtonCreated arrives as a QEvent::WinIdChange through Qt's translation)
-        // both need the overlay re-applied to the new button.
+        // both need the overlay re-applied to the new button. A fresh ITaskbarList3 is
+        // acquired inside apply(); nothing is cached to drop here.
         if (event->type() == QEvent::PlatformSurface
             || event->type() == QEvent::WinIdChange) {
             d->haveHwnd = d->window && d->window->winId() != 0;
-            d->releaseTaskbar(); // the old button is gone; get a fresh ITaskbarList3
             d->apply();
         }
     }
