@@ -84,17 +84,16 @@ int main(int argc, char **argv)
     }
     check(true, "destroy with an attached window is clean");
 
-    // Injected factory: every apply must acquire and release; a failed SetOverlayIcon
-    // must still release and a later apply must still run (would fail if the pointer
-    // were cached or a failure path skipped release).
+    // Injected factory (per-instance): every apply must acquire and release; a failed
+    // SetOverlayIcon must still release and a later apply must still run (would fail
+    // if the pointer were cached or a failure path skipped release). The hook is set
+    // on the overlay itself so apply() cannot miss it (928d794 Windows CI: all 12
+    // counters stayed 0 with a process-wide file-static hook).
     {
-        struct ResetHook {
-            ~ResetHook() { TaskbarOverlay::setTestAcquire(nullptr); }
-        } resetHook;
         g_session = SessionCounters{};
-        TaskbarOverlay::setTestAcquire(&testAcquire);
 
         TaskbarOverlay overlay;
+        overlay.setTestAcquire(&testAcquire);
         QWindow window;
         overlay.attachWindow(&window);
         check(g_session.acquire == 1, "attach acquires a session");

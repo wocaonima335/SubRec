@@ -44,8 +44,6 @@ namespace subrec::shell {
 
 namespace {
 
-TaskbarOverlay::AcquireFn g_testAcquire = nullptr;
-
 #ifdef Q_OS_WIN
 TaskbarOverlay::Session acquireProduction()
 {
@@ -75,23 +73,7 @@ TaskbarOverlay::Session acquireProduction()
 }
 #endif
 
-TaskbarOverlay::Session acquireSession()
-{
-    if (g_testAcquire)
-        return g_testAcquire();
-#ifdef Q_OS_WIN
-    return acquireProduction();
-#else
-    return {};
-#endif
-}
-
 } // namespace
-
-void TaskbarOverlay::setTestAcquire(AcquireFn fn)
-{
-    g_testAcquire = fn;
-}
 
 // TB1 (X7). Off Windows everything is a no-op storing nothing, unless a test acquire is
 // injected. The Windows half is compile-checked with MinGW -fsyntax-only and exercised on
@@ -102,6 +84,9 @@ public:
     QWindow *window = nullptr;
     TrayIconKind kind = TrayIconKind::Idle;
     QString description;
+    // Test hook, if set. Instance state (not a file-static) so apply() always
+    // sees the same pointer the test stored on this object.
+    TaskbarOverlay::AcquireFn testAcquire = nullptr;
 
 #ifdef Q_OS_WIN
     UINT taskbarCreatedMessage = 0;
@@ -143,9 +128,20 @@ public:
     }
 #endif
 
+    Session acquireSession()
+    {
+        if (testAcquire)
+            return testAcquire();
+#ifdef Q_OS_WIN
+        return acquireProduction();
+#else
+        return {};
+#endif
+    }
+
     void apply()
     {
-        const bool testing = g_testAcquire != nullptr;
+        const bool testing = testAcquire != nullptr;
 #ifdef Q_OS_WIN
         quintptr hwnd = 0;
         HICON icon = nullptr;
@@ -198,6 +194,11 @@ public:
 };
 
 TaskbarOverlay::TaskbarOverlay(QObject *parent) : QObject(parent), d(std::make_unique<Private>()) {}
+
+void TaskbarOverlay::setTestAcquire(AcquireFn fn)
+{
+    d->testAcquire = fn;
+}
 
 TaskbarOverlay::~TaskbarOverlay()
 {

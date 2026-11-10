@@ -35,8 +35,11 @@ public:
     // Accessibility text passed to SetOverlayIcon, e.g. "录制中".
     void setDescription(const QString &text);
 
-    // Test-only (CI). Production never calls this. nullptr restores production acquire:
-    // CoCreateInstance + HrInit per apply on Windows, none otherwise.
+    // Test-only (CI), per instance. Production never calls this. Stored on the same
+    // Private that apply() reads so the hook cannot miss apply() across linkage
+    // units (Windows CI at 928d794 left all 12 hook counters at 0). nullptr
+    // restores production acquire: CoCreateInstance + HrInit per apply on Windows,
+    // none otherwise.
     struct Session {
         void *handle = nullptr;
         // 0 = S_OK. Non-zero is a failed HRESULT: the apply releases and skips.
@@ -44,7 +47,7 @@ public:
         void (*release)(void *handle) = nullptr;
     };
     using AcquireFn = Session (*)();
-    static void setTestAcquire(AcquireFn fn);
+    void setTestAcquire(AcquireFn fn);
 
 protected:
     // Watches the attached window: HWND recreation (PlatformSurface / WinIdChange)
