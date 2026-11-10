@@ -1,0 +1,36 @@
+MinGW-w64 runtime in this package / 本包中的 MinGW-w64 运行库
+=============================================================
+
+appSubRec.exe is built with the MinGW-w64 GCC 13.1 toolchain that the Qt installer provides
+(tools_mingw1310; exact build in toolchain-build-info.txt). These runtime DLLs from that
+toolchain are shipped next to it:
+
+libstdc++-6.dll, libgcc_s_seh-1.dll
+    GCC runtime libraries: GNU GPL v3 with the GCC Runtime Library Exception 3.1
+    (gcc/COPYING3, gcc/COPYING.RUNTIME).
+libwinpthread-1.dll
+    winpthreads (part of mingw-w64): MIT-style license (winpthreads/COPYING).
+
+The mingw-w64 CRT startup code is linked statically into the executables and DLLs
+(mingw-w64/COPYING.MinGW-w64-runtime.txt and the other files in mingw-w64/).
+
+FFmpeg's DLLs are cross-compiled with a separate MinGW-w64 toolchain and link its runtime
+statically; that toolchain is recorded in sources/BUILD_CONFIG.txt.
+
+appSubRec.exe 用 Qt 提供的 MinGW-w64 GCC 13.1 工具链构建，随包附带其运行库
+libstdc++-6.dll、libgcc_s_seh-1.dll（GPL-3.0 + GCC Runtime Library Exception 3.1）和
+libwinpthread-1.dll（winpthreads，MIT 类许可）。
+
+Files in this directory / 本目录文件
+------------------------------------
+
+gcc/, mingw-w64/, winpthreads/   License files copied unmodified by CI from the licenses/
+                                 directory of that toolchain (<Qt>/Tools/mingw1310_64/licenses).
+toolchain-build-info.txt         build-info.txt of the same toolchain, copied unmodified.
+
+Source code / 源码
+------------------
+
+GCC 13.1.0 (libgcc, libstdc++):  https://ftp.gnu.org/gnu/gcc/gcc-13.1.0/
+mingw-w64 (CRT, winpthreads):    https://sourceforge.net/projects/mingw-w64/files/
+Toolchain build scripts:         https://github.com/niXman/mingw-builds

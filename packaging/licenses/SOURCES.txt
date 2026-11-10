@@ -1,0 +1,27 @@
+Source code for this package / 本包的源码获取说明
+================================================
+
+SubRec (GPL-3.0, LICENSE.txt)
+    The source of SubRec itself is in its Git repository; the repository and commit of this
+    build are listed at the end of this file.
+    SubRec 本身的源码见其 Git 仓库，本构建对应的仓库与提交写在本文件末尾。
+
+FFmpeg, x264, libvpl, nv-codec-headers, AMF headers (licenses/ffmpeg/)
+    Complete corresponding source is included in sources/ of this package: the pinned
+    upstream sources, SubRec's FFmpeg patch (ffmpeg-*.patch), the build scripts, the full
+    configure arguments (BUILD_CONFIG.txt) and SHA256SUMS.
+    完整的对应源码就在本包 sources/ 目录：固定版本的上游源码、SubRec 的 FFmpeg 补丁、
+    构建脚本、完整 configure 参数（BUILD_CONFIG.txt）和 SHA256SUMS。
+
+Qt 6.8.0 (licenses/qt/)
+    Unmodified official Qt 6.8.0 MinGW 64-bit binaries. Source from The Qt Company:
+    https://download.qt.io/archive/qt/6.8/6.8.0/single/ (qt-everywhere-src-6.8.0)
+    and https://code.qt.io/cgit/qt/qt5.git (tag v6.8.0). Details in licenses/qt/NOTICE.txt.
+    Qt 为未修改的官方 Qt 6.8.0 MinGW 64 位二进制，源码见上述地址，详见 licenses/qt/NOTICE.txt。
+
+MinGW-w64 runtime (licenses/mingw-runtime/)
+    GCC 13.1.0 and mingw-w64 sources; see licenses/mingw-runtime/NOTICE.txt.
+    见 licenses/mingw-runtime/NOTICE.txt。
+
+This build / 本构建
+-------------------

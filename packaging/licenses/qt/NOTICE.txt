@@ -1,0 +1,56 @@
+Qt in this package / 本包中的 Qt
+================================
+
+SubRec uses the Qt Toolkit, version 6.8.0 (Windows, MinGW 64-bit), Copyright (C) The Qt
+Company Ltd. and other contributors. The Qt libraries are the unmodified official binaries of
+The Qt Company (downloaded from download.qt.io by jurplel/install-qt-action in CI) and are
+used under the GNU Lesser General Public License version 3 (LGPL-3.0). Qt is also available
+under GPL-2.0, GPL-3.0 and commercial licenses from The Qt Company.
+
+Qt is dynamically linked: Qt6*.dll in the package root, plugins in the plugin
+subdirectories (platforms/, multimedia/, ...) and QML modules under qml/ were placed there by
+windeployqt. SubRec did not modify Qt; you can replace these files with your own compatible
+build of Qt 6.8.
+
+SubRec 使用 Qt 6.8.0（Windows，MinGW 64 位），按 LGPL-3.0 使用，未修改，动态链接；
+Qt 的 DLL、插件和 qml/ 下的 QML 模块由 windeployqt 放入本包，可替换为自行编译的兼容 Qt 6.8。
+
+Files in this directory / 本目录文件
+------------------------------------
+
+LGPL-3.0.txt   GNU Lesser General Public License v3, unmodified FSF text
+               (https://www.gnu.org/licenses/lgpl-3.0.txt). Copied from LICENSES/LGPL-3.0.txt
+               of the SubRec repository.
+GPL-3.0.txt    GNU General Public License v3, unmodified FSF text
+               (https://www.gnu.org/licenses/gpl-3.0.txt); LGPL-3.0 is a set of additional
+               permissions on top of it. Copied from LICENSE of the SubRec repository (the
+               same text as LICENSE.txt in the package root).
+sbom/*.spdx    SPDX software bills of materials shipped by The Qt Company inside the Qt
+               6.8.0 kit (<Qt>/sbom), copied unmodified. They list the license of every Qt
+               module and of the third-party code built into Qt (zlib, libpng, libjpeg,
+               FreeType, HarfBuzz, PCRE2, ...). See also
+               https://doc.qt.io/qt-6.8/licenses-used-in-qt.html
+
+Qt Multimedia FFmpeg
+--------------------
+
+windeployqt can deploy Qt Multimedia's FFmpeg backend (multimedia/ffmpegmediaplugin.dll) with
+the FFmpeg DLLs built by The Qt Company (avcodec-61.dll, avformat-61.dll, avutil-59.dll,
+swresample-5.dll, swscale-8.dll; an LGPL build, version recorded in
+sbom/qtmultimedia-6.8.0.spdx). They are separate from SubRec's own FFmpeg (avcodec-62.dll
+and the other six DLLs listed in sources/BUILD_CONFIG.txt; see licenses/ffmpeg/ and sources/).
+FFmpeg release sources: https://ffmpeg.org/releases/
+
+Qt 自带的 FFmpeg（avcodec-61 等，LGPL 构建）与 SubRec 自己的 FFmpeg（avcodec-62 等）是两套独立的库。
+
+Qt source code / Qt 源码
+------------------------
+
+Qt 6.8.0 complete source (all modules):
+  https://download.qt.io/archive/qt/6.8/6.8.0/single/
+  (qt-everywhere-src-6.8.0.tar.xz or .zip)
+Per-module source archives (qtbase, qtdeclarative, qtmultimedia, ...):
+  https://download.qt.io/archive/qt/6.8/6.8.0/submodules/
+Git: https://code.qt.io/cgit/qt/qt5.git, tag v6.8.0
+
+See SOURCES.txt in the package root for the other components.

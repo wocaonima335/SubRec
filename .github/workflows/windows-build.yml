@@ -15,7 +15,12 @@
 #                          (bin/ include/ lib/ share/subrec-ffmpeg/ sources/).
 #   build (windows-latest) builds SubRec against that FFMPEG_ROOT (Qt 6.8.0 + MinGW 13.1 + Ninja),
 #                          deploys it and packages the DLLs, licenses and sources/ into the zip.
+#                          The package carries the new-interface build (build/ci-new-ui,
+#                          SUBREC_BUILD_NEW_UI=ON); the old-interface build (build/ci) is still
+#                          built as a check but not packaged.
 #
+# - The new interface's icons (ui/icons/*.svg, iconfont.cn) have no resolved license; the
+#   maintainers accepted that risk for pre-releases. See THIRD_PARTY_LICENSES.md §3 and §5.
 # - ffmpeg.exe is NOT packaged: SubRec never starts it (it links the FFmpeg libraries). The Windows
 #   job only runs it as a smoke test of the freshly built DLLs. See packaging/ffmpeg/README.md.
 # - Artifacts are unsigned: Windows SmartScreen will warn ("More info" -> "Run anyway").
@@ -85,6 +90,9 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write   # only used to create a draft release on tags
+    env:
+      # Build directory whose appSubRec.exe and POST_BUILD DLLs go into the package.
+      SUBREC_PACKAGE_BUILD: build/ci-new-ui
     steps:
       - uses: actions/checkout@v4
         with:
@@ -193,6 +201,7 @@ jobs:
           -LE "^(device|needs_ffmpeg_test_components|needs_powershell)$"
           --output-on-failure --timeout 180 --no-tests=error
 
+      # Release configuration of the packaged build: same options as build/ci plus the new UI.
       - name: Configure new UI integration
         shell: pwsh
         run: >
@@ -202,6 +211,7 @@ jobs:
           -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
           -DSUBREC_BUILD_NEW_UI=ON
           -DSUBREC_BUILD_LIFECYCLE_TESTS=OFF
+          -DSUBREC_STRIP_TEST_HOOKS=ON
 
       - name: Build new UI integration
         run: cmake --build build/ci-new-ui --target appSubRec --parallel
@@ -209,15 +219,83 @@ jobs:
       - name: Deploy (windeployqt)
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $build = $env:SUBREC_PACKAGE_BUILD
           $out = "dist/SubRec"
           New-Item -ItemType Directory -Force $out | Out-Null
-          Copy-Item build/ci/appSubRec.exe $out/
-          Copy-Item build/ci/*.dll $out/ -ErrorAction SilentlyContinue   # FFmpeg and MinGW runtime DLLs (copied by POST_BUILD)
-          windeployqt --release --qmldir qml --no-translations "$out/appSubRec.exe"
+          Copy-Item "$build/appSubRec.exe" $out/
+          Copy-Item "$build/*.dll" $out/   # FFmpeg and MinGW runtime DLLs (copied by POST_BUILD)
+          foreach ($d in 'libstdc++-6.dll', 'libgcc_s_seh-1.dll', 'libwinpthread-1.dll') {
+            if (-not (Test-Path "$out/$d")) { throw "$d is missing from $build" }
+          }
+          # QML imports of both interfaces: ui/qml (new, the default; CaptionGlyph.qml imports
+          # QtQuick.Shapes) and qml (old, still reachable with --old-ui).
+          windeployqt --release --qmldir ui/qml --qmldir qml --no-translations "$out/appSubRec.exe"
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)" }
+          foreach ($m in 'QtQuick', 'QtQuick/Controls', 'QtQuick/Controls/Basic', 'QtQuick/Controls/Material',
+                         'QtQuick/Layouts', 'QtQuick/Window', 'QtQuick/Effects', 'QtQuick/Shapes',
+                         'QtQuick/Dialogs', 'QtCore', 'Qt/labs/folderlistmodel') {
+            if (-not (Test-Path "$out/qml/$m/qmldir")) { throw "QML module $m was not deployed" }
+          }
+          if (-not (Test-Path "$out/Qt6QuickShapes.dll")) { throw 'Qt6QuickShapes.dll was not deployed' }
           Copy-Item LICENSE $out/LICENSE.txt
           Copy-Item THIRD_PARTY_LICENSES.md $out/
           New-Item -ItemType Directory -Force "$out/licenses" | Out-Null
           Copy-Item "$env:SUBREC_FFMPEG_ROOT/share/subrec-ffmpeg/licenses" "$out/licenses/ffmpeg" -Recurse
+
+      # Qt and MinGW-w64 runtime license material plus SOURCES.txt (THIRD_PARTY_LICENSES.md §7).
+      # Legal texts are copied unmodified: GPL-3.0 / LGPL-3.0 from this repository (LICENSE,
+      # LICENSES/LGPL-3.0.txt), Qt's SPDX SBOMs from the Qt kit, GCC / mingw-w64 / winpthreads
+      # texts from the MinGW toolchain. Tag builds fail on a missing file; other builds get
+      # licenses/INCOMPLETE-DO-NOT-DISTRIBUTE.txt.
+      - name: Package license material
+        shell: pwsh
+        env:
+          IS_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          SUBREC_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          SUBREC_COMMIT: ${{ github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = 'dist/SubRec'
+          $problems = @()
+
+          $qt = "$out/licenses/qt"
+          New-Item -ItemType Directory -Force $qt | Out-Null
+          Copy-Item packaging/licenses/qt/NOTICE.txt $qt/
+          Copy-Item LICENSES/LGPL-3.0.txt $qt/
+          Copy-Item LICENSE "$qt/GPL-3.0.txt"
+          $sbom = @(Get-ChildItem (Join-Path $env:QT_ROOT_DIR 'sbom') -Filter '*.spdx' -File -ErrorAction SilentlyContinue)
+          if ($sbom.Count -gt 0) {
+            New-Item -ItemType Directory -Force "$qt/sbom" | Out-Null
+            $sbom | Copy-Item -Destination "$qt/sbom"
+          } else {
+            $problems += "no Qt SBOM (*.spdx) under $env:QT_ROOT_DIR/sbom"
+          }
+
+          $rt = "$out/licenses/mingw-runtime"
+          New-Item -ItemType Directory -Force $rt | Out-Null
+          Copy-Item packaging/licenses/mingw-runtime/NOTICE.txt $rt/
+          $mingw = Join-Path $env:IQTA_TOOLS 'mingw1310_64'
+          foreach ($d in 'gcc', 'mingw-w64', 'winpthreads') {
+            $s = Join-Path $mingw "licenses/$d"
+            if (Test-Path $s) { Copy-Item $s "$rt/$d" -Recurse } else { $problems += "MinGW toolchain has no licenses/$d" }
+          }
+          foreach ($f in 'gcc/COPYING3', 'gcc/COPYING.RUNTIME', 'winpthreads/COPYING') {
+            if (-not (Test-Path "$rt/$f")) { $problems += "licenses/mingw-runtime/$f is missing" }
+          }
+          $info = Join-Path $mingw 'build-info.txt'
+          if (Test-Path $info) { Copy-Item $info "$rt/toolchain-build-info.txt" } else { $problems += 'MinGW toolchain has no build-info.txt' }
+
+          Copy-Item packaging/licenses/SOURCES.txt "$out/SOURCES.txt"
+          Add-Content "$out/SOURCES.txt" "Repository: $env:SUBREC_REPO_URL", "Commit    : $env:SUBREC_COMMIT", "Qt        : $env:QT_VERSION MinGW 64-bit (win64_mingw)"
+
+          if ($problems.Count -gt 0) {
+            $msg = "License material is incomplete:`n - " + ($problems -join "`n - ")
+            if ($env:IS_RELEASE -eq 'true') { throw $msg }
+            Write-Warning $msg
+            [IO.File]::WriteAllText("$out/licenses/INCOMPLETE-DO-NOT-DISTRIBUTE.txt", $msg + "`n")
+          }
+          Get-ChildItem "$out/licenses" -Recurse -File | Select-Object FullName, Length
 
       # GPL: the package ships FFmpeg DLLs with x264 linked in (GPL-2.0-or-later), so it must carry
       # the corresponding source: <package>/sources/ is the output of collect-sources.sh from the
@@ -266,17 +344,22 @@ jobs:
             if ($cfg -notmatch '(?m)^Variant\s*:\s*gpl\s*$') { $problems += 'BUILD_CONFIG.txt is not the gpl variant' }
           }
 
-          # The DLLs in the package must be the ones recorded in BUILD_CONFIG.txt (ffmpeg.exe is not shipped).
+          # The DLLs in the package must be the ones recorded in BUILD_CONFIG.txt (ffmpeg.exe is not
+          # shipped) and the ones POST_BUILD copied into the packaged build ($env:SUBREC_PACKAGE_BUILD).
           $recorded = Join-Path $env:SUBREC_FFMPEG_ROOT 'share/subrec-ffmpeg/binaries.sha256'
           $nDll = 0
           foreach ($line in Get-Content $recorded) {
             if ($line -notmatch '^([0-9a-f]{64})  \./(\S+\.dll)$') { continue }
             $nDll++
-            $f = Join-Path 'dist/SubRec' $Matches[2]
+            $hash = $Matches[1]; $name = $Matches[2]
+            $f = Join-Path 'dist/SubRec' $name
+            $b = Join-Path $env:SUBREC_PACKAGE_BUILD $name
             if (-not (Test-Path $f)) {
-              $problems += "$($Matches[2]) is not in the package"
-            } elseif ((Get-FileHash $f -Algorithm SHA256).Hash.ToLower() -ne $Matches[1]) {
-              $problems += "$($Matches[2]) differs from the build recorded in BUILD_CONFIG.txt"
+              $problems += "$name is not in the package"
+            } elseif ((Get-FileHash $f -Algorithm SHA256).Hash.ToLower() -ne $hash) {
+              $problems += "$name differs from the build recorded in BUILD_CONFIG.txt"
+            } elseif (-not (Test-Path $b) -or (Get-FileHash $b -Algorithm SHA256).Hash.ToLower() -ne $hash) {
+              $problems += "$name in the package is not the one in $env:SUBREC_PACKAGE_BUILD"
             }
           }
           if ($nDll -ne 7) { $problems += "expected 7 FFmpeg DLLs in binaries.sha256, found $nDll" }

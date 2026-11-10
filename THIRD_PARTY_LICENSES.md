@@ -11,11 +11,11 @@ SubRec (字录) is released under **GPL-3.0** ([LICENSE](LICENSE)); the maintain
 - 证据等级 / Evidence levels：**[文件]** = 在文件或 DLL 内嵌字符串中直接看到；**[知识]** = 来自对上游许可证的了解，未在本仓库内验证，**发布前必须逐项核对上游**。
 
 > 结论先行 / TL;DR
-> 1. 发布包随附的 FFmpeg 是 SubRec 用自己的脚本从**固定的、未修改的上游源码**构建的最小构建（FFmpeg **n8.0.3**、x264、libvpl、nv-codec-headers、AMF 头文件）：`--enable-gpl --enable-libx264`，**无** `--enable-version3`、**无** `--enable-nonfree`，整体为 **GPL-2.0-or-later**。与 **GPL-3.0 的开源版本兼容**，但**使该二进制不能进入闭源商业版本**。
+> 1. 发布包随附的 FFmpeg 是 SubRec 用自己的脚本从**固定的上游源码**（FFmpeg 另加 SubRec 补丁 `0001-ddagrab-export-present-time.patch`，见 §1）构建的最小构建（FFmpeg **n8.0.3**、x264、libvpl、nv-codec-headers、AMF 头文件）：`--enable-gpl --enable-libx264`，**无** `--enable-version3`、**无** `--enable-nonfree`，整体为 **GPL-2.0-or-later**。与 **GPL-3.0 的开源版本兼容**，但**使该二进制不能进入闭源商业版本**。
 > 2. 商业版本需要：换成**不含 x264 的 LGPL 构建**（`packaging/ffmpeg` 的 `lgpl` 变体，尚未运行；还要先在 `encoder/ffvencoder.cpp` 里加入 `h264_mf` 作软件编码回退并测试），或为 x264 取得商业授权；同时需处理 H.264/AAC 的专利池问题（非版权问题）。
 > 3. Qt 6 各模块均可在 GPLv3 项目中使用；对商业版本需**动态链接 + 遵守 LGPLv3**，或购买 Qt 商业授权。
 > 4. CLA **不能**覆盖任何第三方材料，包括 `reference/ffmpeg-fftools/ffmpeg_mux.c`（见 §3）。
-> 5. 本项目代码由维护者本人及 AI 工具编写；`icons/*.png` 由维护者本人制作，按 GPL-3.0 发布。新界面的 `ui/icons/*.svg` 来自 iconfont.cn「Ant Design 官方图标库」，**许可未明确**（见 §3）。除这些图标外，仓库中唯一的整文件第三方拷贝是 `reference/ffmpeg-fftools/ffmpeg_mux.c`（FFmpeg，**LGPL-2.1-or-later**，保留原版权头，不参与编译）。拷贝检测是启发式的，结论有局限，见 §6。
+> 5. 本项目代码由维护者本人及 AI 工具编写；`icons/*.png` 由维护者本人制作，按 GPL-3.0 发布。新界面的 `ui/icons/*.svg` 来自 iconfont.cn「Ant Design 官方图标库」，**许可仍未解决**；维护者已决定接受该风险，允许在预发布中分发含新界面的构建（CI 发布包现为新界面构建），这**不等于**已取得许可（见 §3、§5 第 7 条）。除这些图标外，仓库中唯一的整文件第三方拷贝是 `reference/ffmpeg-fftools/ffmpeg_mux.c`（FFmpeg，**LGPL-2.1-or-later**，保留原版权头，不参与编译）。拷贝检测是启发式的，结论有局限，见 §6。
 
 ---
 
@@ -24,13 +24,13 @@ SubRec (字录) is released under **GPL-3.0** ([LICENSE](LICENSE)); the maintain
 **如何提供 / How it is provided：** 二进制不随仓库提供。构建时用 `-DFFMPEG_ROOT=<path>` 或环境变量 `SUBREC_FFMPEG_ROOT` 指定含 `include/`、`lib/`、`bin/` 的 FFmpeg **共享（shared）**构建；未提供时 CMake 报错（`cmake/SubRecFFmpeg.cmake`）。CMake 会把 `${FFMPEG_ROOT}/bin/*.dll` 复制到输出目录与安装目录（`CMakeLists.txt`）。官方包使用的 FFmpeg 由 [`packaging/ffmpeg/build-ffmpeg.sh`](packaging/ffmpeg/build-ffmpeg.sh) 从固定提交（[`versions.env`](packaging/ffmpeg/versions.env)）在 Linux 上交叉编译（MinGW-w64）得到，CI 中见 `.github/workflows/windows-build.yml` 的 `ffmpeg` 任务。
 The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.sh` from pinned commits (`versions.env`), cross-compiled with MinGW-w64; in CI it is the `ffmpeg` job of `windows-build.yml`. You can also supply any other shared FFmpeg build via `FFMPEG_ROOT` (then its own license applies).
 
-**随包版本 / Version shipped [文件：`packaging/ffmpeg/versions.env`，首次真实构建已通过自检]：** FFmpeg **n8.0.3**，commit `8ae0b34901ba60a802f183ee75a250a9fc3e09a5`，**无补丁**。DLL（合计约 11 MB）：`avutil-60 avcodec-62 avformat-62 avfilter-11 avdevice-62 swscale-9 swresample-6`。其它 FFmpeg 版本需自行验证 API 兼容性。
+**随包版本 / Version shipped [文件：`packaging/ffmpeg/versions.env`，首次真实构建已通过自检]：** FFmpeg **n8.0.3**，commit `8ae0b34901ba60a802f183ee75a250a9fc3e09a5`，**另加一个 SubRec 补丁** [`packaging/ffmpeg/patches/0001-ddagrab-export-present-time.patch`](packaging/ffmpeg/patches/0001-ddagrab-export-present-time.patch)（ddagrab 把桌面呈现时间导出为帧元数据；LGPL-2.1-or-later，与所改文件相同）。`build-ffmpeg.sh` 在固定提交的导出副本上应用该补丁后再编译；`sources/` 中的 `ffmpeg-n8.0.3.tar.xz` 是未修改的上游源码，补丁另以 `sources/ffmpeg-0001-ddagrab-export-present-time.patch` 随附（构建脚本包内也有一份），SHA-256 记录在 `BUILD_CONFIG.txt`，见 [`packaging/ffmpeg/README.md`](packaging/ffmpeg/README.md) §2a。DLL（合计约 11 MB）：`avutil-60 avcodec-62 avformat-62 avfilter-11 avdevice-62 swscale-9 swresample-6`。其它 FFmpeg 版本需自行验证 API 兼容性。
 
 **对应源码 / Corresponding source：**
 
 | 组件 / Component | 版本 / Version（固定 commit） | 许可证 [知识，发布前核对上游] | 在二进制中的方式 | 源码 / Source |
 | --- | --- | --- | --- | --- |
-| FFmpeg | n8.0.3，`8ae0b349…`（<https://git.ffmpeg.org/ffmpeg.git>） | LGPL-2.1+；本构建因 `--enable-gpl` 为 **GPL-2.0-or-later** | 共享 DLL | `sources/ffmpeg-n8.0.3.tar.xz`（10.9 MB） |
+| FFmpeg | n8.0.3，`8ae0b349…`（<https://git.ffmpeg.org/ffmpeg.git>）+ SubRec 补丁 `0001-ddagrab-export-present-time.patch` | LGPL-2.1+；本构建因 `--enable-gpl` 为 **GPL-2.0-or-later** | 共享 DLL | `sources/ffmpeg-n8.0.3.tar.xz`（10.9 MB）+ `sources/ffmpeg-0001-ddagrab-export-present-time.patch` |
 | x264 | `stable` 分支 commit `b35605ace3ddf7c1a5d67a2eb553f034aef41d55`（`X264_BUILD 165`；<https://code.videolan.org/videolan/x264>） | **GPL-2.0-or-later**（另有 x264 LLC 商业授权） | 静态链接进 `avcodec-62.dll`，仅 8-bit 4:2:0 | `sources/x264-b35605ace3dd.tar.xz`（0.75 MB） |
 | libvpl（Intel oneVPL 调度库） | v2.16.0，`778a66d6…` | MIT | 静态调度库；运行时由 Intel 显卡驱动提供 | `sources/libvpl-v2.16.0.tar.xz`（6.1 MB，整个仓库） |
 | nv-codec-headers | n12.2.72.0，`c6927834…` | MIT | 仅头文件；NVENC 运行时由 NVIDIA 驱动提供 | `sources/nv-codec-headers-n12.2.72.0.tar.xz`（66 KB） |
@@ -46,6 +46,7 @@ The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.s
   | `sources/ffmpeg-n8.0.3.tar.xz` | FFmpeg commit `8ae0b349` 的源码（10,873,616 B） |
   | `sources/x264-b35605ace3dd.tar.xz` | x264 commit `b35605ace3dd…` 的源码（747,636 B） |
   | `sources/libvpl-v2.16.0.tar.xz`、`sources/nv-codec-headers-n12.2.72.0.tar.xz`、`sources/amf-headers-v1.5.3.tar.xz` | 其余组件源码（6,090,924 B / 65,888 B / 61,608 B） |
+  | `sources/ffmpeg-0001-ddagrab-export-present-time.patch` | 编译前应用到 FFmpeg 源码上的 SubRec 补丁 |
   | `sources/subrec-ffmpeg-build-scripts.tar.xz` | `versions.env`、`build-ffmpeg.sh`、`collect-sources.sh`、构建说明与警告说明（14,492 B） |
   | `sources/BUILD_CONFIG.txt` | 固定的 commit、完整 `./configure` 参数、构建主机与工具链版本、每个 DLL 的 SHA-256 |
   | `sources/SHA256SUMS` | `sources/` 内其它文件的 SHA-256（`sha256sum -c SHA256SUMS` 已在首次构建上通过） |
@@ -103,7 +104,9 @@ The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.s
 
 **未使用**（因此不触发）的 GPL-only/商业-only Qt 附加模块 [知识]：如 Qt Charts、Qt Data Visualization、Qt Virtual Keyboard、Qt Quick 3D Physics 等。如果将来引入，必须重新核对其许可证（这些模块可能仅提供 GPLv3 或商业授权，将直接阻断闭源商业版本）。
 
-**与 GPLv3 的兼容性：** LGPL-3.0 / GPL-3.0 的 Qt 与 GPL-3.0 项目**兼容**。以动态库（官方 `mingw_64` 包为共享库）方式分发，附 GPL-3.0 与 LGPL-3.0 文本及 Qt 声明。**不要选 GPL-2.0-only 作为项目许可证**（Qt 的 GPL-3.0/LGPL-3.0 组合与之冲突）。
+新界面（`SUBREC_BUILD_NEW_UI=ON`，CI 发布包所用构建）另导入 `QtQuick.Shapes`（`ui/qml/components/CaptionGlyph.qml`）、`QtQuick.Controls.Basic`、`QtQuick.Dialogs`；旧界面另导入 `QtCore`、`QtQuick.Dialogs`。这些都属于 Qt 6.8.0 自带模块（qtdeclarative / qtbase），许可同下表。
+
+**与 GPLv3 的兼容性：** LGPL-3.0 / GPL-3.0 的 Qt 与 GPL-3.0 项目**兼容**。以动态库（官方 `mingw_64` 包为共享库）方式分发，附 GPL-3.0 与 LGPL-3.0 文本及 Qt 声明——发布包内的 `licenses/qt/` 已包含这些材料，见 §7。**不要选 GPL-2.0-only 作为项目许可证**（Qt 的 GPL-3.0/LGPL-3.0 组合与之冲突）。
 
 **与“GPLv3 + 商业授权”的兼容性：**
 
@@ -117,12 +120,12 @@ The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.s
 
 | 组件 | 位置 / 证据 | 许可证 | 状态与兼容性 |
 | --- | --- | --- | --- |
-| MinGW-w64 运行库（`libstdc++-6.dll`、`libgcc_s_seh-1.dll`、`libwinpthread-1.dll`） | `CMakeLists.txt` 在构建后复制并安装（MinGW 构建时） | libstdc++/libgcc：GPL-3.0 **+ GCC Runtime Library Exception**；winpthreads：MIT/ZPL 类宽松许可 [知识] | 因有 Runtime Exception，可随闭源/开源程序分发；GPL 项目无冲突。需附许可证文本。DLL 本身不在仓库中，由构建机提供。 |
+| MinGW-w64 运行库（`libstdc++-6.dll`、`libgcc_s_seh-1.dll`、`libwinpthread-1.dll`） | `CMakeLists.txt` 在构建后复制并安装（MinGW 构建时） | libstdc++/libgcc：GPL-3.0 **+ GCC Runtime Library Exception**；winpthreads：MIT/ZPL 类宽松许可 [知识] | 因有 Runtime Exception，可随闭源/开源程序分发；GPL 项目无冲突。需附许可证文本：发布包的 `licenses/mingw-runtime/` 由 CI 从工具链的 `licenses/` 目录原样复制（见 §7）。DLL 本身不在仓库中，由构建机提供。 |
 | **AMD AMF / NVIDIA NVENC / Intel QSV 运行时** | 通过 FFmpeg 编码器名 `h264_amf/h264_nvenc/h264_qsv` 调用（`encoder/ffvencoder.cpp`） | 驱动由用户机器的 GPU 厂商提供 | 不随本项目分发，无再分发问题。 |
 | **screen-capture-recorder / virtual-audio-capturer**（第三方 DirectShow 组件） | `capture/dshow_capture_backend.cpp`、`recorder/ffrecorder_p.h` 以设备名 `video=screen-capture-recorder`、`audio=virtual-audio-capturer` 引用 | 未验证 [需核查上游许可证] | **不在仓库内**；用户自行安装。README 已说明。请勿在未核对许可证前把它们打进安装包。 |
 | **`reference/ffmpeg-fftools/ffmpeg_mux.c`** | 892 行；FFmpeg `fftools/ffmpeg_mux.c` 的整文件原样拷贝，**逐字节未改**；不参与编译（任何 CMake 目标都未引用）；说明见同目录 [`NOTICE.md`](reference/ffmpeg-fftools/NOTICE.md)。**与 FFmpeg n8.0.3（commit `8ae0b349`）的 `fftools/ffmpeg_mux.c` 逐字节相同**（已用 `diff` 核对，0 差异）；**未**与其它版本（如最初开发所用的快照 `37064b2d16`）比对，所以不知道它最初拷自哪个版本——相同内容可能也存在于相邻版本 | **LGPL-2.1-or-later**，版权人为 FFmpeg 项目贡献者；文件头 “This file is part of FFmpeg … GNU Lesser General Public License … version 2.1 or later” | **不是本项目作者的代码。** 原版权头保持不变；许可证文本见 [`LICENSES/LGPL-2.1.txt`](LICENSES/LGPL-2.1.txt)；仅作设计对照参考；商业版分发包不要包含它；[`CLA.md`](CLA.md) 不覆盖它，不接受对它的修改性贡献。LGPL-2.1-or-later 允许按 GPL 条款再分发，放在 GPLv3 仓库没有文件层面的冲突。它引用的 `ffmpeg.h`、`ffmpeg_mux.h`、`ffmpeg_utils.h`、`sync_queue.h` 是 FFmpeg 内部头，所以也无法单独编译。 |
 | 图标 `icons/*.png`（12 个） | `res.qrc` 嵌入可执行文件 | **本项目自有作品**，GPL-3.0（由项目维护者本人制作） | 不是第三方材料；和代码一样适用 GPL-3.0 与 `CLA.md`。 |
-| **iconfont.cn「Ant Design 官方图标库」图标** `ui/icons/*.svg`（25 个，新界面） | 来源 <https://www.iconfont.cn/collections/detail?cid=9402>（创建者显示为"竹尔"）；在网页上选 25 个、按"下载素材 → SVG"导出，原包 `icon_04s7m1r40avc.zip`，SHA256 `d897e249571c75b6978216f37850c75796dbff1a08992a8fd9a2a9c4375837da`；经离线脚本规范化（24×24、viewBox 1024、`fill="currentColor"`，path 几何未改），`ui/files_zcode.cmake` 登记为 `SubRec.Ui` 模块资源，仅 `SUBREC_BUILD_NEW_UI=ON` 的构建嵌入可执行文件。来源、映射、hash 见 [`ui/icons/ICONS_SOURCE.md`](ui/icons/ICONS_SOURCE.md) | **未取得完整许可文本**。下载包内没有许可文件；唯一依据是集合页评论区的非正式回复（创建者对"可以用作商业吗？"答"可以的"）。**不得标为 MIT / GPL / ISC 或其他许可** | **第三方材料，许可未解决。** 署名、修改、再分发条件都未知；**与 GPL-3.0 程序一起分发的兼容性风险没有解决**。正式对外分发含新界面的构建之前，需通过合适渠道取得书面许可，或换成许可明确的图标（见 §5 第 7 条）。 |
+| **iconfont.cn「Ant Design 官方图标库」图标** `ui/icons/*.svg`（25 个，新界面） | 来源 <https://www.iconfont.cn/collections/detail?cid=9402>（创建者显示为"竹尔"）；在网页上选 25 个、按"下载素材 → SVG"导出，原包 `icon_04s7m1r40avc.zip`，SHA256 `d897e249571c75b6978216f37850c75796dbff1a08992a8fd9a2a9c4375837da`；经离线脚本规范化（24×24、viewBox 1024、`fill="currentColor"`，path 几何未改），`ui/files_zcode.cmake` 登记为 `SubRec.Ui` 模块资源，仅 `SUBREC_BUILD_NEW_UI=ON` 的构建嵌入可执行文件。来源、映射、hash 见 [`ui/icons/ICONS_SOURCE.md`](ui/icons/ICONS_SOURCE.md) | **未取得完整许可文本**。下载包内没有许可文件；唯一依据是集合页评论区的非正式回复（创建者对"可以用作商业吗？"答"可以的"）。**不得标为 MIT / GPL / ISC 或其他许可** | **第三方材料，许可未解决。** 署名、修改、再分发条件都未知；**与 GPL-3.0 程序一起分发的兼容性风险没有解决**。维护者已知悉上述情况，决定**接受该风险**，允许在预发布中分发含新界面的构建（CI 发布包 `SubRec-win64.zip` 现为新界面构建）。这是维护者的风险决定，**不表示已取得许可**，也不构成任何法律判断；取得书面许可或换成许可明确的图标仍是待办（见 §5 第 7 条）。 |
 | 字体 | QML 指定 `Segoe UI` | Microsoft 系统字体，未随包分发 | 不随包分发则无问题；不要把字体文件加入发行包。 |
 
 ## 4. 构建工具与 CI（不随成品分发）
@@ -137,8 +140,10 @@ CMake（BSD-3）、Ninja（Apache-2.0）、MinGW-w64 GCC（GPL，有 Runtime Exc
 4. 为 Qt 在商业版本中的 LGPL 合规（动态链接、可替换、声明）或商业授权做决定。
 5. 核查 `screen-capture-recorder` / `virtual-audio-capturer` 的许可证后再决定是否在文档中推荐或打包。
 6. 所有 [知识] 标记项以上游当前许可证为准，逐项核对后再对外声明。
-7. 新界面图标（iconfont.cn Ant Design 官方图标库，§3）：通过合适渠道向作者取得书面许可，确认商用、修改、署名和随 GPL-3.0 程序再分发的条件；或换成许可明确的图标。在此之前，不要对外分发含新界面（`SUBREC_BUILD_NEW_UI=ON`）的构建。
+7. 新界面图标（iconfont.cn Ant Design 官方图标库，§3）：通过合适渠道向作者取得书面许可，确认商用、修改、署名和随 GPL-3.0 程序再分发的条件；或换成许可明确的图标。**许可目前仍未解决**；维护者已决定接受该风险，允许在预发布中分发含新界面（`SUBREC_BUILD_NEW_UI=ON`）的构建，CI 的发布包已改为新界面构建。此决定不代表许可问题已解决，本条仍未完成。
+   *(English)* The license of the new interface's icons is still unresolved. The maintainers have decided to accept that risk and allow pre-release distribution of new-interface builds; this is not a license grant and this item stays open.
 8. 在最终仓库目录上运行免费扫描器（见 §6 末尾），并由维护者确认“是否曾整体粘贴过开源项目的文件/函数”。
+9. Qt 源码：发布包只附 Qt 源码的下载地址（The Qt Company 的 download.qt.io / code.qt.io，见 §7），未随包附带 Qt 源码，也未提供书面源码提供承诺。维护者需确认这种方式是否满足 LGPL-3.0 / GPL-3.0 对随包 Qt 二进制（含 Qt Multimedia 自带的 LGPL FFmpeg DLL）的源码提供要求，必要时改为随包或自行托管源码。
 
 ## 6. 整块拷贝检测 / Wholesale-copy check
 
@@ -158,3 +163,24 @@ CMake（BSD-3）、Ninja（Apache-2.0）、MinGW-w64 GCC（GPL，有 Runtime Exc
 3. 把某函数“改写成自己的”不一定摆脱版权义务；如维护者记得照搬过某文件的结构或大段逻辑，请按来源许可证处理或重写。
 
 **建议的补充检查（免费）：** 对本仓库运行 [ScanCode Toolkit](https://github.com/aboutcode-org/scancode-toolkit)（许可证与版权检测）和/或 [FOSSology](https://www.fossology.org/)；对仍有疑虑的文件重写或删除。
+
+## 7. 发布包内的许可材料 / License material in the release package
+
+CI（`.github/workflows/windows-build.yml`）打包的是新界面构建 `build/ci-new-ui`（`SUBREC_BUILD_NEW_UI=ON`，与旧界面发布构建相同的 `SUBREC_STRIP_TEST_HOOKS=ON`）。`SubRec-win64.zip` 内与许可有关的内容：
+
+| 包内路径 / Path | 内容 | 来源 / Source of the text |
+| --- | --- | --- |
+| `LICENSE.txt` | SubRec 的 GPL-3.0 | 仓库 `LICENSE`（FSF 官方文本，未改） |
+| `THIRD_PARTY_LICENSES.md` | 本文 | 仓库 |
+| `SOURCES.txt` | 源码获取说明：SubRec 仓库与提交、FFmpeg 对应源码在包内 `sources/`、Qt 与 MinGW 源码地址 | 仓库 [`packaging/licenses/SOURCES.txt`](packaging/licenses/SOURCES.txt)，CI 在末尾追加仓库地址、提交与 Qt 版本 |
+| `licenses/ffmpeg/` | FFmpeg、x264 等的许可证 | FFmpeg 构建产物 `share/subrec-ffmpeg/licenses`（上游原文件） |
+| `sources/` | FFmpeg 等的完整对应源码（§1） | `collect-sources.sh` |
+| `licenses/qt/NOTICE.txt` | Qt 声明：Qt 6.8.0 MinGW 64 位官方二进制、按 LGPL-3.0 使用、动态链接、未修改；Qt Multimedia 自带的 LGPL FFmpeg DLL；Qt 源码地址 | 仓库 [`packaging/licenses/qt/NOTICE.txt`](packaging/licenses/qt/NOTICE.txt)（说明文字，非法律文本） |
+| `licenses/qt/LGPL-3.0.txt` | GNU LGPL v3 | 仓库 [`LICENSES/LGPL-3.0.txt`](LICENSES/LGPL-3.0.txt)：FSF 发布的 LGPL v3 文本（<https://www.gnu.org/licenses/lgpl-3.0.txt>），原样复制自 Debian `base-files` 的 `/usr/share/common-licenses/LGPL-3`（`LICENSES/LGPL-2.1.txt` 与 `LICENSE` 也与该处对应文件逐字节相同）；未联网与 gnu.org 逐字节比对 |
+| `licenses/qt/GPL-3.0.txt` | GNU GPL v3（LGPL-3.0 以其为基础） | 仓库 `LICENSE`，原样复制 |
+| `licenses/qt/sbom/*.spdx` | Qt 各模块及 Qt 内部第三方代码的许可信息 | CI 上 Qt 安装目录 `$QT_ROOT_DIR/sbom/`（The Qt Company 随 Qt 6.8.0 提供的 SPDX 文件，原样复制） |
+| `licenses/mingw-runtime/NOTICE.txt` | `libstdc++-6.dll`、`libgcc_s_seh-1.dll`、`libwinpthread-1.dll` 的说明与源码地址 | 仓库 [`packaging/licenses/mingw-runtime/NOTICE.txt`](packaging/licenses/mingw-runtime/NOTICE.txt) |
+| `licenses/mingw-runtime/{gcc,mingw-w64,winpthreads}/` | GPL-3.0、GCC Runtime Library Exception 3.1、mingw-w64 运行库与 winpthreads 许可 | CI 上 MinGW 工具链目录 `$IQTA_TOOLS/mingw1310_64/licenses/`，原样复制；同目录 `build-info.txt` 复制为 `toolchain-build-info.txt` |
+
+CI 检查：Qt SBOM、MinGW 许可文件缺失时，tag 构建失败，其它构建在包内写 `licenses/INCOMPLETE-DO-NOT-DISTRIBUTE.txt`；windeployqt 按 `ui/qml` 与 `qml` 两处扫描 QML 导入，并检查 `QtQuick.Shapes` 等模块已部署。Qt 源码只给出下载地址，未随包附带（见 §5 第 9 条）。新界面图标的许可仍未解决（§3、§5 第 7 条）。
+The package is the new-interface build. Qt (LGPL-3.0 / GPL-3.0 texts, notice, Qt's own SBOMs) and MinGW-w64 runtime license material are under `licenses/`; license texts are copied unmodified from the repository or from the CI's Qt / MinGW installation. `SOURCES.txt` explains where the source of every component is. The new interface's icon license is still unresolved.
