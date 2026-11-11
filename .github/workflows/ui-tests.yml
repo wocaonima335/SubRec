@@ -12,7 +12,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libegl1-mesa-dev
+        # apt: up to 4 attempts with Acquire::Retries. If azure.archive.ubuntu.com fails (DNS
+        # outages seen on runners), apt-mirrors.txt and any sources naming it are switched to
+        # archive.ubuntu.com / security.ubuntu.com before the next attempt.
+        run: |
+          set -o pipefail
+          apt_log=$(mktemp)
+          azure_err="^(Err|W|E):.*azure\.archive\.ubuntu\.com"
+          for attempt in 1 2 3 4; do
+            if sudo apt-get -o Acquire::Retries=5 update 2>&1 | tee "$apt_log" \
+              && ! grep -Eq "$azure_err" "$apt_log" \
+              && sudo apt-get -o Acquire::Retries=5 install -y ninja-build libgl1-mesa-dev libxkbcommon-dev libegl1-mesa-dev 2>&1 | tee -a "$apt_log"; then
+              break
+            fi
+            if [ "$attempt" -eq 4 ]; then
+              echo "::error::apt-get update/install failed after $attempt attempts"
+              exit 1
+            fi
+            if grep -Eq "$azure_err" "$apt_log"; then
+              echo "::warning::azure.archive.ubuntu.com failed; switching apt to archive.ubuntu.com / security.ubuntu.com"
+              if [ -f /etc/apt/apt-mirrors.txt ]; then
+                printf 'http://archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://security.ubuntu.com/ubuntu/\tpriority:2\n' \
+                  | sudo tee /etc/apt/apt-mirrors.txt
+              fi
+              for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+                if [ -f "$f" ] && grep -q 'azure\.archive\.ubuntu\.com' "$f"; then
+                  sudo sed -i 's#azure\.archive\.ubuntu\.com#archive.ubuntu.com#g' "$f"
+                fi
+              done
+            fi
+            sleep $((attempt * 15))
+          done
       - uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.0'
