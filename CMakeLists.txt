@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(SubRec VERSION 0.1 LANGUAGES CXX)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SubRecVersion.cmake")
+project(SubRec VERSION ${SUBREC_VERSION_NUMERIC} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -112,7 +113,7 @@ if(SUBREC_BUILD_NEW_UI)
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         OUTPUT_VARIABLE subrec_ui_git_hash OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     target_compile_definitions(ui_module PRIVATE
-        SUBREC_VERSION="${PROJECT_VERSION}" SUBREC_GIT_HASH="${subrec_ui_git_hash}")
+        SUBREC_VERSION="${SUBREC_VERSION}" SUBREC_GIT_HASH="${subrec_ui_git_hash}")
 endif()
 
 if(SUBREC_BUILD_LIFECYCLE_TESTS)
@@ -166,6 +167,13 @@ qt_add_executable(appSubRec
     main.cpp
     res.qrc
 )
+
+if(WIN32)
+    enable_language(RC)
+    configure_file(packaging/installer/SubRec.rc.in
+        "${CMAKE_CURRENT_BINARY_DIR}/SubRec.rc" @ONLY)
+    target_sources(appSubRec PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/SubRec.rc")
+endif()
 
 set_target_properties(appSubRec PROPERTIES
     MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
