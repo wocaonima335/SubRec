@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls.Basic
 
 // Module U5 (ZCode). P1 录制 (UI_REDESIGN §3.2). Layout at 1280×800 (content area origin
 // 224,64): A title row, B PreviewPanel 736×414 (16:9, grows with width), C ControlBar
@@ -8,9 +9,18 @@ import QtQuick
 // FROZEN API: none (page root; navigation via Navigation, dialogs via DialogRequests).
 Flickable {
     id: root
+    objectName: "recordPage"
     contentWidth: width
     contentHeight: layout.height
-    clip: false
+    // PC3 1112 #1: scrolled content must stay inside the page viewport, never over the
+    // title bar; no overshoot on desktop. A short window scrolls the whole page and shows
+    // the scroll bar whenever there is something to scroll.
+    clip: true
+    boundsBehavior: Flickable.StopAtBounds
+
+    ScrollBar.vertical: ScrollBar {
+        policy: root.contentHeight > root.height ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded
+    }
 
     // §2.7: the source panel keeps its 280 px at narrow widths (decision 8); the preview
     // absorbs the remaining width. Its height follows the source frame's aspect ratio once a
