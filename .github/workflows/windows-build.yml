@@ -223,7 +223,7 @@ jobs:
         run: >
           cmake -S . -B build/ci -G Ninja
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
-          -DSUBREC_VERSION=${{ steps.ver.outputs.version }}
+          "-DSUBREC_VERSION=${{ steps.ver.outputs.version }}"
           -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
           -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
           -DSUBREC_BUILD_LIFECYCLE_TESTS=OFF
@@ -237,7 +237,7 @@ jobs:
         run: >
           cmake -S . -B build/ci-tests -G Ninja
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
-          -DSUBREC_VERSION=${{ steps.ver.outputs.version }}
+          "-DSUBREC_VERSION=${{ steps.ver.outputs.version }}"
           -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
           -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
           -DSUBREC_BUILD_LIFECYCLE_TESTS=ON
@@ -260,7 +260,7 @@ jobs:
         run: >
           cmake -S . -B build/ci-new-ui -G Ninja
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
-          -DSUBREC_VERSION=${{ steps.ver.outputs.version }}
+          "-DSUBREC_VERSION=${{ steps.ver.outputs.version }}"
           -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
           -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
           -DSUBREC_BUILD_NEW_UI=ON
