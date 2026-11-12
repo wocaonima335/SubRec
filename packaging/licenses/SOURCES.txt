@@ -23,5 +23,11 @@ MinGW-w64 runtime (licenses/mingw-runtime/)
     GCC 13.1.0 and mingw-w64 sources; see licenses/mingw-runtime/NOTICE.txt.
     见 licenses/mingw-runtime/NOTICE.txt。
 
+Installer runtime and translation / 安装器运行代码与翻译 (licenses/inno-setup/)
+    Inno Setup upstream: https://jrsoftware.org/ and https://github.com/jrsoftware/issrc
+    The exact compiler version, translation provenance and verification status are in
+    licenses/inno-setup/THIRD_PARTY_SOURCES.md. Original license material is bundled there.
+    安装/卸载器含 Inno 运行代码；原许可与中文翻译材料见上述目录，来源核实状态见同目录说明。
+
 This build / 本构建
 -------------------

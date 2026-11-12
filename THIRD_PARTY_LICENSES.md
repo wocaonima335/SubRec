@@ -126,11 +126,19 @@ The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.s
 | **`reference/ffmpeg-fftools/ffmpeg_mux.c`** | 892 行；FFmpeg `fftools/ffmpeg_mux.c` 的整文件原样拷贝，**逐字节未改**；不参与编译（任何 CMake 目标都未引用）；说明见同目录 [`NOTICE.md`](reference/ffmpeg-fftools/NOTICE.md)。**与 FFmpeg n8.0.3（commit `8ae0b349`）的 `fftools/ffmpeg_mux.c` 逐字节相同**（已用 `diff` 核对，0 差异）；**未**与其它版本（如最初开发所用的快照 `37064b2d16`）比对，所以不知道它最初拷自哪个版本——相同内容可能也存在于相邻版本 | **LGPL-2.1-or-later**，版权人为 FFmpeg 项目贡献者；文件头 “This file is part of FFmpeg … GNU Lesser General Public License … version 2.1 or later” | **不是本项目作者的代码。** 原版权头保持不变；许可证文本见 [`LICENSES/LGPL-2.1.txt`](LICENSES/LGPL-2.1.txt)；仅作设计对照参考；商业版分发包不要包含它；[`CLA.md`](CLA.md) 不覆盖它，不接受对它的修改性贡献。LGPL-2.1-or-later 允许按 GPL 条款再分发，放在 GPLv3 仓库没有文件层面的冲突。它引用的 `ffmpeg.h`、`ffmpeg_mux.h`、`ffmpeg_utils.h`、`sync_queue.h` 是 FFmpeg 内部头，所以也无法单独编译。 |
 | 图标 `icons/*.png`（12 个） | `res.qrc` 嵌入可执行文件 | **本项目自有作品**，GPL-3.0（由项目维护者本人制作） | 不是第三方材料；和代码一样适用 GPL-3.0 与 `CLA.md`。 |
 | **iconfont.cn「Ant Design 官方图标库」图标** `ui/icons/*.svg`（25 个，新界面） | 来源 <https://www.iconfont.cn/collections/detail?cid=9402>（创建者显示为"竹尔"）；在网页上选 25 个、按"下载素材 → SVG"导出，原包 `icon_04s7m1r40avc.zip`，SHA256 `d897e249571c75b6978216f37850c75796dbff1a08992a8fd9a2a9c4375837da`；经离线脚本规范化（24×24、viewBox 1024、`fill="currentColor"`，path 几何未改），`ui/files_zcode.cmake` 登记为 `SubRec.Ui` 模块资源，仅 `SUBREC_BUILD_NEW_UI=ON` 的构建嵌入可执行文件。来源、映射、hash 见 [`ui/icons/ICONS_SOURCE.md`](ui/icons/ICONS_SOURCE.md) | **未取得完整许可文本**。下载包内没有许可文件；唯一依据是集合页评论区的非正式回复（创建者对"可以用作商业吗？"答"可以的"）。**不得标为 MIT / GPL / ISC 或其他许可** | **第三方材料，许可未解决。** 署名、修改、再分发条件都未知；**与 GPL-3.0 程序一起分发的兼容性风险没有解决**。维护者已知悉上述情况，决定**接受该风险**，允许在预发布中分发含新界面的构建（CI 发布包 `SubRec-win64.zip` 现为新界面构建）。这是维护者的风险决定，**不表示已取得许可**，也不构成任何法律判断；取得书面许可或换成许可明确的图标仍是待办（见 §5 第 7 条）。 |
+| **程序图标（AI 生成）** `packaging/installer/SubRec.ico` | 程序图标由 AI 图像模型 gpt-image-2.5（经维护者自己的 CLIProxyAPI 调用）于 2026-11-12 生成。AI 生成图像的版权状态可能不明确。 提示词与原图记录见下文及 `packaging/installer/icon/README.md`；生成 256/48/32/16 四尺寸，用于 exe、安装器、卸载入口及快捷方式 | AI 图像的版权状态可能不明确，不声称已由第三方授予某一开源许可 | 维护者选择 cand1，红色圆角方块加白色粗体“字”；不使用 iconfont 作为程序图标。新界面图标本身的既有风险说明保持有效。 |
+| **Inno Setup 6 运行代码** | setup.exe 与 unins000.exe 含其运行代码；CI 固定 6.7.1，许可从相同编译器安装目录 `License.txt` 原样复制 | **已核实（协调方，2026-11-12）**：宽松许可允许商用和再分发，须保留版权、许可条款并遵守来源及修改标识要求；<https://jrsoftware.org/files/is/license.txt> | 商业许可页 <https://jrsoftware.org/isorder.php> 写明 “It is not strictly required”，购买非强制。实际 Windows 编译尚未验证。 |
+| **Inno 简体中文翻译** `ChineseSimplified.isl` | 官网列为 official，维护者 Zhenghan Yang，6.5.0+；固定 issrc 提交 `6ef32198ef1f7b7b375cd4b6b90896c2a58eb4c2` 原文件，字节与作者头保持不变 | **已核实并补齐（协调方，2026-11-12）**：同提交 issrc license.txt 原文附在 `ChineseSimplified.LICENSE.txt`；维护者另有 MIT 许可翻译仓库链接 | Inno 6.7.x 不随包附带此翻译，故存入仓库；实际与 6.7.1 编译待验证。完整 URL、SHA256 及许可见 [`packaging/installer/THIRD_PARTY_SOURCES.md`](packaging/installer/THIRD_PARTY_SOURCES.md)。 |
 | 字体 | QML 指定 `Segoe UI` | Microsoft 系统字体，未随包分发 | 不随包分发则无问题；不要把字体文件加入发行包。 |
 
 ## 4. 构建工具与 CI（不随成品分发）
 
-CMake（BSD-3）、Ninja（Apache-2.0）、MinGW-w64 GCC（GPL，有 Runtime Exception）、`tools/*.ps1`（自有脚本）。CI（`.github/workflows/windows-build.yml`）使用的 GitHub Actions（`actions/checkout`、`actions/upload-artifact`、`jurplel/install-qt-action`、`softprops/action-gh-release`）为各自许可，仅在 CI 使用。
+CMake（BSD-3）、Ninja（Apache-2.0）、MinGW-w64 GCC（GPL，有 Runtime Exception）、`tools/*.ps1`（自有脚本）。CI（`.github/workflows/windows-build.yml`）使用的 GitHub Actions（`actions/checkout`、`actions/upload-artifact`、`jurplel/install-qt-action`、`actions/download-artifact`、`actions/setup-python`）为各自许可，仅在 CI 使用。
+
+安装器新增构建工具 Inno ISCC（固定版本 6.7.1，协调方于 2026-11-12 核实 Chocolatey 包版本），通过 Chocolatey 安装；
+Pillow 仅用于离线生成 ICO，不随成品分发。Inno 的安装/卸载运行代码会随成品分发，
+因此其许可不能只归入构建工具，已在 §3 / §7 登记。独立 Release 作业使用 GitHub CLI，
+只有它授予 `contents: write`；构建作业保持 `contents: read`。
 
 ## 5. 发布前待办 / Pre-release checklist
 
@@ -144,6 +152,10 @@ CMake（BSD-3）、Ninja（Apache-2.0）、MinGW-w64 GCC（GPL，有 Runtime Exc
    *(English)* The license of the new interface's icons is still unresolved. The maintainers have decided to accept that risk and allow pre-release distribution of new-interface builds; this is not a license grant and this item stays open.
 8. 在最终仓库目录上运行免费扫描器（见 §6 末尾），并由维护者确认“是否曾整体粘贴过开源项目的文件/函数”。
 9. Qt 源码：发布包只附 Qt 源码的下载地址（The Qt Company 的 download.qt.io / code.qt.io，见 §7），未随包附带 Qt 源码，也未提供书面源码提供承诺。维护者需确认这种方式是否满足 LGPL-3.0 / GPL-3.0 对随包 Qt 二进制（含 Qt Multimedia 自带的 LGPL FFmpeg DLL）的源码提供要求，必要时改为随包或自行托管源码。
+
+10. 安装器：协调方已于 2026-11-12 核实 Inno / Chocolatey 版本与许可，并提供上游中文翻译及许可原文；
+    仍需审阅中英 NOTICE，完成 [Windows 安装器发布验收](docs/WINDOWS_INSTALLER_RELEASE.md)。
+    程序图标改用 AI 生成图像，版权状态可能不明确；新界面图标仍维持 §5 第 7 条的原有说明与预发布限制。
 
 ## 6. 整块拷贝检测 / Wholesale-copy check
 
@@ -166,7 +178,7 @@ CMake（BSD-3）、Ninja（Apache-2.0）、MinGW-w64 GCC（GPL，有 Runtime Exc
 
 ## 7. 发布包内的许可材料 / License material in the release package
 
-CI（`.github/workflows/windows-build.yml`）打包的是新界面构建 `build/ci-new-ui`（`SUBREC_BUILD_NEW_UI=ON`，与旧界面发布构建相同的 `SUBREC_STRIP_TEST_HOOKS=ON`）。`SubRec-win64.zip` 内与许可有关的内容：
+CI（`.github/workflows/windows-build.yml`）打包的是新界面构建 `build/ci-new-ui`（`SUBREC_BUILD_NEW_UI=ON`，与旧界面发布构建相同的 `SUBREC_STRIP_TEST_HOOKS=ON`）。`SubRec-vX.Y.Z-beta-win64-portable.zip` 与同版本安装器共享 `dist/SubRec`，内含以下许可材料：
 
 | 包内路径 / Path | 内容 | 来源 / Source of the text |
 | --- | --- | --- |
@@ -184,3 +196,27 @@ CI（`.github/workflows/windows-build.yml`）打包的是新界面构建 `build/
 
 CI 检查：Qt SBOM、MinGW 许可文件缺失时，tag 构建失败，其它构建在包内写 `licenses/INCOMPLETE-DO-NOT-DISTRIBUTE.txt`；windeployqt 按 `ui/qml` 与 `qml` 两处扫描 QML 导入，并检查 `QtQuick.Shapes` 等模块已部署。Qt 源码只给出下载地址，未随包附带（见 §5 第 9 条）。新界面图标的许可仍未解决（§3、§5 第 7 条）。
 The package is the new-interface build. Qt (LGPL-3.0 / GPL-3.0 texts, notice, Qt's own SBOMs) and MinGW-w64 runtime license material are under `licenses/`; license texts are copied unmodified from the repository or from the CI's Qt / MinGW installation. `SOURCES.txt` explains where the source of every component is. The new interface's icon license is still unresolved.
+
+
+安装器新增材料（2026-11-12 已补齐中文翻译和许可归档，来源见安装器记录）：
+
+| 包内路径 | 内容与来源 |
+| --- | --- |
+| `licenses/inno-setup/LICENSE.txt` | 固定版本 Inno 安装目录 `License.txt` 原样复制；协调方已核实上游许可，实际编译器随附文本仍在构建时检查 |
+| `licenses/inno-setup/ChineseSimplified.isl`、`ChineseSimplified.LICENSE.txt` | 固定 issrc 提交的原翻译及来源/许可归档，已补齐并核对 SHA256 |
+| `licenses/inno-setup/THIRD_PARTY_SOURCES.md` | 本项目记录的来源、核实状态及缺失说明，非许可证 |
+| `NOTICE.txt`、`SubRec.ico`（安装器额外安装） | 中英许可/源码信息页；AI 图像模型 gpt-image-2.5 经维护者自己的 CLIProxyAPI 于 2026-11-12 生成的程序图标，AI 图像版权状态可能不明确 |
+
+`appSubRec.exe` 在 Windows 构建中也嵌入同一 ICO，因此绿色版同样使用该 AI 生成程序图标。
+安装器中的 `sources/` 固定安装不可取消，Release 另附同源源码 zip，`SHA256SUMS.txt` 覆盖
+安装器、绿色版与源码附件。程序、安装器、卸载器均不签名，签名以后再议。
+
+
+程序图标由 AI 图像模型 gpt-image-2.5（经维护者自己的 CLIProxyAPI 调用）于 2026-11-12 生成。AI 生成图像的版权状态可能不明确。
+提示词为：
+
+> Flat minimal app icon for a Windows screen-recording and subtitle app called SubRec (字录). Rounded square tile filled solid red #DC2626, full bleed, no background outside the tile except transparent/white. Bold thick white simplified Chinese character "字" centered. No text other than the character, no gradients, no shadows, no fine details, high contrast, must stay legible at 16x16 pixels.
+
+源图与原提示词分别保存在 `packaging/installer/icon/subrec-icon-source.png` 和
+`packaging/installer/icon/prompt_base.txt`。本次新增的第三方整文件拷贝还包括上表翻译及
+许可原文；§6 的原始整块拷贝检查为此前审计记录，不涵盖此次新增的安装器材料。

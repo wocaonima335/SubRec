@@ -44,3 +44,12 @@
 
 在 CLA 之下，你的贡献以 GPL-3.0 提供，并按 CLA 约定可被项目方重新授权。详见 [CLA.md](CLA.md)。
 Under the CLA your contribution is provided under GPL-3.0 and may be relicensed by the maintainers as described in [CLA.md](CLA.md).
+
+
+## Windows 安装器发布 / Windows installer releases
+
+安装器构建及第三方来源记录见 [packaging/installer/README.md](packaging/installer/README.md)。
+发布前按 [Windows 安装器验收清单](docs/WINDOWS_INSTALLER_RELEASE.md)检查：v* tag 的独立
+Release 作业只创建预发布草稿，已有草稿或正式版时失败，不追加附件。不要在 CI 完成前手工
+创建同名 Release；维护者下载并验收后填写发布说明，最后决定是否发布。升级清理目录的历史
+清单须保留，AppId 不得随版本改变。本次不签名、不申请证书或接入签名服务，签名以后再议。
