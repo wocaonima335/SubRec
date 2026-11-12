@@ -438,8 +438,13 @@ jobs:
           if ($LASTEXITCODE -notin @(0, 3010)) { throw "Chocolatey failed: $LASTEXITCODE" }
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
           if (-not (Test-Path $iscc)) { throw 'Pinned ISCC.exe not found' }
-          $version = (Get-Item $iscc).VersionInfo.ProductVersion
-          if ($version -notmatch '^6\.7\.1(?:\.0)?$') { throw "Unexpected Inno compiler: $version" }
+          # ISCC.exe carries no PE version info (reads 0.0.0.0); verify via the compiler banner instead.
+          $probe = Join-Path $env:RUNNER_TEMP 'inno-version-probe.iss'
+          Set-Content -Path $probe -Encoding ascii -Value @('[Setup]', 'AppName=Probe', 'AppVersion=1', 'DefaultDirName={tmp}\Probe')
+          $out = & $iscc /O- $probe 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "ISCC probe compile failed: $LASTEXITCODE`n$out" }
+          if ($out -notmatch 'Compiler engine version: Inno Setup 6\.7\.1(\s|$)') { throw "Unexpected Inno compiler:`n$out" }
+          Write-Host 'Compiler engine version: Inno Setup 6.7.1 confirmed'
 
       - name: Prepare installer payload and upgrade cleanup
         id: package
