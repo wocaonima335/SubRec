@@ -1,0 +1,15 @@
+# Keep every deployed top-level directory from earlier installer releases here.
+# Never remove a name merely because a newer windeployqt no longer emits it.
+qml
+licenses
+sources
+platforms
+imageformats
+iconengines
+styles
+tls
+multimedia
+generic
+networkinformation
+platforminputcontexts
+translations
