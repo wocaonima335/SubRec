@@ -42,6 +42,8 @@ UninstallDisplayIcon={app}\appSubRec.exe
 UninstallDisplayName=字录 SubRec
 InfoBeforeFile=NOTICE.txt
 Compression=lzma2/ultra64
+; Run LZMA in a separate process so the 32-bit compiler does not exhaust its address space.
+LZMAUseSeparateProcess=yes
 SolidCompression=yes
 OutputDir=..\..\out
 OutputBaseFilename={#OutputName}
