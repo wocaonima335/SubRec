@@ -6,6 +6,8 @@
 # in the same job. A failing test fails the job and blocks the later Deploy, packaging
 # and tag release steps.
 #
+# Installer addition: a third, tag-only release job creates reviewed draft assets.
+# The following describes the original two build jobs.
 # Two jobs:
 #   ffmpeg (ubuntu-24.04)  builds SubRec's minimal FFmpeg n8.0.3 (+ x264, libvpl, nv-codec-headers,
 #                          AMF headers; GPL-2.0-or-later, no version3, no nonfree) from pinned
@@ -116,8 +118,9 @@ jobs:
   build:
     needs: ffmpeg
     runs-on: windows-latest
-    permissions:
-      contents: write   # only used to create a draft release on tags
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      stem: ${{ steps.package.outputs.stem }}
     env:
       # Build directory whose appSubRec.exe and POST_BUILD DLLs go into the package.
       SUBREC_PACKAGE_BUILD: build/ci-new-ui
@@ -125,6 +128,26 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Compute shared application and installer version
+        id: ver
+        run: python packaging/installer/package.py version
+
+      - name: Test installer packaging helpers
+        run: python packaging/installer/test_package.py -v
+
+      - name: Check installer translation inputs
+        shell: pwsh
+        run: |
+          foreach ($file in 'ChineseSimplified.isl', 'ChineseSimplified.LICENSE.txt') {
+            if (-not (Test-Path "packaging/installer/$file")) {
+              throw "Missing upstream $file; see packaging/installer/README.md. No fabricated translation or license is permitted."
+            }
+          }
 
       - name: Install Qt and MinGW
         uses: jurplel/install-qt-action@v4
@@ -200,6 +223,7 @@ jobs:
         run: >
           cmake -S . -B build/ci -G Ninja
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DSUBREC_VERSION=${{ steps.ver.outputs.version }}
           -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
           -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
           -DSUBREC_BUILD_LIFECYCLE_TESTS=OFF
@@ -213,6 +237,7 @@ jobs:
         run: >
           cmake -S . -B build/ci-tests -G Ninja
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DSUBREC_VERSION=${{ steps.ver.outputs.version }}
           -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
           -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
           -DSUBREC_BUILD_LIFECYCLE_TESTS=ON
@@ -235,6 +260,7 @@ jobs:
         run: >
           cmake -S . -B build/ci-new-ui -G Ninja
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+          -DSUBREC_VERSION=${{ steps.ver.outputs.version }}
           -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
           -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
           -DSUBREC_BUILD_NEW_UI=ON
@@ -401,33 +427,124 @@ jobs:
           }
           Get-ChildItem $srcFull | Select-Object Name, Length
 
-      - name: Zip and SHA256
+      - name: Install pinned Inno Setup
         shell: pwsh
+        # Historical implementation notes below (superseded by coordinator verification on 2026-11-12):
+        # 6.4.3 is a candidate pin, NOT verified online in the implementation sandbox.
+        # Verify the package and license before enabling this workflow; see installer README.
+        # Current fixed Inno 6 version: 6.7.1, verified at the Chocolatey package page.
         run: |
-          Compress-Archive -Path dist/SubRec/* -DestinationPath SubRec-win64.zip
-          $hash = (Get-FileHash SubRec-win64.zip -Algorithm SHA256).Hash.ToLower()
-          "$hash  SubRec-win64.zip" | Out-File SubRec-win64.zip.sha256 -Encoding ascii
-          Write-Host "SHA256: $hash"
+          choco install innosetup --version=6.7.1 --allow-downgrade --force -y --no-progress
+          if ($LASTEXITCODE -notin @(0, 3010)) { throw "Chocolatey failed: $LASTEXITCODE" }
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (-not (Test-Path $iscc)) { throw 'Pinned ISCC.exe not found' }
+          $version = (Get-Item $iscc).VersionInfo.ProductVersion
+          if ($version -notmatch '^6\.7\.1(?:\.0)?$') { throw "Unexpected Inno compiler: $version" }
+
+      - name: Prepare installer payload and upgrade cleanup
+        id: package
+        shell: pwsh
+        env:
+          ASSET_STEM: ${{ steps.ver.outputs.stem }}
+        run: |
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6'
+          python packaging/installer/package.py prepare --compiler "$compiler" --stem "$env:ASSET_STEM"
+          if ($LASTEXITCODE -ne 0) { throw 'Installer preparation failed' }
+
+      - name: Build unsigned installer
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ steps.ver.outputs.version }}
+          APP_VERSION_NUMERIC: ${{ steps.ver.outputs.numeric }}
+          ASSET_STEM: ${{ steps.package.outputs.stem }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          & $iscc /Qp "/DAppVersion=$env:APP_VERSION" "/DAppVersionNumeric=$env:APP_VERSION_NUMERIC" `
+            "/DSourceDir=$((Resolve-Path dist/SubRec).Path)" "/DOutputName=$env:ASSET_STEM-win64-setup" `
+            "/DRepoURL=$env:REPO_URL" packaging/installer/SubRec.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed: $LASTEXITCODE" }
+
+      - name: Installer smoke test (install, upgrade, uninstall)
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          ASSET_STEM: ${{ steps.package.outputs.stem }}
+        run: ./packaging/installer/smoke-test.ps1 -Setup "out/$env:ASSET_STEM-win64-setup.exe"
+
+      - name: Preserve installer test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-test-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/SubRec-installer-logs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Portable zip, corresponding source and SHA256SUMS
+        shell: pwsh
+        env:
+          ASSET_STEM: ${{ steps.package.outputs.stem }}
+        run: python packaging/installer/package.py bundle --stem "$env:ASSET_STEM"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SubRec-win64
-          path: |
-            SubRec-win64.zip
-            SubRec-win64.zip.sha256
-          retention-days: 14
+          name: ${{ steps.package.outputs.stem }}-win64
+          path: out/
+          if-no-files-found: error
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 90 || 14 }}
 
-      - name: Release (tag only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # only used to create a draft release on tags
+    concurrency:
+      group: installer-release-${{ github.ref }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+      STEM: ${{ needs.build.outputs.stem }}
+    steps:
+      - uses: actions/checkout@v4
         with:
-          files: |
-            SubRec-win64.zip
-            SubRec-win64.zip.sha256
-          body: |
-            Unsigned build. Windows SmartScreen may warn on first run: click "More info" -> "Run anyway", and verify the SHA256 of the zip against the attached .sha256 file.
-            未签名构建。首次运行 Windows SmartScreen 可能提示，点“更多信息”→“仍要运行”，并用附带的 .sha256 校验 zip。
-
-            The zip contains the GPL corresponding source of the bundled FFmpeg and x264 (plus the libvpl, nv-codec-headers and AMF header sources and the FFmpeg build scripts) in `sources/` (checksums in `sources/SHA256SUMS`, build configuration in `sources/BUILD_CONFIG.txt`).
-            压缩包的 `sources/` 目录内含所附 FFmpeg 与 x264 的 GPL 对应源码（另有 libvpl、nv-codec-headers、AMF 头文件的源码和 FFmpeg 构建脚本；校验值见 `sources/SHA256SUMS`，构建配置见 `sources/BUILD_CONFIG.txt`）。
-          draft: true
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.stem }}-win64
+          path: out
+      - name: Verify exact asset set, checksums and release eligibility
+        run: |
+          set -euo pipefail
+          python packaging/installer/package.py version
+          test "$STEM" = "SubRec-$TAG"
+          python packaging/installer/package.py verify --stem "$STEM"
+      - name: Create draft prerelease (fail if draft or published release exists)
+        working-directory: out
+        run: |
+          set -euo pipefail
+          # Listing releases includes drafts for an authenticated writer. An API error
+          # must fail; it must never be treated as evidence that a release is absent.
+          gh api --paginate "repos/$GH_REPO/releases" --jq '.[].tag_name' > "$RUNNER_TEMP/subrec-release-tags.txt"
+          if grep -Fxq -- "$TAG" "$RUNNER_TEMP/subrec-release-tags.txt"; then
+            echo "::error::Release already exists. CI will not append, overwrite or delete it."
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/subrec-release-notes.md" <<'NOTES'
+          Draft prerelease created by CI; maintainer review and Windows acceptance are required before publishing.
+          Unsigned application, setup and uninstaller. Verify downloads against SHA256SUMS.txt. Windows may warn or block execution.
+          The setup and portable zip include licenses/ and mandatory sources/ (FFmpeg/x264 corresponding source); a separate source zip is attached.
+          New UI icons come from iconfont.cn; their license remains unresolved. Maintainer-accepted risk permits pre-releases only.
+          The application icon was generated by gpt-image-2.5 via the maintainer's CLIProxyAPI on 2026-11-12; its copyright status may be unclear. See NOTICE.txt for the exact prompt.
+          未签名预发布草稿：维护者完成 Windows 验收、核对 SHA256SUMS.txt 与许可/源码材料后才能发布。图标许可仍未解决。
+          NOTES
+          gh release create "$TAG" --verify-tag --draft --prerelease \
+            --title "SubRec $TAG" --notes-file "$RUNNER_TEMP/subrec-release-notes.md" \
+            "$STEM-win64-setup.exe" "$STEM-win64-portable.zip" \
+            "$STEM-ffmpeg-corresponding-source.zip" SHA256SUMS.txt
