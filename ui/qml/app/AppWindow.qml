@@ -188,8 +188,13 @@ ApplicationWindow {
     }
     property string lastSavedFile: ""
 
+    // Stacking (PC3 1112 #1): pages < title bar (z 1) < window outline (z 2) < resize
+    // frame (z 3), so no page can cover the window buttons and the corner resize areas
+    // still sit above the title bar.
     TitleBar {
         id: titleBar
+        objectName: "titleBar"
+        z: 1
         window: appWindow
         compact: appWindow.narrow
         anchors.left: parent.left
@@ -209,6 +214,7 @@ ApplicationWindow {
 
     StackLayout {
         id: pages
+        objectName: "pageStack"
         anchors.top: titleBar.bottom
         anchors.bottom: parent.bottom
         anchors.left: navRail.right
@@ -238,7 +244,22 @@ ApplicationWindow {
     FloatingBar {}
     // qmllint enable incompatible-type
 
+    // PC3 1112 #3 (P3-a): 1 px outline so the frameless window stands out on a white
+    // desktop; not drawn when maximized / fullscreen. A plain Rectangle takes no mouse
+    // input, so the title-bar buttons and resize handles still get every press.
+    Rectangle {
+        objectName: "windowOutline"
+        z: 2
+        anchors.fill: parent
+        color: "transparent"
+        border.width: 1
+        border.color: Theme.borderStrong
+        visible: appWindow.visibility === Window.Windowed
+    }
+
     WindowResizeFrame {
+        objectName: "windowResizeFrame"
+        z: 3
         anchors.fill: parent
         window: appWindow
     }

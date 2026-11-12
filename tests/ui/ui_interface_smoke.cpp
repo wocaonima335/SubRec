@@ -34,6 +34,8 @@
 #include <QFile>
 #include <QMetaMethod>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
+#include <QQmlExpression>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTemporaryDir>
@@ -294,6 +296,34 @@ void checkLoad()
         QMetaObject::invokeMethod(nav, "open", Q_ARG(QString, QStringLiteral("settings/hotkeys")));
         check(nav && nav->property("settingsPage").toString() == QLatin1String("hotkeys"),
               "Navigation.open(settings/hotkeys)");
+
+        // PC3 1112 #1 / #3 (P3-a): the record page cannot paint over the title bar, the
+        // title bar stays above every page, the resize frame stays above the title bar,
+        // and the 1 px window outline is drawn while windowed. Structural only (no grabs).
+        QObject *recordPage = root->findChild<QObject *>(QStringLiteral("recordPage"));
+        check(recordPage != nullptr, "recordPage exists");
+        if (recordPage) {
+            check(recordPage->property("clip").toBool(), "RecordPage Flickable clips its content");
+            QQmlExpression stopAtBounds(qmlContext(recordPage), recordPage,
+                                        QStringLiteral("boundsBehavior === Flickable.StopAtBounds"));
+            check(stopAtBounds.evaluate().toBool(), "RecordPage Flickable stops at bounds");
+        }
+        auto *titleBar = root->findChild<QQuickItem *>(QStringLiteral("titleBar"));
+        auto *pageStack = root->findChild<QQuickItem *>(QStringLiteral("pageStack"));
+        auto *outline = root->findChild<QQuickItem *>(QStringLiteral("windowOutline"));
+        auto *resizeFrame = root->findChild<QQuickItem *>(QStringLiteral("windowResizeFrame"));
+        check(titleBar && pageStack && outline && resizeFrame,
+              "titleBar / pageStack / windowOutline / windowResizeFrame exist");
+        if (titleBar && pageStack && outline && resizeFrame) {
+            check(titleBar->z() > pageStack->z(), "title bar stacks above the pages");
+            check(resizeFrame->z() > titleBar->z(), "resize frame stacks above the title bar");
+            check(resizeFrame->z() > outline->z(), "resize frame stacks above the window outline");
+            check(titleBar->findChild<QObject *>(QStringLiteral("titleBarClose")) != nullptr,
+                  "close button lives in the title bar");
+            auto *window = qobject_cast<QQuickWindow *>(root);
+            const bool windowed = window && window->visibility() == QWindow::Windowed;
+            check(outline->isVisible() == windowed, "window outline shown only while windowed");
+        }
     }
     RecorderView::setInstance(nullptr);
     ShellView::setInstance(nullptr);
