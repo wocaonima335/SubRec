@@ -13,3 +13,4 @@ generic
 networkinformation
 platforminputcontexts
 translations
+qmltooling
