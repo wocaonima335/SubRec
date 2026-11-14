@@ -7,8 +7,7 @@ qt_add_library(recorder_module STATIC
     capture_scheduler.cpp
     capture_session.h
     capture_session.cpp
-    ffaudiosampler.h
-    ffaudiosampler.cpp
+    # ffaudiosampler.cpp/.h are built in filter_module (linked below).
 )
 target_link_libraries(recorder_module PRIVATE
     PRIVATE 

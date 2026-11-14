@@ -7,7 +7,11 @@ qt_add_library(filter_module STATIC
     audio_mix_dump.h
     audio_timeline_mixer.cpp
     audio_timeline_mixer.h
-    
+    # FFAudioSampler (output level metering) is compiled here, not in recorder_module:
+    # linking recorder_module would pull filter_module into the static-library cycle and
+    # CMake's repeated cycle order then leaves thread_module -> AudioTimelineMixer unresolved.
+    ../recorder/ffaudiosampler.cpp
+    ../recorder/ffaudiosampler.h
 )
 
 target_link_libraries(filter_module
@@ -15,8 +19,6 @@ target_link_libraries(filter_module
     Qt6::Core
     ${FFMPEG_LIBRARIES}
     queue_module
-    # FFAudioSampler (output level metering); same static cycle as decoder_module.
-    recorder_module
 )
 
 # 添加FFmpeg头文件目录
