@@ -26,8 +26,9 @@ RadioButton {
         x: root.text.length > 0
            ? (root.mirrored ? root.width - width - root.rightPadding : root.leftPadding)
            : root.leftPadding + (root.availableWidth - width) / 2
-        // Centred on the first text line; the description hangs below it.
-        y: root.text.length > 0 ? root.topPadding + (titleText.height - height) / 2
+        // Centred on the first text line; the description hangs below it. A line shorter than
+        // the dot moves the text down (contentItem.topPadding), never the dot above the control.
+        y: root.text.length > 0 ? root.topPadding + Math.max(0, (titleText.height - height) / 2)
                                 : root.topPadding + (root.availableHeight - height) / 2
         radius: 8
         color: "transparent"
@@ -49,6 +50,7 @@ RadioButton {
         // A text-less radio (ModelRow) is only the 16-px dot: nothing to reserve.
         leftPadding: root.text.length > 0 && !root.mirrored ? root.indicator.width + root.spacing : 0
         rightPadding: root.text.length > 0 && root.mirrored ? root.indicator.width + root.spacing : 0
+        topPadding: root.text.length > 0 ? Math.max(0, (root.implicitIndicatorHeight - titleText.height) / 2) : 0
         spacing: 0
 
         Text {

@@ -477,16 +477,24 @@ void checkChoiceControl(QQuickItem *control, const char *where)
     const bool clear = !text.isEmpty() && !ind.intersects(text) && !ind.intersects(area)
         && (mirrored ? text.right() <= ind.left() - spacing + 0.5 && area.right() <= ind.left() + 0.5
                      : text.left() >= ind.right() + spacing - 0.5 && area.left() >= ind.right() - 0.5);
-    if (!clear)
-        std::fprintf(stderr, "  %s: \"%s\" indicator x %g..%g, text x %g..%g, area x %g..%g%s\n", where,
-                     qPrintable(control->property("text").toString()), ind.left(), ind.right(),
-                     text.left(), text.right(), area.left(), area.right(), mirrored ? " (mirrored)" : "");
+    const bool inside = box.contains(ind);
+    const bool textInside = text.left() >= box.left() - 0.5 && text.right() <= box.right() + 0.5;
+    const QRectF line = firstLine ? sceneRect(firstLine) : QRectF();
+    const bool level = firstLine && std::abs(line.center().y() - ind.center().y()) <= 2;
+    if (!clear || !inside || !textInside || !level) {
+        const auto r = [](const QRectF &rect) {
+            return QStringLiteral("(%1,%2 %3x%4)").arg(rect.x()).arg(rect.y()).arg(rect.width()).arg(rect.height());
+        };
+        std::fprintf(stderr, "  %s: %s \"%s\"%s control %s indicator %s text %s first line %s area %s\n",
+                     where, control->metaObject()->className(),
+                     qPrintable(control->property("text").toString()), mirrored ? " (mirrored)" : "",
+                     qPrintable(r(box)), qPrintable(r(ind)), qPrintable(r(text)), qPrintable(r(line)),
+                     qPrintable(r(area)));
+    }
     check(clear, "AppRadioButton / AppCheckBox text never overlaps the indicator");
-    check(box.contains(ind), "indicator stays inside the control");
-    check(text.left() >= box.left() - 0.5 && text.right() <= box.right() + 0.5,
-          "AppRadioButton / AppCheckBox text stays inside the control");
-    check(firstLine && std::abs(sceneRect(firstLine).center().y() - ind.center().y()) <= 2,
-          "indicator is level with the first text line");
+    check(inside, "indicator stays inside the control");
+    check(textInside, "AppRadioButton / AppCheckBox text stays inside the control");
+    check(level, "indicator is level with the first text line");
 }
 
 // UI 1114 #2: every place that shows AppRadioButton / AppCheckBox with text, opened for real
@@ -521,6 +529,14 @@ void checkChoiceControlLayout()
          "    LayoutMirroring.enabled: true; LayoutMirroring.childrenInherit: true\n"
          "    AppRadioButton { text: \"Quit\"; description: \"Stops and saves a running recording\" }\n"
          "    AppCheckBox { topPadding: 8; text: \"Remember my choice\"; secondaryText: \"(Settings)\" }\n"
+         "}\n"},
+        // A first line shorter than the 16-px indicator, on every platform. The Windows
+        // offscreen CI job (no fonts for its FreeType database) lays bodyFont out under 16 px
+        // and the radio dot used to sit above the control there.
+        {"smallFont", 2,
+         "Column {\n"
+         "    AppRadioButton { font: Qt.font({ pixelSize: 9 }); text: \"Quit\"; description: \"Saves\" }\n"
+         "    AppCheckBox { font: Qt.font({ pixelSize: 9 }); text: \"Remember my choice\" }\n"
          "}\n"},
     };
     for (const Scenario &scenario : scenarios) {
