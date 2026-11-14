@@ -31,17 +31,22 @@
 #include "ui/backend/settings_store.h"
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QMetaMethod>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
+#include <QQmlEngine>
 #include <QQmlExpression>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QtQml/qqmlextensionplugin.h>
+#include <cmath>
 #include <cstdio>
 #include <initializer_list>
+#include <memory>
 #include <type_traits>
 
 Q_IMPORT_QML_PLUGIN(SubRec_UiPlugin)
@@ -56,6 +61,18 @@ void check(bool ok, const char *what)
         ++g_failures;
         std::fprintf(stderr, "FAIL: %s\n", what);
     }
+}
+
+// Spins the event loop until done() (polish / frame driven updates) or ~2 s pass. This
+// target does not link QtTest, so no QTRY_*.
+template <typename Done>
+bool waitFor(Done done)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (!done() && timer.elapsed() < 2000)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+    return done();
 }
 
 void checkMembers(const QMetaObject &mo, std::initializer_list<const char *> properties,
@@ -324,9 +341,84 @@ void checkLoad()
             const bool windowed = window && window->visibility() == QWindow::Windowed;
             check(outline->isVisible() == windowed, "window outline shown only while windowed");
         }
+
+        // UI 1114 #1 (T2): ControlBar width = window - nav rail - 344 (sources 280, margins
+        // 2×24, gap 16), and the source panel's bottom edge stays level with the ControlBar
+        // when it switches to the 148 px compact layout. Only the current StackLayout page
+        // is sized, so go back to the record page first.
+        auto *window = qobject_cast<QQuickWindow *>(root);
+        auto *controlBar = root->findChild<QQuickItem *>(QStringLiteral("controlBar"));
+        auto *sourcePanel = root->findChild<QQuickItem *>(QStringLiteral("sourcePanel"));
+        check(window && nav && recordPage && controlBar && sourcePanel, "controlBar / sourcePanel exist");
+        if (window && nav && recordPage && controlBar && sourcePanel) {
+            QMetaObject::invokeMethod(nav, "open", Q_ARG(QString, QStringLiteral("record")));
+            if (!window->isVisible())
+                window->show(); // offscreen: no real window; resize needs a platform window
+            for (int w : {960, 1099, 1100, 1247, 1264, 1280}) {
+                window->resize(w, 800);
+                const qreal expected = w - (w < 1100 ? 64 : 200) - 344;
+                // StackLayout re-lays out its current page on polish (next frame).
+                waitFor([&] { return controlBar->width() == expected; });
+                if (controlBar->width() != expected)
+                    std::fprintf(stderr, "  window %d: controlBar width %g, expected %g\n", w,
+                                 controlBar->width(), expected);
+                check(controlBar->width() == expected, "ControlBar width follows the window width");
+                check(controlBar->property("compact").toBool() == (expected < 720),
+                      "ControlBar compact below 720");
+                const qreal previewHeight = recordPage->property("previewHeight").toReal();
+                check(std::abs(sourcePanel->height()
+                               - qMax(previewHeight + 16 + controlBar->height(), qreal(534))) < 0.5,
+                      "source panel bottom edge level with the ControlBar");
+            }
+        }
     }
     RecorderView::setInstance(nullptr);
     ShellView::setInstance(nullptr);
+}
+
+// UI 1114 #1 (T1): the save area must never cover the record buttons or the folder button
+// at any card width. Widths: 552 / 556 = narrowest card with the nav rail collapsed /
+// expanded, 703/704 = old overlap edge, 719/720 = compact switch, 736 = 1280×800 window.
+// Geometry only (no grabs).
+void checkControlBarLayout()
+{
+    QQmlEngine engine;
+    QQmlComponent component(&engine);
+    component.loadFromModule("SubRec.Ui", "ControlBar");
+    std::unique_ptr<QQuickItem> bar(qobject_cast<QQuickItem *>(component.create()));
+    check(bar != nullptr, "ControlBar loads standalone");
+    if (!bar) {
+        std::fprintf(stderr, "  %s\n", qPrintable(component.errorString()));
+        return;
+    }
+    auto rectOf = [&](const char *name) {
+        auto *item = bar->findChild<QQuickItem *>(QString::fromLatin1(name));
+        if (!item) std::fprintf(stderr, "FAIL: ControlBar has no %s\n", name);
+        g_failures += item ? 0 : 1;
+        return item ? item->mapRectToItem(bar.get(), QRectF(0, 0, item->width(), item->height())) : QRectF();
+    };
+    for (qreal w : {552.0, 556.0, 615.0, 691.0, 703.0, 704.0, 719.0, 720.0, 736.0, 1376.0}) {
+        bar->setWidth(w);
+        bar->setHeight(bar->implicitHeight());
+        const QRectF record = rectOf("recordMainButton"), pause = rectOf("recordPauseButton"),
+                     save = rectOf("saveArea"), folder = rectOf("openOutputFolderButton");
+        if (save.intersects(record) ||save.intersects(pause) || save.intersects(folder))
+            std::fprintf(stderr, "  width %g: save area overlaps a button\n", w);
+        check(save.width() > 0 && save.height() > 0, "save area has a size");
+        check(!save.intersects(record) &&!save.intersects(pause), "save area never overlaps the record buttons");
+        check(!save.intersects(folder), "save area never overlaps the open-folder button");
+        check(save.right() <= w && folder.right() <= w, "save area / folder button stay inside the card");
+        check(save.bottom() <= bar->height() && folder.bottom() <= bar->height(),
+              "save area / folder button stay inside the card height");
+        check(bar->property("compact").toBool() == (w < 720), "ControlBar switches to compact below 720");
+        check(bar->implicitHeight() == (w < 720 ? 148 : 104), "ControlBar height 104 wide / 148 compact");
+    }
+    // Design baseline (§3.2.2 C): 736 (1280×800 window) keeps the old coordinates.
+    bar->setWidth(736);
+    bar->setHeight(bar->implicitHeight());
+    const QRectF save = rectOf("saveArea");
+    check(save.x() == 440 && save.y() == 16 && save.width() == 224 && bar->implicitHeight() == 104,
+          "wide layout unchanged at 736");
 }
 
 } // namespace
@@ -340,6 +432,7 @@ int main(int argc, char **argv)
     checkContracts();
     checkDefaults();
     checkLoad();
+    checkControlBarLayout();
     checkGallery();
 
     if (g_failures == 0) std::printf("ui_interface_smoke: all checks passed\n");

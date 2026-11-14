@@ -104,13 +104,16 @@ Flickable {
                     height: root.previewHeight
                 }
                 ControlBar {
+                    id: controlBar
                     width: root.previewWidth
                 }
             }
 
+            // Bottom edge level with the ControlBar, which grows to 148 when compact.
             SourcePanel {
+                objectName: "sourcePanel"
                 width: root.sourcePanelWidth
-                height: Math.max(root.previewHeight + Theme.space16 + 104, 534)
+                height: Math.max(root.previewHeight + Theme.space16 + controlBar.height, 534)
             }
         }
 
