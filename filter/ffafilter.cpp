@@ -1,6 +1,7 @@
 #include "ffafilter.h"
 #include "decoder/ffadecoder.h"
 #include "queue/ffaframequeue.h"
+#include "recorder/ffaudiosampler.h"
 
 #include <QDebug>
 
@@ -19,11 +20,44 @@ FFAFilter::~FFAFilter()
 
 void FFAFilter::initalize(FFAFrameQueue *encoderFrameQueue,
                           FFADecoder *systemAudioDecoder,
-                          FFADecoder *microphoneAudioDecoder)
+                          FFADecoder *microphoneAudioDecoder,
+                          FFAudioSampler *levelSampler)
 {
     m_encoderFrmQueue = encoderFrameQueue;
     m_systemAudioDecoder = systemAudioDecoder;
     m_microphoneAudioDecoder = microphoneAudioDecoder;
+    m_levelSampler.store(levelSampler, std::memory_order_release);
+}
+
+void FFAFilter::sampleOutputLevel(const AVFrame *frame) const
+{
+    FFAudioSampler *sampler = m_levelSampler.load(std::memory_order_acquire);
+    if (!sampler || !sampler->isActive() || !frame || frame->nb_samples <= 0) {
+        return;
+    }
+
+    // Planar formats feed only the first channel, interleaved formats every sample
+    // (same as the former decoder-side sampling).
+    switch (frame->format) {
+    case AV_SAMPLE_FMT_FLT:
+        sampler->collectSamples(reinterpret_cast<const float *>(frame->data[0]),
+                                frame->nb_samples * frame->ch_layout.nb_channels);
+        break;
+    case AV_SAMPLE_FMT_FLTP:
+        sampler->collectSamples(reinterpret_cast<const float *>(frame->data[0]),
+                                frame->nb_samples);
+        break;
+    case AV_SAMPLE_FMT_S16:
+        sampler->collectSamples(reinterpret_cast<const int16_t *>(frame->data[0]),
+                                frame->nb_samples * frame->ch_layout.nb_channels);
+        break;
+    case AV_SAMPLE_FMT_S16P:
+        sampler->collectSamples(reinterpret_cast<const int16_t *>(frame->data[0]),
+                                frame->nb_samples);
+        break;
+    default:
+        break;
+    }
 }
 
 int FFAFilter::processDualtAudioFrames(AVFrame *audioFrame,
@@ -104,6 +138,7 @@ int FFAFilter::processDualtAudioFrames(AVFrame *audioFrame,
         // enqueue() moves the reference out of filterFrame. The pts is left as the graph made
         // it, like on the single-source path; RecorderSyncQueue/FFAEncoderThread own the
         // output timeline. (The old wall-clock pts was written after enqueue: never used.)
+        sampleOutputLevel(filterFrame);
         m_encoderFrmQueue->enqueue(filterFrame);
         av_frame_free(&filterFrame);
     }
@@ -132,6 +167,7 @@ void FFAFilter::processSingleAudioFrame(AVFrame *frame,
         return;
     }
 
+    sampleOutputLevel(frame);
     m_encoderFrmQueue->enqueue(frame);
     av_frame_unref(frame);
     av_frame_free(&frame);
@@ -145,6 +181,7 @@ void FFAFilter::forwardAudioFrame(AVFrame *frame, int64_t startTime, int64_t pau
         return;
     }
 
+    sampleOutputLevel(frame);
     m_encoderFrmQueue->enqueue(frame);
     av_frame_free(&frame);
 }

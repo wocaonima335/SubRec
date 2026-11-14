@@ -15,6 +15,8 @@ target_link_libraries(filter_module
     Qt6::Core
     ${FFMPEG_LIBRARIES}
     queue_module
+    # FFAudioSampler (output level metering); same static cycle as decoder_module.
+    recorder_module
 )
 
 # 添加FFmpeg头文件目录

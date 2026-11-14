@@ -2,6 +2,7 @@
 #define FFAFILTER_H
 
 #include <array>
+#include <atomic>
 #include <mutex>
 
 extern "C" {
@@ -23,6 +24,7 @@ enum AudioSourceType { AUDIO_SOURCE_SYSTEM = 0, AUDIO_SOURCE_MICROPHONE = 1 };
 
 class FFAFrameQueue;
 class FFADecoder;
+class FFAudioSampler;
 
 class FFAFilter
 {
@@ -30,9 +32,12 @@ public:
     FFAFilter();
     ~FFAFilter();
 
+    // levelSampler (optional, not owned) receives every frame handed to the encoder queue,
+    // i.e. the recorded mix after volume, from all three output paths.
     void initalize(FFAFrameQueue *encoderFrameQueue,
                    FFADecoder *audioDecoder,
-                   FFADecoder *microphoneDecoder);
+                   FFADecoder *microphoneDecoder,
+                   FFAudioSampler *levelSampler = nullptr);
 
     int processDualtAudioFrames(AVFrame *audioFrame,
                                 AVFrame *microphoneFrame,
@@ -94,8 +99,12 @@ public:
 private:
     void resetDualAudioFilter();
     void applyVolume(AVFilterContext *volumeContext, double volume);
+    // Must run before enqueue(): enqueue() moves the frame's data reference out.
+    void sampleOutputLevel(const AVFrame *frame) const;
 
     FFAFrameQueue *m_encoderFrmQueue = nullptr;
+    // Set from the recorder/event thread, read on the filter thread.
+    std::atomic<FFAudioSampler *> m_levelSampler{nullptr};
     FFADecoder *m_systemAudioDecoder = nullptr;
     FFADecoder *m_microphoneAudioDecoder = nullptr;
 

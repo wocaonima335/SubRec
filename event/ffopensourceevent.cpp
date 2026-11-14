@@ -236,7 +236,8 @@ bool FFOpenSourceEvent::initAudio(const std::function<bool()> &shouldStart)
   aEncoder->init(aEncoderPktQueue);
   aFilter->initalize(aFilterEncoderFrmQueue,
                      aDecoder[aDecoderType::A_AUDIO],
-                     aDecoder[aDecoderType::A_MICROPHONE]);
+                     aDecoder[aDecoderType::A_MICROPHONE],
+                     recoderContext->getSampler());
   aFilterThread->init(aFrmQueue[aDecoderType::A_MICROPHONE],
                       aFrmQueue[aDecoderType::A_AUDIO],
                       aFilter);
