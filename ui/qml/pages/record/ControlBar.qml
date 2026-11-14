@@ -8,14 +8,37 @@ import QtQuick
 // Button actions: main -> ShellView.requestStart() (idle/failed) or requestStop()
 // (running/paused); pause -> requestPause()/requestResume(). Tooltips append
 // HotkeyController.shortcutLabel(...) when non-empty.
+// UI 1114 #1: two widths. Wide (>= 720) keeps the §3.2.2 C coordinates; compact (< 720)
+// moves the save area to one line under the buttons so it can never cover them.
 // FROZEN API: none.
 Card {
     id: root
+    objectName: "controlBar"
     padding: 0
-    implicitHeight: 104
+    // 720 = record button right edge 408 + 16 gap + 296 px save area (224 + 72 right).
+    readonly property bool compact: width < 720
+    implicitHeight: compact ? 148 : 104
 
     readonly property string state: RecorderView.uiState
     readonly property bool capturing: RecorderView.capturing
+    // File line: the file being written while capturing, else the next file name.
+    readonly property string fileName: {
+        if (root.capturing) {
+            const file = RecorderView.currentOutputFile
+            const cut = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"))
+            return cut >= 0 ? file.substring(cut + 1) : file
+        }
+        return OutputNaming.previewFileName
+    }
+    // Folder + file name, for the compact line and its tooltip.
+    readonly property string fullPath: {
+        if (root.capturing && RecorderView.currentOutputFile.length > 0)
+            return RecorderView.currentOutputFile
+        const dir = RecorderView.outputPath
+        if (dir.length === 0 || dir.endsWith("/") || dir.endsWith("\\"))
+            return dir + root.fileName
+        return dir + (dir.indexOf("\\") >= 0 ? "\\" : "/") + root.fileName
+    }
 
     // §3.2.2 C: tooltips "开始录制（F9 / Ctrl+Alt+R）" — the global key joins F9/F10 only
     // when a global chord is bound (HotkeyController.shortcutLabel, "" when unset).
@@ -59,6 +82,7 @@ Card {
     }
 
     RecordPauseButton {
+        objectName: "recordPauseButton"
         x: 276
         y: 0
         uiState: root.state
@@ -84,6 +108,7 @@ Card {
     }
 
     RecordMainButton {
+        objectName: "recordMainButton"
         x: 344
         y: -10
         uiState: root.state
@@ -123,52 +148,91 @@ Card {
     }
 
     // Save area (§3.2.2 C): path + file line; the file line switches to the file being
-    // written once the session starts.
-    Column {
-        x: parent.width - 296
-        y: 16
-        spacing: 4
+    // written once the session starts. Wide: right column, x = W - 296 (never left of 424,
+    // the record caption's right edge + 16), at most 224 wide and always clear of the
+    // folder button. Compact: one line "保存到 <folder/file>" at y 104 under the buttons,
+    // ending 8 px before the folder button.
+    Item {
+        id: saveArea
+        objectName: "saveArea"
+        x: root.compact ? Theme.space16 : Math.max(424, root.width - 296)
+        y: root.compact ? 104 : 16
+        width: root.compact ? Math.max(0, root.width - Theme.space16 - Theme.space8 - 32 - Theme.space12)
+                            : Math.max(0, Math.min(224, root.width - saveArea.x - 56))
+        height: root.compact ? 32 : wideSave.implicitHeight
 
-        Text {
-            text: qsTr("保存到")
-            font: Theme.captionFont
-            color: Theme.textTertiary
-        }
-        Text {
-            width: 224
-            text: RecorderView.outputPath
-            font: Theme.monoSmallFont
-            color: Theme.textSecondary
-            elide: Text.ElideMiddle
+        Column {
+            id: wideSave
+            visible: !root.compact
+            width: saveArea.width
+            spacing: 4
 
-            HoverHandler {
-                id: pathHover
+            Text {
+                text: qsTr("保存到")
+                font: Theme.captionFont
+                color: Theme.textTertiary
             }
-            AppToolTip {
-                visible: pathHover.hovered
+            Text {
+                width: wideSave.width
                 text: RecorderView.outputPath
+                font: Theme.monoSmallFont
+                color: Theme.textSecondary
+                elide: Text.ElideMiddle
+
+                HoverHandler {
+                    id: pathHover
+                }
+                AppToolTip {
+                    visible: pathHover.hovered
+                    text: RecorderView.outputPath
+                }
+            }
+            Text {
+                width: wideSave.width
+                text: root.fileName
+                font: Theme.monoSmallFont
+                color: root.capturing ? Theme.textPrimary : Theme.textTertiary
+                elide: Text.ElideMiddle
             }
         }
-        Text {
-            width: 224
-            text: {
-                if (root.capturing) {
-                    const file = RecorderView.currentOutputFile
-                    const cut = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"))
-                    return cut >= 0 ? file.substring(cut + 1) : file
-                }
-                return OutputNaming.previewFileName
+
+        Row {
+            visible: root.compact
+            anchors.verticalCenter: saveArea.verticalCenter
+            spacing: Theme.space8
+
+            Text {
+                id: compactLabel
+                anchors.verticalCenter: parent.verticalCenter
+                text: qsTr("保存到")
+                font: Theme.captionFont
+                color: Theme.textTertiary
             }
-            font: Theme.monoSmallFont
-            color: root.capturing ? Theme.textPrimary : Theme.textTertiary
-            elide: Text.ElideMiddle
+            Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.max(0, saveArea.width - compactLabel.width - Theme.space8)
+                text: root.fullPath
+                font: Theme.monoSmallFont
+                color: root.capturing ? Theme.textPrimary : Theme.textSecondary
+                elide: Text.ElideMiddle
+
+                HoverHandler {
+                    id: fullPathHover
+                }
+                AppToolTip {
+                    visible: fullPathHover.hovered
+                    text: root.fullPath
+                }
+            }
         }
     }
 
     IconButton {
+        objectName: "openOutputFolderButton"
         anchors.right: parent.right
         anchors.rightMargin: Theme.space12
-        anchors.verticalCenter: parent.verticalCenter
+        // Compact: level with the save line; wide: centred on the card as before.
+        anchors.verticalCenter: root.compact ? saveArea.verticalCenter : parent.verticalCenter
         iconName: "folder-open"
         toolTipText: qsTr("打开保存文件夹")
         onClicked: DesktopActions.openFolder(RecorderView.outputPath)
