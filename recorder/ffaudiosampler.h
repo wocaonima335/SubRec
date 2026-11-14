@@ -35,7 +35,7 @@ public:
     // 初始化采样器
     void initialize(int sampleRate, int channels, int format);
 
-    // 采集音频样本（从解码后的音频帧调用）
+    // 采集音频样本（由 FFAFilter 在输出帧进入编码队列前调用，即实际写入文件的混音）
     // samples: 原始PCM数据指针
     // sampleCount: 样本数量
     void collectSamples(const float *samples, int sampleCount);

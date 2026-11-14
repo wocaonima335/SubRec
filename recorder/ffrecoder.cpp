@@ -100,7 +100,8 @@ void FFRecorder::startRecord(const CaptureConfig &config) {
   qDebug() << "[FFRecorder] audio source flags updated";
   d->aFilter->initalize(d->aFilterEncoderFrmQueue,
                         d->aDecoder[aDecoderType::A_AUDIO],
-                        d->aDecoder[aDecoderType::A_MICROPHONE]);
+                        d->aDecoder[aDecoderType::A_MICROPHONE],
+                        d->audioSampler);
 
   // 清空所有解码队列，防止残留数据导致时间戳混乱
   for (size_t i = 0; i < FFRecordContextType::V_DECODER_SIZE; i++) {
@@ -224,7 +225,8 @@ void FFRecorder::initCoreComponents() {
                          d->aFilter);
   d->aFilter->initalize(d->aFilterEncoderFrmQueue,
                         d->aDecoder[aDecoderType::A_AUDIO],
-                        d->aDecoder[aDecoderType::A_MICROPHONE]);
+                        d->aDecoder[aDecoderType::A_MICROPHONE],
+                        d->audioSampler);
 
   const bool useSystemAudio = true;
   if (useSystemAudio) {

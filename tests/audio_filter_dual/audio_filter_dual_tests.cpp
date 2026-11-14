@@ -1,13 +1,17 @@
 // FFAFilter audio-graph regression test with synthetic frames (no devices, no recording).
 // Covers: abuffersink "sample_formats" restriction (output must be FLTP even for S16 input),
 // the dual graph abuffer -> volume -> amix(pad 0 / pad 1) -> abuffersink, runtime volume
-// commands, and ownership/error paths of processDualtAudioFrames().
+// commands, ownership/error paths of processDualtAudioFrames(), and the level sampler fed
+// from all three encoder-queue outputs (dual mix, single source, forward).
 #include "filter/ffafilter.h"
 #include "filter/audio_timeline_mixer.h"
 #include "queue/ffaframequeue.h"
 #include "queue/media_clock.h"
+#include "recorder/ffaudiosampler.h"
 #include "recorder/ffrecorder_p.h"
 #include "thread/ffafilterthread.h"
+
+#include <QCoreApplication>
 
 #include <cmath>
 #include <iostream>
@@ -43,6 +47,21 @@ AVFrame *makeFltpFrame(float level, int64_t pts)
         auto *samples = reinterpret_cast<float *>(frame->extended_data[channel]);
         for (int i = 0; i < kFrameSamples; ++i) {
             samples[i] = level;
+        }
+    }
+    return frame;
+}
+
+// -6 dBFS (0.5 peak) 1 kHz stereo FLTP sine, phase-continuous across frames via pts.
+AVFrame *makeSineFrame(int64_t pts)
+{
+    constexpr double kPi = 3.14159265358979323846;
+    AVFrame *frame = makeFltpFrame(0.0f, pts);
+    for (int channel = 0; channel < 2; ++channel) {
+        auto *samples = reinterpret_cast<float *>(frame->extended_data[channel]);
+        for (int i = 0; i < kFrameSamples; ++i) {
+            samples[i] = static_cast<float>(
+                0.5 * std::sin(2.0 * kPi * 1000.0 * double(pts + i) / AUDIO_SAMPLE_RATE));
         }
     }
     return frame;
@@ -344,14 +363,118 @@ void dualErrorPaths()
     std::cout << "PASS: dual error and ownership paths\n";
 }
 
+enum class OutputPath { Dual, Single, Forward };
+
+// Pushes `count` frames (frame pairs with a silent microphone on the dual path) of a sine
+// or of silence, releasing whatever reaches the encoder queue. Returns the output frames.
+int pushOutput(FFAFilter &filter, FFAFrameQueue &queue, OutputPath path, bool tone, int count,
+               int64_t &pts)
+{
+    int frames = 0;
+    for (int i = 0; i < count; ++i) {
+        AVFrame *frame = tone ? makeSineFrame(pts) : makeFltpFrame(0.0f, pts);
+        switch (path) {
+        case OutputPath::Dual:
+            CHECK(filter.processDualtAudioFrames(frame, makeFltpFrame(0.0f, pts), 0, 0) == 0);
+            break;
+        case OutputPath::Single:
+            filter.processSingleAudioFrame(frame, 0, 0, AudioSourceType::AUDIO_SOURCE_SYSTEM);
+            break;
+        case OutputPath::Forward:
+            filter.forwardAudioFrame(frame, 0, 0);
+            break;
+        }
+        pts += kFrameSamples;
+        while (!queue.peekEmpty()) {
+            auto received = queue.receive();
+            CHECK(received.ok());
+            AVFrameTraits::release(received.item);
+            ++frames;
+        }
+    }
+    return frames;
+}
+
+// The level meter must follow what is written to the file on every output path (WASAPI
+// system audio never passes FFADecoder), and only while the sampler is active.
+void outputLevelIsSampled(OutputPath path, const char *name)
+{
+    FFAFrameQueue queue;
+    FFAudioSampler sampler;
+    sampler.initialize(AUDIO_SAMPLE_RATE, 2, AUDIO_SAMPLE_FORMAT);
+    int signalledLevel = -1;
+    QObject::connect(&sampler, &FFAudioSampler::volumeLevelChanged,
+                     [&signalledLevel](int level) { signalledLevel = level; });
+    FFAFilter filter;
+    filter.initalize(&queue, nullptr, nullptr, &sampler);
+    FakeSource system;
+    FakeSource microphone;
+    if (path == OutputPath::Dual) {
+        filter.initializeDualAudioFilter(system.codec, microphone.codec, system.stream,
+                                         microphone.stream);
+    }
+    int64_t pts = 0;
+
+    sampler.start();
+    CHECK(pushOutput(filter, queue, path, false, 8, pts) > 0);
+    CHECK(sampler.getVolumeLevel() == 0);
+
+    CHECK(pushOutput(filter, queue, path, true, 8, pts) > 0);
+    const int level = sampler.getVolumeLevel();
+    CHECK(level > 0);
+    // volumeLevelChanged is queued (filter thread -> GUI); deliver it like the event loop.
+    QCoreApplication::sendPostedEvents(&sampler, QEvent::MetaCall);
+    CHECK(signalledLevel == level);
+
+    // Inactive (stopped, same as never started): frames still reach the encoder queue,
+    // the sampler ignores them.
+    sampler.stop();
+    sampler.clear();
+    CHECK(pushOutput(filter, queue, path, true, 8, pts) > 0);
+    CHECK(sampler.getVolumeLevel() == 0);
+    std::cout << "PASS: output level sampled on " << name << " path (level " << level << ")\n";
+}
+
+// Without a sampler (the 3-argument initalize() and an explicit nullptr) every path still
+// delivers frames and nothing dereferences the missing sampler.
+void outputWithoutSampler()
+{
+    for (OutputPath path : {OutputPath::Dual, OutputPath::Single, OutputPath::Forward}) {
+        for (bool explicitNull : {false, true}) {
+            FFAFrameQueue queue;
+            FFAFilter filter;
+            if (explicitNull) {
+                filter.initalize(&queue, nullptr, nullptr, nullptr);
+            } else {
+                filter.initalize(&queue, nullptr, nullptr);
+            }
+            FakeSource system;
+            FakeSource microphone;
+            if (path == OutputPath::Dual) {
+                filter.initializeDualAudioFilter(system.codec, microphone.codec, system.stream,
+                                                 microphone.stream);
+            }
+            int64_t pts = 0;
+            CHECK(pushOutput(filter, queue, path, true, 4, pts) > 0);
+        }
+    }
+    std::cout << "PASS: output paths without a level sampler\n";
+}
+
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+    // Only for FFAudioSampler's queued signals; no event loop is run.
+    QCoreApplication app(argc, argv);
     try {
         sinkRestrictsToFltp();
         dualGraphMixesBothInputs();
         dualErrorPaths();
+        outputLevelIsSampled(OutputPath::Dual, "dual mix");
+        outputLevelIsSampled(OutputPath::Single, "single source");
+        outputLevelIsSampled(OutputPath::Forward, "forward");
+        outputWithoutSampler();
         mixedWorkerDrainsBothSources();
         mixedWorkerDrainsBothSources(true);
         mixedWorkerDrainsBothSources(false, true);

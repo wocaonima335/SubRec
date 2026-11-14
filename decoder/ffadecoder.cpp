@@ -2,8 +2,9 @@
 #include "ffadecoder.h"
 
 #include "queue/ffaframequeue.h"
-#include "recorder/ffrecorder.h"
 #include "resampler/ffaresampler.h"
+
+#include <cstring>
 
 FFADecoder::FFADecoder()
     : m_stop(false)
@@ -64,7 +65,6 @@ void FFADecoder::decode(AVPacket *packet)
         {
             if (captureTimestampOutput) {
                 frame->time_base = stream->time_base;
-                processDecodedFrame(frame);
                 frmQueue->enqueue(frame);
                 continue;
             }
@@ -105,8 +105,7 @@ void FFADecoder::decode(AVPacket *packet)
 
                     if (frmQueue != nullptr)
                     {
-                        qCDebug(subrec::logging::frameLog) << "[ADec] Calling processDecodedFrame and enqueue";
-                        processDecodedFrame(swrFrame);
+                        qCDebug(subrec::logging::frameLog) << "[ADec] enqueue resampled frame";
                         frmQueue->enqueue(swrFrame);
                     }
                     else
@@ -130,7 +129,6 @@ void FFADecoder::decode(AVPacket *packet)
                     qCDebug(subrec::logging::frameLog) << "[ADec] No resampler: frame pts=" << frame->pts
                              << "nb_samples=" << frame->nb_samples
                              << "format=" << frame->format;
-                    processDecodedFrame(frame);
                     frmQueue->enqueue(frame);
                 }
             }
@@ -272,77 +270,6 @@ AVCodecContext *FFADecoder::getCodecCtx()
 AVStream *FFADecoder::getStream()
 {
     return stream;
-}
-
-void FFADecoder::processDecodedFrame(AVFrame *frame)
-{
-    if (!frame || !frame->nb_samples)
-    {
-        return;
-    }
-
-    // 获取全局FFRecorder实例
-    FFRecorder &recorder = FFRecorder::getInstance();
-    FFAudioSampler *sampler = recorder.getSampler();
-
-    if (!sampler || !sampler->isActive())
-    {
-        qCDebug(subrec::logging::frameLog) << "Audio sampler is not active, skipping sample collection.";
-        return; // 采样器未启动，跳过
-    }
-
-    switch (frame->format)
-    {
-    case AV_SAMPLE_FMT_FLT:
-    {
-        // 单通道或交错float格式
-        float *samples = (float *)frame->data[0];
-        int sampleCount = frame->nb_samples * frame->ch_layout.nb_channels;
-        sampler->collectSamples(samples, sampleCount);
-        break;
-    }
-
-    case AV_SAMPLE_FMT_FLTP:
-    {
-        // Planar float格式（多个通道分开存储）
-        // 对于多通道情况，需要交错处理
-        int numSamples = frame->nb_samples;
-        float **samples = (float **)frame->data;
-
-        // 选项1: 只采集第一个声道（单声道分析）
-        if (samples[0])
-        {
-            sampler->collectSamples(samples[0], numSamples);
-        }
-        break;
-    }
-
-    case AV_SAMPLE_FMT_S16:
-    {
-        // 16位有符号整数格式
-        int16_t *samples = (int16_t *)frame->data[0];
-        int sampleCount = frame->nb_samples * frame->ch_layout.nb_channels;
-        sampler->collectSamples(samples, sampleCount);
-        break;
-    }
-
-    case AV_SAMPLE_FMT_S16P:
-    {
-        // Planar 16位格式
-        int numSamples = frame->nb_samples;
-        int16_t **samples = (int16_t **)frame->data;
-
-        if (samples[0])
-        {
-            sampler->collectSamples(samples[0], numSamples);
-        }
-        break;
-    }
-
-    default:
-        qWarning() << "Unsupported audio format for sampling:" << frame->format;
-        break;
-    }
 }
 
 void FFADecoder::printError(int ret)
