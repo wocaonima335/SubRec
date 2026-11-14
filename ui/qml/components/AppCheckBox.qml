@@ -3,20 +3,29 @@ import QtQuick.Controls.Basic
 
 // Module U2 (ZCode). §2.5.6 check box 16×16, text 8 px to the right.
 // FROZEN API: text, checked, secondaryText (12 px text/tertiary appended, D7 "（可在 … 修改）").
+// Geometry as in the Basic CheckBox template: the control itself puts contentItem at
+// (leftPadding, topPadding), so the text clears the indicator through the content's own
+// left/right padding (mirrored aware).
 CheckBox {
     id: root
     property string secondaryText: ""
     font: Theme.bodyFont
 
+    padding: 0
     spacing: Theme.space8
-    implicitWidth: indicator.width + spacing + contentRow.implicitWidth
-    implicitHeight: Math.max(20, contentRow.implicitHeight)
+    implicitWidth: Math.max(implicitContentWidth, implicitIndicatorWidth) + leftPadding + rightPadding
+    implicitHeight: Math.max(20, implicitContentHeight + topPadding + bottomPadding,
+                             implicitIndicatorHeight + topPadding + bottomPadding)
     opacity: enabled ? 1.0 : 0.4
 
     indicator: Rectangle {
         implicitWidth: 16
         implicitHeight: 16
-        y: (root.height - height) / 2
+        x: root.text.length > 0
+           ? (root.mirrored ? root.width - width - root.rightPadding : root.leftPadding)
+           : root.leftPadding + (root.availableWidth - width) / 2
+        // Within the padded area, so a caller's topPadding (D7) keeps box and text level.
+        y: root.topPadding + (root.availableHeight - height) / 2
         radius: Theme.radiusXs
         color: root.checked ? Theme.accentDefault
              : root.hovered && !root.checked ? Theme.bgSurface2 : "transparent"
@@ -33,7 +42,8 @@ CheckBox {
     }
 
     contentItem: Row {
-        id: contentRow
+        leftPadding: root.text.length > 0 && !root.mirrored ? root.indicator.width + root.spacing : 0
+        rightPadding: root.text.length > 0 && root.mirrored ? root.indicator.width + root.spacing : 0
         spacing: 0
 
         Text {

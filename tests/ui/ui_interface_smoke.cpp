@@ -421,6 +421,143 @@ void checkControlBarLayout()
           "wide layout unchanged at 736");
 }
 
+// Lets polish / positioners / the dialog enter transition run (no QtTest here).
+void settle(int ms)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < ms)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+}
+
+QRectF sceneRect(const QQuickItem *item)
+{
+    return item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+}
+
+// Visible AppRadioButton / AppCheckBox instances that carry text (ModelRow's text-less
+// radio is only the dot).
+void collectChoiceControls(QQuickItem *item, QList<QQuickItem *> &out)
+{
+    if (!item || !item->isVisible()) return;
+    const QString type = QString::fromLatin1(item->metaObject()->className());
+    if (type.contains(QLatin1String("AppRadioButton")) || type.contains(QLatin1String("AppCheckBox"))) {
+        if (!item->property("text").toString().isEmpty()) out.append(item);
+        return;
+    }
+    for (QQuickItem *child : item->childItems())
+        collectChoiceControls(child, out);
+}
+
+// The indicator must stay clear of the text area (contentItem minus its indicator reserve)
+// and of every visible Text in it, with the text on the far side of `spacing`.
+void checkChoiceControl(QQuickItem *control, const char *where)
+{
+    auto *indicator = control->property("indicator").value<QQuickItem *>();
+    auto *content = control->property("contentItem").value<QQuickItem *>();
+    if (!indicator || !content) {
+        std::fprintf(stderr, "FAIL: %s: %s has no indicator / contentItem\n", where,
+                     qPrintable(control->property("text").toString()));
+        ++g_failures;
+        return;
+    }
+    const bool mirrored = control->property("mirrored").toBool();
+    const qreal spacing = control->property("spacing").toReal();
+    const QRectF box = sceneRect(control);
+    const QRectF ind = sceneRect(indicator);
+    const QRectF area = sceneRect(content).adjusted(content->property("leftPadding").toReal(), 0,
+                                                    -content->property("rightPadding").toReal(), 0);
+    QRectF text;
+    QQuickItem *firstLine = nullptr;
+    for (QQuickItem *child : content->childItems()) {
+        if (!child->isVisible() || !child->inherits("QQuickText") || child->width() <= 0) continue;
+        text |= sceneRect(child);
+        if (!firstLine) firstLine = child;
+    }
+    const bool clear = !text.isEmpty() && !ind.intersects(text) && !ind.intersects(area)
+        && (mirrored ? text.right() <= ind.left() - spacing + 0.5 && area.right() <= ind.left() + 0.5
+                     : text.left() >= ind.right() + spacing - 0.5 && area.left() >= ind.right() - 0.5);
+    if (!clear)
+        std::fprintf(stderr, "  %s: \"%s\" indicator x %g..%g, text x %g..%g, area x %g..%g%s\n", where,
+                     qPrintable(control->property("text").toString()), ind.left(), ind.right(),
+                     text.left(), text.right(), area.left(), area.right(), mirrored ? " (mirrored)" : "");
+    check(clear, "AppRadioButton / AppCheckBox text never overlaps the indicator");
+    check(box.contains(ind), "indicator stays inside the control");
+    check(text.left() >= box.left() - 0.5 && text.right() <= box.right() + 0.5,
+          "AppRadioButton / AppCheckBox text stays inside the control");
+    check(firstLine && std::abs(sceneRect(firstLine).center().y() - ind.center().y()) <= 2,
+          "indicator is level with the first text line");
+}
+
+// UI 1114 #2: every place that shows AppRadioButton / AppCheckBox with text, opened for real
+// (popups lay out only while open). The components used to inherit Basic's padding 6 with
+// the indicator at x = 0, so the text started 10 px inside the dot / box. Geometry only.
+void checkChoiceControlLayout()
+{
+    struct Scenario {
+        const char *name;
+        int expected; // visible AppRadioButton / AppCheckBox with text
+        const char *body;
+    };
+    // `dialog` (optional) is opened through openDialog(); hosts mirror ShellDialogs (an Item
+    // filling the window holds the popup).
+    const Scenario scenarios[] = {
+        {"CloseWindowDialog", 3,
+         "Item { anchors.fill: parent; CloseWindowDialog { id: dlg } }\n"
+         "readonly property QtObject dialog: dlg\n"
+         "function openDialog() { dlg.openFor(false, \"\") }\n"},
+        {"SubtitleSettings", 2, "SubtitleSettings { width: parent.width }\n"},
+        {"DeleteRecordingDialog", 1,
+         "Item { anchors.fill: parent; DeleteRecordingDialog { id: dlg } }\n"
+         "readonly property QtObject dialog: dlg\n"
+         "function openDialog() { dlg.openFor(\"C:/rec/a.mp4\", \"C:/rec/a.srt\") }\n"},
+        {"ModelLicenseDialog", 1,
+         "Item { anchors.fill: parent; ModelLicenseDialog { id: dlg } }\n"
+         "readonly property QtObject dialog: dlg\n"
+         "function openDialog() { dlg.openFor(\"\", false) }\n"},
+        // Right-to-left: the indicator moves to the right edge, the text stays clear of it.
+        {"mirrored", 2,
+         "Column {\n"
+         "    LayoutMirroring.enabled: true; LayoutMirroring.childrenInherit: true\n"
+         "    AppRadioButton { text: \"Quit\"; description: \"Stops and saves a running recording\" }\n"
+         "    AppCheckBox { topPadding: 8; text: \"Remember my choice\"; secondaryText: \"(Settings)\" }\n"
+         "}\n"},
+    };
+    for (const Scenario &scenario : scenarios) {
+        QQmlEngine engine;
+        QQmlComponent component(&engine);
+        component.setData(QByteArray("import QtQuick\nimport SubRec.Ui\n"
+                                     "Window {\n width: 960; height: 1200; visible: true\n")
+                              + scenario.body + "}\n",
+                          QUrl::fromLocalFile(QStringLiteral(SUBREC_UI_SOURCE_DIR "/choice_host_%1.qml")
+                                                  .arg(QLatin1String(scenario.name))));
+        std::unique_ptr<QObject> host(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(host.get());
+        check(window != nullptr, "choice-control host window loads");
+        if (!window) {
+            std::fprintf(stderr, "  %s: %s\n", scenario.name, qPrintable(component.errorString()));
+            continue;
+        }
+        if (auto *dialog = window->property("dialog").value<QObject *>()) {
+            QMetaObject::invokeMethod(window, "openDialog");
+            waitFor([&] { return dialog->property("opened").toBool(); });
+            check(dialog->property("opened").toBool(), "dialog opens");
+        }
+        settle(200);
+        QList<QQuickItem *> controls;
+        collectChoiceControls(window->contentItem(), controls);
+        if (controls.size() != scenario.expected)
+            std::fprintf(stderr, "  %s: %lld AppRadioButton / AppCheckBox found, expected %d\n",
+                         scenario.name, static_cast<long long>(controls.size()), scenario.expected);
+        check(controls.size() == scenario.expected, "every AppRadioButton / AppCheckBox instance found");
+        for (QQuickItem *control : controls) {
+            check(control->property("mirrored").toBool() == (qstrcmp(scenario.name, "mirrored") == 0),
+                  "LayoutMirroring reaches the choice controls");
+            checkChoiceControl(control, scenario.name);
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -433,6 +570,7 @@ int main(int argc, char **argv)
     checkDefaults();
     checkLoad();
     checkControlBarLayout();
+    checkChoiceControlLayout();
     checkGallery();
 
     if (g_failures == 0) std::printf("ui_interface_smoke: all checks passed\n");
