@@ -9,7 +9,26 @@ Item {
     property Window window
     property int edgeSize: 6
 
-    enabled: window && window.visibility !== Window.Maximized
+    // Windows uses ordinary mouse events and geometry updates to avoid the native
+    // modal resize loop (PC3 Win10). Other platforms retain startSystemResize.
+    // The original module comment above describes that non-Windows path.
+    readonly property bool resizing: resizeHandler.active
+    enabled: window && window.visibility === Window.Windowed
+    onEnabledChanged: {
+        if (!enabled)
+            resizeHandler.finish()
+    }
+    onWindowChanged: resizeHandler.finish()
+
+    WindowResizeHandler {
+        id: resizeHandler
+        objectName: "windowResizeHandler"
+    }
+
+    function startResize(area, mouse, edges) {
+        mouse.accepted = resizeHandler.start(root.window, edges,
+                                             area.mapToGlobal(mouse.x, mouse.y))
+    }
 
     MouseArea {
         x: 0
@@ -17,7 +36,11 @@ Item {
         width: root.edgeSize
         height: parent.height - 2 * root.edgeSize
         cursorShape: Qt.SizeHorCursor
-        onPressed: (mouse) => { root.window.startSystemResize(Qt.LeftEdge); mouse.accepted = true }
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+        onPressed: (mouse) => root.startResize(this, mouse, Qt.LeftEdge)
+        onReleased: resizeHandler.finish()
+        onCanceled: resizeHandler.finish()
     }
     MouseArea {
         anchors.right: parent.right
@@ -25,7 +48,11 @@ Item {
         width: root.edgeSize
         height: parent.height - 2 * root.edgeSize
         cursorShape: Qt.SizeHorCursor
-        onPressed: (mouse) => { root.window.startSystemResize(Qt.RightEdge); mouse.accepted = true }
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+        onPressed: (mouse) => root.startResize(this, mouse, Qt.RightEdge)
+        onReleased: resizeHandler.finish()
+        onCanceled: resizeHandler.finish()
     }
     MouseArea {
         y: 0
@@ -33,7 +60,11 @@ Item {
         width: parent.width - 2 * root.edgeSize
         height: root.edgeSize
         cursorShape: Qt.SizeVerCursor
-        onPressed: (mouse) => { root.window.startSystemResize(Qt.TopEdge); mouse.accepted = true }
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+        onPressed: (mouse) => root.startResize(this, mouse, Qt.TopEdge)
+        onReleased: resizeHandler.finish()
+        onCanceled: resizeHandler.finish()
     }
     MouseArea {
         anchors.bottom: parent.bottom
@@ -41,14 +72,22 @@ Item {
         width: parent.width - 2 * root.edgeSize
         height: root.edgeSize
         cursorShape: Qt.SizeVerCursor
-        onPressed: (mouse) => { root.window.startSystemResize(Qt.BottomEdge); mouse.accepted = true }
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+        onPressed: (mouse) => root.startResize(this, mouse, Qt.BottomEdge)
+        onReleased: resizeHandler.finish()
+        onCanceled: resizeHandler.finish()
     }
     MouseArea {
         x: 0; y: 0
         width: root.edgeSize * 2
         height: root.edgeSize * 2
         cursorShape: Qt.SizeFDiagCursor
-        onPressed: (mouse) => { root.window.startSystemResize(Qt.TopEdge | Qt.LeftEdge); mouse.accepted = true }
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+        onPressed: (mouse) => root.startResize(this, mouse, Qt.TopEdge | Qt.LeftEdge)
+        onReleased: resizeHandler.finish()
+        onCanceled: resizeHandler.finish()
     }
     MouseArea {
         anchors.right: parent.right
@@ -56,7 +95,11 @@ Item {
         width: root.edgeSize * 2
         height: root.edgeSize * 2
         cursorShape: Qt.SizeBDiagCursor
-        onPressed: (mouse) => { root.window.startSystemResize(Qt.TopEdge | Qt.RightEdge); mouse.accepted = true }
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+        onPressed: (mouse) => root.startResize(this, mouse, Qt.TopEdge | Qt.RightEdge)
+        onReleased: resizeHandler.finish()
+        onCanceled: resizeHandler.finish()
     }
     MouseArea {
         x: 0
@@ -64,7 +107,11 @@ Item {
         width: root.edgeSize * 2
         height: root.edgeSize * 2
         cursorShape: Qt.SizeBDiagCursor
-        onPressed: (mouse) => { root.window.startSystemResize(Qt.BottomEdge | Qt.LeftEdge); mouse.accepted = true }
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+        onPressed: (mouse) => root.startResize(this, mouse, Qt.BottomEdge | Qt.LeftEdge)
+        onReleased: resizeHandler.finish()
+        onCanceled: resizeHandler.finish()
     }
     MouseArea {
         anchors.right: parent.right
@@ -72,6 +119,10 @@ Item {
         width: root.edgeSize * 2
         height: root.edgeSize * 2
         cursorShape: Qt.SizeFDiagCursor
-        onPressed: (mouse) => { root.window.startSystemResize(Qt.BottomEdge | Qt.RightEdge); mouse.accepted = true }
+        acceptedButtons: Qt.LeftButton
+        preventStealing: true
+        onPressed: (mouse) => root.startResize(this, mouse, Qt.BottomEdge | Qt.RightEdge)
+        onReleased: resizeHandler.finish()
+        onCanceled: resizeHandler.finish()
     }
 }

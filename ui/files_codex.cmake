@@ -36,6 +36,7 @@ set(UI_CODEX_SINGLETONS
 )
 
 set(UI_CODEX_SOURCES
+    backend/window_resize_handler.h backend/window_resize_handler.cpp
     # B1–B4
     backend/recorder_view.h backend/recorder_view.cpp
     backend/shell_view.h backend/shell_view.cpp

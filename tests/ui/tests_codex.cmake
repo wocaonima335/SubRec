@@ -20,7 +20,7 @@ find_package(Qt6 REQUIRED COMPONENTS Test)
 set_target_properties(key_chord_tests PROPERTIES AUTOMOC ON)
 target_link_libraries(key_chord_tests PRIVATE Qt6::Test)
 foreach(suite IN ITEMS recorder_view shell_view output_naming audio_level_monitor
-                       floating_bar_policy hotkey_controller recording_library subtitle_view)
+                       floating_bar_policy hotkey_controller recording_library subtitle_view window_resize_handler)
     qt_add_executable(${suite}_tests ${CMAKE_CURRENT_LIST_DIR}/${suite}_tests.cpp)
     target_link_libraries(${suite}_tests PRIVATE ui_module ui_test_shell_batch2 Qt6::Test Qt6::Quick Qt6::Widgets)
     subrec_ui_qtest_args(qtest_args ${suite}_tests)
@@ -64,3 +64,4 @@ codex_shell_modes(window_controller start actions visibility close no-tray sourc
 # QML interaction checks live with their owning backend suites.
 target_link_libraries(recording_library_tests PRIVATE ui_moduleplugin)
 target_link_libraries(subtitle_view_tests PRIVATE ui_moduleplugin)
+target_link_libraries(window_resize_handler_tests PRIVATE ui_moduleplugin)
