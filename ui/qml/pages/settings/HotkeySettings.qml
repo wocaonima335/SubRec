@@ -79,37 +79,48 @@ ColumnLayout {
     FormGroupTitle {
         text: "窗口内快捷键"
     }
+    // The descriptions fill and elide so these rows never set a minimum width wider than the
+    // form (the settings StackLayout would widen the whole page to it).
     RowLayout {
+        Layout.fillWidth: true
         KeyCap {
             text: "F9"
         }
         Text {
+            Layout.fillWidth: true
             font: Theme.captionFont
             text: "开始/停止录制"
             color: Theme.textSecondary
+            elide: Text.ElideRight
         }
     }
     RowLayout {
+        Layout.fillWidth: true
         KeyCap {
             text: "F10"
         }
         Text {
+            Layout.fillWidth: true
             font: Theme.captionFont
             text: "暂停/继续录制"
             color: Theme.textSecondary
+            elide: Text.ElideRight
         }
     }
     RowLayout {
+        Layout.fillWidth: true
         KeyCap {
             text: "Ctrl"
         }
         KeyCap {
-            text: "1 / 2 / 3"
+            text: "1/2/3"
         }
         Text {
+            Layout.fillWidth: true
             font: Theme.captionFont
             text: "切换页面"
             color: Theme.textSecondary
+            elide: Text.ElideRight
         }
     }
     AppButton {

@@ -67,6 +67,19 @@ target_link_libraries(ui_interface_smoke PRIVATE
 add_test(NAME ui_interface_smoke COMMAND ui_interface_smoke)
 set_tests_properties(ui_interface_smoke PROPERTIES TIMEOUT 30 LABELS "ui"
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
+if(NOT WIN32)
+    # Same smoke test with a fontconfig that finds no fonts: Qt falls back to the box engine
+    # (glyph width = line height = pixelSize), the metrics of the Windows offscreen runner
+    # (mingw kit without lib/fonts), so wide-font overflows also fail on Linux.
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/no-fonts")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/fonts-none.conf"
+        "<?xml version=\"1.0\"?>\n<fontconfig>\n"
+        "  <dir>${CMAKE_CURRENT_BINARY_DIR}/no-fonts</dir>\n"
+        "  <cachedir>${CMAKE_CURRENT_BINARY_DIR}/no-fonts-cache</cachedir>\n</fontconfig>\n")
+    add_test(NAME ui_interface_smoke_nofonts COMMAND ui_interface_smoke)
+    set_tests_properties(ui_interface_smoke_nofonts PROPERTIES TIMEOUT 60 LABELS "ui"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software;FONTCONFIG_FILE=${CMAKE_CURRENT_BINARY_DIR}/fonts-none.conf")
+endif()
 
 # QtTest suites also write a plain-text log per test here (subrec_ui_qtest_args in
 # tests_codex.cmake): on the Windows CI runner their console output never reached ctest,
