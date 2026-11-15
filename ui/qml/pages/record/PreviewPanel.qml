@@ -44,12 +44,14 @@ Rectangle {
         }
     }
 
-    // Source chip ("来源类型 · 设备名"), shown while a source is selected and alive.
+    // Source chip ("来源类型 · 设备名"), shown while a source is selected and alive. Never
+    // wider than the preview: the device name elides on a narrow window.
     Rectangle {
+        id: chip
         visible: chipLabel.text.length > 0 && root.state !== "noDevice" && root.state !== "failed"
         x: Theme.space12
         y: Theme.space12
-        width: chipLabel.implicitWidth + 20
+        width: Math.max(0, Math.min(chipLabel.implicitWidth + 20, root.width - Theme.space12 * 2))
         height: 24
         radius: 12
         color: Theme.previewChipBg
@@ -57,6 +59,8 @@ Rectangle {
         Text {
             id: chipLabel
             anchors.centerIn: parent
+            width: Math.max(0, chip.width - 20)
+            horizontalAlignment: Text.AlignHCenter
             text: {
                 if (!RecorderView.hasVideoDevice)
                     return ""

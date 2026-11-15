@@ -109,7 +109,8 @@ Flickable {
                 }
             }
 
-            // Bottom edge level with the ControlBar, which grows to 148 when compact.
+            // Bottom edge level with the ControlBar, which grows to 148 when compact (more
+            // when it stacks on a window under the 960 minimum).
             SourcePanel {
                 objectName: "sourcePanel"
                 width: root.sourcePanelWidth

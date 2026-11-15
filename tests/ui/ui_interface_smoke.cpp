@@ -273,6 +273,77 @@ void checkGallery()
     }
 }
 
+// Lets polish / positioners / the dialog enter transition run (no QtTest here).
+void settle(int ms)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < ms)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+}
+
+QRectF sceneRect(const QQuickItem *item)
+{
+    return item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
+}
+
+QString rectText(const QRectF &rect)
+{
+    return QStringLiteral("(%1,%2 %3x%4)").arg(rect.x()).arg(rect.y()).arg(rect.width()).arg(rect.height());
+}
+
+// UI 1114 #3 (PC3 7d2539f: red button above the card's top edge at 970, over its right edge
+// at 800, gone behind the source panel at <= 720, timer past the card at 560): the record
+// buttons, the record caption, the timer, the save area and the folder button lie
+// completely inside the ControlBar card (rects via mapRectToItem), visible and full size;
+// the buttons stay clear of the timer, the save area and the folder button; the timer text
+// fits its box. `where` names the width step in the failure output.
+void checkControlBarContents(QQuickItem *bar, const QString &where)
+{
+    const QRectF card(0, 0, bar->width(), bar->height());
+    const auto rectOf = [&](const char *name) -> QRectF {
+        auto *item = bar->findChild<QQuickItem *>(QString::fromLatin1(name));
+        if (!item) {
+            std::fprintf(stderr, "FAIL: %s: ControlBar has no %s\n", qPrintable(where), name);
+            ++g_failures;
+            return {};
+        }
+        const QRectF rect = item->mapRectToItem(bar, QRectF(0, 0, item->width(), item->height()));
+        const bool sized = item->isVisible() && item->width() > 0 && item->height() > 0;
+        const bool inside = card.adjusted(-0.5, -0.5, 0.5, 0.5).contains(rect);
+        if (!sized || !inside)
+            std::fprintf(stderr, "  %s: %s %s (visible %d) not inside card %s\n", qPrintable(where), name,
+                         qPrintable(rectText(rect)), item->isVisible(), qPrintable(rectText(card)));
+        check(sized, "ControlBar item is visible and has a size");
+        check(inside, "ControlBar item lies completely inside the card");
+        return rect;
+    };
+    const QRectF record = rectOf("recordMainButton"), pause = rectOf("recordPauseButton"),
+                 caption = rectOf("recordMainCaption"), timer = rectOf("recordTimer"),
+                 save = rectOf("saveArea"), folder = rectOf("openOutputFolderButton");
+    if (auto *main = bar->findChild<QQuickItem *>(QStringLiteral("recordMainButton"))) {
+        check(main->width() == 64 && main->height() == 64, "record button keeps its 64x64 size");
+        check(main->opacity() > 0, "record button is not transparent");
+    }
+    const bool clear = !record.intersects(timer) && !pause.intersects(timer) && !caption.intersects(timer)
+        && !record.intersects(save) && !pause.intersects(save) && !caption.intersects(save)
+        && !record.intersects(folder) && !pause.intersects(folder) && !caption.intersects(folder)
+        && !timer.intersects(save);
+    if (!clear)
+        std::fprintf(stderr, "  %s: overlap: record %s pause %s caption %s timer %s save %s folder %s\n",
+                     qPrintable(where), qPrintable(rectText(record)), qPrintable(rectText(pause)),
+                     qPrintable(rectText(caption)), qPrintable(rectText(timer)), qPrintable(rectText(save)),
+                     qPrintable(rectText(folder)));
+    check(clear, "record buttons clear of the timer / save area / folder button");
+    if (auto *timerText = bar->findChild<QQuickItem *>(QStringLiteral("recordTimer"))) {
+        const qreal painted = timerText->property("contentWidth").toReal();
+        if (painted > timerText->width() + 0.5)
+            std::fprintf(stderr, "  %s: timer text %g wide in a %g box\n", qPrintable(where), painted,
+                         timerText->width());
+        check(painted > 0 && painted <= timerText->width() + 0.5, "timer text fits inside its box");
+    }
+}
+
 void checkLoad()
 {
     using namespace subrec::ui;
@@ -369,6 +440,43 @@ void checkLoad()
                 check(std::abs(sourcePanel->height()
                                - qMax(previewHeight + 16 + controlBar->height(), qreal(534))) < 0.5,
                       "source panel bottom edge level with the ControlBar");
+                checkControlBarContents(controlBar, QStringLiteral("window %1").arg(w));
+            }
+
+            // UI 1114 #3: the PC3 7d2539f screenshot widths (shots 04_win_dpi / 10_narrow_*).
+            // These are window widths, the same convention as above: the frameless window has
+            // no frame, so window width = content width = nav rail (64 below 1100) + page;
+            // card = window - 64 - 344. 970 is above Theme.minWindowWidth (960); PC3 still
+            // reached 900..560, so lower the minimum here to lay those widths out too.
+            window->setMinimumWidth(560);
+            for (int w : {970, 900, 800, 720, 640, 560}) {
+                window->resize(w, 800);
+                const qreal expected = w - 64 - 344;
+                const QString where = QStringLiteral("window %1").arg(w);
+                waitFor([&] { return window->width() == w && controlBar->width() == expected; });
+                if (window->width() != w || controlBar->width() != expected)
+                    std::fprintf(stderr, "  %s: window width %d, controlBar width %g, expected %g\n",
+                                 qPrintable(where), window->width(), controlBar->width(), expected);
+                check(window->width() == w, "window resizes below the 960 minimum when allowed");
+                check(controlBar->width() == expected, "ControlBar width follows the window width");
+                settle(50); // anything laid out on polish (save line Row) settles too
+                checkControlBarContents(controlBar, where);
+
+                // The card itself: inside the page viewport horizontally (the page scrolls
+                // only vertically) and never under the source panel, which paints after it.
+                const QRectF card = sceneRect(controlBar), sources = sceneRect(sourcePanel),
+                             page = sceneRect(qobject_cast<QQuickItem *>(recordPage));
+                const bool cardPlaced = card.left() >= page.left() - 0.5 && card.right() <= page.right() + 0.5
+                    && !card.intersects(sources);
+                if (!cardPlaced)
+                    std::fprintf(stderr, "  %s: card %s page %s source panel %s\n", qPrintable(where),
+                                 qPrintable(rectText(card)), qPrintable(rectText(page)),
+                                 qPrintable(rectText(sources)));
+                check(cardPlaced, "record card inside the page and clear of the source panel");
+                const qreal previewHeight = recordPage->property("previewHeight").toReal();
+                check(std::abs(sourcePanel->height()
+                               - qMax(previewHeight + 16 + controlBar->height(), qreal(534))) < 0.5,
+                      "source panel bottom edge level with the ControlBar");
             }
         }
     }
@@ -412,6 +520,21 @@ void checkControlBarLayout()
               "save area / folder button stay inside the card height");
         check(bar->property("compact").toBool() == (w < 720), "ControlBar switches to compact below 720");
         check(bar->implicitHeight() == (w < 720 ? 148 : 104), "ControlBar height 104 wide / 148 compact");
+        checkControlBarContents(bar.get(), QStringLiteral("card %1").arg(w));
+    }
+    // UI 1114 #3: cards of the PC3 7d2539f screenshot windows (card = window - 408 with the
+    // nav rail collapsed): 970 -> 562, 900 -> 492, 800 -> 392, 720 -> 312, 640 -> 232,
+    // 560 -> 152. Below the width where timer and buttons fit side by side the card stacks
+    // timer, buttons and save line and grows instead.
+    for (qreal w : {562.0, 492.0, 392.0, 312.0, 232.0, 152.0}) {
+        bar->setWidth(w);
+        bar->setHeight(bar->implicitHeight());
+        const QString where = QStringLiteral("card %1 (window %2)").arg(w).arg(w + 408);
+        check(bar->property("compact").toBool(), "ControlBar compact below 720");
+        check(bar->implicitHeight() >= 148, "ControlBar never shorter than the compact 148");
+        if (!bar->property("stacked").toBool())
+            check(bar->implicitHeight() == 148, "side-by-side compact layout stays 148 high");
+        checkControlBarContents(bar.get(), where);
     }
     // Design baseline (§3.2.2 C): 736 (1280×800 window) keeps the old coordinates.
     bar->setWidth(736);
@@ -419,20 +542,6 @@ void checkControlBarLayout()
     const QRectF save = rectOf("saveArea");
     check(save.x() == 440 && save.y() == 16 && save.width() == 224 && bar->implicitHeight() == 104,
           "wide layout unchanged at 736");
-}
-
-// Lets polish / positioners / the dialog enter transition run (no QtTest here).
-void settle(int ms)
-{
-    QElapsedTimer timer;
-    timer.start();
-    while (timer.elapsed() < ms)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-}
-
-QRectF sceneRect(const QQuickItem *item)
-{
-    return item->mapRectToScene(QRectF(0, 0, item->width(), item->height()));
 }
 
 // Visible AppRadioButton / AppCheckBox instances that carry text (ModelRow's text-less
