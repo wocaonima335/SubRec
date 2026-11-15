@@ -91,6 +91,7 @@ Item {
         }
 
         Card {
+            objectName: "settingsFormCard"
             Layout.fillWidth: true
             Layout.fillHeight: true
             ColumnLayout {
@@ -103,10 +104,22 @@ Item {
                     body: "部分设置会在录制结束后才能修改。"
                 }
                 ScrollView {
+                    id: settingsScroll
                     objectName: "settingsScroll"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     contentWidth: availableWidth
+                    // PC3 0d20c49: the default bar sat over the form's right edge, on top of
+                    // the right-aligned switches and combo boxes of every sub-page. It runs in
+                    // the card's right padding instead, next to the form, which keeps its width.
+                    ScrollBar.vertical: ScrollBar {
+                        objectName: "settingsScrollBar"
+                        parent: settingsScroll
+                        x: settingsScroll.mirrored ? -width - (Theme.space16 - width) / 2
+                                                   : settingsScroll.width + (Theme.space16 - width) / 2
+                        y: settingsScroll.topPadding
+                        height: settingsScroll.availableHeight
+                    }
                     StackLayout {
                         objectName: "settingsStack"
                         width: parent.width

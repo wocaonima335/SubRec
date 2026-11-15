@@ -32,7 +32,9 @@ Rectangle {
         HotkeyController.beginCapture(action);
     }
     implicitWidth: 240
-    implicitHeight: message.length > 0 ? 64 : 36
+    // A message wraps in a narrow field (PC3 0d20c49 at 560: "已被其他程序占用，请…"), the
+    // field grows with its lines.
+    implicitHeight: message.length > 0 ? Math.max(64, fieldTexts.implicitHeight + 2 * Theme.space8) : 36
     radius: Theme.radiusSm
     color: fieldHover.hovered ? Theme.bgSelected : Theme.bgSurface2
     border.width: 1
@@ -40,6 +42,7 @@ Rectangle {
 
     // TODO(H3): texts, keyboard icon, capture states, messages (2 s revert for warnings).
     ColumnLayout {
+        id: fieldTexts
         anchors.fill: parent
         anchors.margins: Theme.space8
         spacing: Theme.space4
@@ -51,9 +54,10 @@ Rectangle {
             elide: Text.ElideRight
         }
         Text {
+            objectName: "keySequenceMessage"
             visible: root.message.length > 0
             Layout.fillWidth: true
-            elide: Text.ElideRight
+            wrapMode: Text.Wrap
             text: root.message
             color: root.messageKind === "danger" ? Theme.dangerFg : root.messageKind === "warning" ? Theme.warningFg : Theme.textSecondary
             font: Theme.captionFont

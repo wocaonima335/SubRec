@@ -435,6 +435,63 @@ void checkFormPage(QQuickItem *page, qreal formWidth, const QString &where)
     }
 }
 
+// PC3 0d20c49 (w2_960_general_scrolled, every width): the settings ScrollView's vertical bar
+// ran over the form's right edge, on top of the right-aligned switches and combo boxes. With
+// the page scrolled to the top and to the bottom, the bar lies inside the settings card and
+// the window, no clipping ancestor cuts it, and it overlaps none of the page's visible
+// controls and texts in the viewport (scene rects). Returns whether the page scrolls (bar
+// shown, size < 1); leaves the page scrolled to the top.
+bool checkSettingsScrollBar(QQuickItem *scroll, QQuickItem *card, QQuickItem *page, QQuickWindow *window,
+                            const QString &where)
+{
+    auto *bar = scroll->findChild<QQuickItem *>(QStringLiteral("settingsScrollBar"));
+    auto *flickable = scroll->property("contentItem").value<QQuickItem *>();
+    check(bar && flickable && card, "settings scroll bar / flickable / card exist");
+    if (!bar || !flickable || !card) return false;
+    const qreal maxY = flickable->property("contentHeight").toReal() - flickable->height();
+    const bool scrolls = maxY > 0.5;
+    if (scrolls)
+        check(bar->isVisible() && bar->property("size").toReal() < 1, "settings scroll bar shown when the page scrolls");
+    QList<QQuickItem *> items, rows;
+    collectFormItems(page, items, rows);
+    for (qreal y : {qreal(0), std::max(qreal(0), maxY)}) {
+        flickable->setProperty("contentY", y);
+        settle(20);
+        const QRectF barRect = sceneRect(bar), viewport = sceneRect(scroll);
+        const QRectF windowRect(0, 0, window->width(), window->height());
+        const bool placed = bar->width() > 0 && bar->height() > 0
+            && sceneRect(card).adjusted(-0.5, -0.5, 0.5, 0.5).contains(barRect)
+            && windowRect.adjusted(-0.5, -0.5, 0.5, 0.5).contains(barRect);
+        if (!placed)
+            std::fprintf(stderr, "  %s: scroll bar %s, card %s, window %s\n", qPrintable(where),
+                         qPrintable(rectText(barRect)), qPrintable(rectText(sceneRect(card))),
+                         qPrintable(rectText(windowRect)));
+        check(placed, "settings scroll bar inside the settings card and the window");
+        for (QQuickItem *clipper = bar->parentItem(); clipper; clipper = clipper->parentItem()) {
+            if (!clipper->clip()) continue;
+            const bool unclipped = sceneRect(clipper).adjusted(-0.5, -0.5, 0.5, 0.5).contains(barRect);
+            if (!unclipped)
+                std::fprintf(stderr, "  %s: scroll bar %s clipped by %s %s\n", qPrintable(where),
+                             qPrintable(rectText(barRect)), qPrintable(itemName(clipper)),
+                             qPrintable(rectText(sceneRect(clipper))));
+            check(unclipped, "settings scroll bar not clipped by an ancestor");
+        }
+        for (QQuickItem *item : items) {
+            if (typeContains(item, {"FormRow", "ModelRow"})) continue;
+            const QRectF rect = sceneRect(item);
+            if (!rect.intersects(viewport)) continue; // scrolled out of view
+            const bool clear = !rect.intersects(barRect);
+            if (!clear)
+                std::fprintf(stderr, "  %s (contentY %g): scroll bar %s over %s %s\n", qPrintable(where), y,
+                             qPrintable(rectText(barRect)), qPrintable(itemName(item)), qPrintable(rectText(rect)));
+            check(clear, "settings scroll bar clear of the page's controls and texts");
+        }
+    }
+    flickable->setProperty("contentY", 0);
+    settle(20);
+    return scrolls;
+}
+
 // The settings form at the window widths of the PC3 shots. Same convention as the record page
 // loop: window width = content width (frameless), nav rail collapsed (64) below 1100, so the
 // form (ScrollView / StackLayout) is window - 64 - 2×24 page margins - 180 sub-nav - 16 gap -
@@ -444,10 +501,12 @@ void checkSettingsPages(QObject *root, QQuickWindow *window, QObject *nav, QList
 {
     auto *scroll = root->findChild<QQuickItem *>(QStringLiteral("settingsScroll"));
     auto *stack = root->findChild<QQuickItem *>(QStringLiteral("settingsStack"));
+    auto *card = root->findChild<QQuickItem *>(QStringLiteral("settingsFormCard"));
     check(scroll && stack, "settingsScroll / settingsStack exist");
     if (!scroll || !stack) return;
     // SubtitleSettings is hidden while no subtitle service is attached: checkSubtitleSettingsWidths().
     const char *pages[] = {"general", "output", "devices", "hotkeys", "advanced", "about"};
+    int scrolledPages = 0, scrolledGeneral = 0;
     for (int w : {970, 900, 800, 720, 640, 560}) {
         window->resize(w, 800);
         QMetaObject::invokeMethod(nav, "open", Q_ARG(QString, QStringLiteral("settings/general")));
@@ -478,6 +537,10 @@ void checkSettingsPages(QObject *root, QQuickWindow *window, QObject *nav, QList
             const QString where = width + QStringLiteral(" page ") + QLatin1String(id);
             check(page->isVisible() && page->width() == stack->width(), "settings page shown at the form width");
             checkFormPage(page, stack->width(), where);
+            if (checkSettingsScrollBar(scroll, card, page, window, where)) {
+                ++scrolledPages;
+                if (qstrcmp(id, "general") == 0) ++scrolledGeneral;
+            }
 
             if (qstrcmp(id, "devices") != 0) continue;
             // The open dropdowns stay inside the window and the form (they used to start at the
@@ -508,6 +571,80 @@ void checkSettingsPages(QObject *root, QQuickWindow *window, QObject *nav, QList
             }
         }
     }
+    if (scrolledGeneral == 0)
+        std::fprintf(stderr, "  general settings page never scrolled at 800 high (%d pages scrolled)\n",
+                     scrolledPages);
+    check(scrolledGeneral > 0, "settings scroll bar checked on a scrolling general page");
+}
+
+// PC3 0d20c49 (w2_560_hotkeys): the conflict line under a KeySequenceField was elided to
+// "已被其他程序占用，请…" in the narrow field at 560. The pause field gets the conflict the way
+// a capture reports it (HotkeyController::captureFinished(TogglePause, Conflict, message));
+// at each settings width the line shows the whole text (no elide, not truncated, its lines
+// inside its box) and lies inside the field, the settings viewport, the card and the window;
+// the page still passes checkFormPage (the row grows with the field).
+void checkHotkeyConflictText(QObject *root, QQuickWindow *window, QObject *nav,
+                             subrec::ui::HotkeyController *controller)
+{
+    using subrec::ui::HotkeyController;
+    auto *scroll = root->findChild<QQuickItem *>(QStringLiteral("settingsScroll"));
+    auto *stack = root->findChild<QQuickItem *>(QStringLiteral("settingsStack"));
+    auto *card = root->findChild<QQuickItem *>(QStringLiteral("settingsFormCard"));
+    auto *page = root->findChild<QQuickItem *>(QStringLiteral("settingsPage_hotkeys"));
+    check(controller && scroll && stack && card && page, "hotkey settings page and controller exist");
+    if (!controller || !scroll || !stack || !card || !page) return;
+    QQuickItem *field = nullptr;
+    for (QQuickItem *item : page->findChildren<QQuickItem *>())
+        if (typeContains(item, {"KeySequenceField"}) && item->property("action").toInt() == HotkeyController::TogglePause)
+            field = item;
+    auto *message = field ? field->findChild<QQuickItem *>(QStringLiteral("keySequenceMessage")) : nullptr;
+    check(field && message, "pause KeySequenceField and its message line exist");
+    if (!field || !message) return;
+
+    const QString conflict = QString::fromUtf8("已被其他程序占用，请换一个组合");
+    const QString before = field->property("message").toString();
+    QMetaObject::invokeMethod(nav, "open", Q_ARG(QString, QStringLiteral("settings/hotkeys")));
+    emit controller->captureFinished(HotkeyController::TogglePause, HotkeyController::Conflict, conflict);
+    for (int w : {970, 900, 800, 720, 640, 560}) {
+        window->resize(w, 800);
+        const qreal expected = w - 340;
+        waitFor([&] { return window->width() == w && stack->width() == expected && page->width() == expected; });
+        settle(50);
+        const QString where = QStringLiteral("window %1 (form %2) hotkey conflict").arg(w).arg(stack->width());
+        check(page->isVisible() && page->width() == expected, "hotkey page shown at the form width");
+        checkFormPage(page, stack->width(), where);
+
+        const bool whole = message->isVisible() && message->property("text").toString() == conflict
+            && message->property("elide").toInt() == int(Qt::ElideNone)
+            && !message->property("truncated").toBool()
+            && message->property("contentWidth").toReal() <= message->width() + 0.5
+            && message->property("contentHeight").toReal() <= message->height() + 0.5;
+        if (!whole)
+            std::fprintf(stderr, "  %s: message \"%s\" visible %d elide %d truncated %d content %gx%g box %gx%g\n",
+                         qPrintable(where), qPrintable(message->property("text").toString()), message->isVisible(),
+                         message->property("elide").toInt(), message->property("truncated").toBool(),
+                         message->property("contentWidth").toReal(), message->property("contentHeight").toReal(),
+                         message->width(), message->height());
+        check(whole, "hotkey conflict text shown whole, not elided");
+
+        const QRectF rect = sceneRect(message);
+        const QRectF windowRect(0, 0, window->width(), window->height());
+        const bool inside =
+            QRectF(0, 0, field->width(), field->height()).adjusted(-0.5, -0.5, 0.5, 0.5).contains(rectIn(message, field))
+            && sceneRect(scroll).adjusted(-0.5, -0.5, 0.5, 0.5).contains(rect)
+            && sceneRect(card).adjusted(-0.5, -0.5, 0.5, 0.5).contains(rect)
+            && windowRect.adjusted(-0.5, -0.5, 0.5, 0.5).contains(rect);
+        if (!inside)
+            std::fprintf(stderr, "  %s: message %s, field %s, viewport %s, card %s, window %s\n", qPrintable(where),
+                         qPrintable(rectText(rect)), qPrintable(rectText(sceneRect(field))),
+                         qPrintable(rectText(sceneRect(scroll))), qPrintable(rectText(sceneRect(card))),
+                         qPrintable(rectText(windowRect)));
+        check(inside, "hotkey conflict text inside its field, the settings card and the window");
+    }
+    // Back to the binding's own line ("当前系统不支持全局快捷键" without GlobalHotkeys).
+    emit controller->captureFinished(HotkeyController::TogglePause, HotkeyController::Cancelled, QString());
+    waitFor([&] { return field->property("message").toString() == before; });
+    check(field->property("message").toString() == before, "hotkey conflict text cleared");
 }
 
 void collectChoiceControls(QQuickItem *item, QList<QQuickItem *> &out);
@@ -845,6 +982,8 @@ void checkLoad(QList<qreal> &formWidths)
 
             // UI 1114 settings / recent recordings at the same widths (minimum still 560).
             checkSettingsPages(root, window, nav, formWidths);
+            checkHotkeyConflictText(root, window, nav,
+                                    engine.singletonInstance<HotkeyController *>("SubRec.Ui", "HotkeyController"));
             checkRecentRecordings(window, nav, qobject_cast<QQuickItem *>(recordPage));
         }
     }

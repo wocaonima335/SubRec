@@ -5,7 +5,8 @@ import QtQuick.Layouts
 //   intro; 录制: KeySequenceField(action ToggleRecord) + clear IconButton, KeySequenceField
 //   (TogglePause) + clear; 窗口: KeySequenceField(ToggleWindow) + clear; 窗口内快捷键:
 //   read-only list with KeyCaps (F9, F10, Ctrl 1/2/3); "恢复默认" ->
-//   HotkeyController.restoreDefaults(). A row grows 64 -> 84 while it shows a message.
+//   HotkeyController.restoreDefaults(). A row grows 64 -> 84 while it shows a message (more
+//   when the message wraps in a narrow field).
 // FROZEN API: none.
 ColumnLayout {
     id: root
@@ -24,7 +25,7 @@ ColumnLayout {
     }
     FormRow {
         title: "开始/停止录制"
-        rowHeight: recordKey.message.length > 0 ? 84 : 64
+        rowHeight: recordKey.message.length > 0 ? recordKey.implicitHeight + 20 : 64
         control: RowLayout {
             KeySequenceField {
                 id: recordKey
@@ -41,7 +42,7 @@ ColumnLayout {
     }
     FormRow {
         title: "暂停/继续录制"
-        rowHeight: pauseKey.message.length > 0 ? 84 : 64
+        rowHeight: pauseKey.message.length > 0 ? pauseKey.implicitHeight + 20 : 64
         control: RowLayout {
             KeySequenceField {
                 id: pauseKey
@@ -61,7 +62,7 @@ ColumnLayout {
     }
     FormRow {
         title: "显示/隐藏窗口"
-        rowHeight: windowKey.message.length > 0 ? 84 : 64
+        rowHeight: windowKey.message.length > 0 ? windowKey.implicitHeight + 20 : 64
         control: RowLayout {
             KeySequenceField {
                 id: windowKey
