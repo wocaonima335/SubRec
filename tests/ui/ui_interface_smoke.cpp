@@ -41,6 +41,8 @@
 #include <QQmlExpression>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QMouseEvent>
+#include "ui/backend/window_resize_handler.h"
 #include <QTemporaryDir>
 #include <QtQml/qqmlextensionplugin.h>
 #include <cmath>
@@ -425,6 +427,42 @@ void checkLoad()
             QMetaObject::invokeMethod(nav, "open", Q_ARG(QString, QStringLiteral("record")));
             if (!window->isVisible())
                 window->show(); // offscreen: no real window; resize needs a platform window
+            // PC3 1115: exercise the portable Windows resize session against the real
+            // AppWindow anchors, keeping the opaque surface and title bar during resize.
+            auto *resizeHandler = root->findChild<WindowResizeHandler *>();
+            check(resizeHandler != nullptr, "window resize handler exists");
+            if (resizeHandler && titleBar && pageStack && resizeFrame) {
+                check(window->color().alpha() == 255, "main window background is opaque");
+                const auto flags = window->flags();
+                check(flags.testFlag(Qt::FramelessWindowHint), "main window stays frameless");
+                for (Qt::Edge edge : {Qt::TopEdge, Qt::BottomEdge}) {
+                    window->setGeometry(100, 100, 1280, 800);
+                    QCoreApplication::processEvents();
+                    const QPointF press(400, edge == Qt::TopEdge ? 100 : 900);
+                    check(resizeHandler->begin(window, edge, press), "begin edge resize");
+                    for (int height : {900, 640, 720, 800}) {
+                        const int dy = edge == Qt::TopEdge ? 800 - height : height - 800;
+                        QMouseEvent move(QEvent::MouseMove, QPointF(300, 2),
+                                         press + QPointF(0, dy), Qt::NoButton,
+                                         Qt::LeftButton, Qt::NoModifier);
+                        QCoreApplication::sendEvent(window, &move);
+                        waitFor([&] {
+                            return window->height() == height
+                                && pageStack->height() == height - titleBar->height();
+                        });
+                        check(window->height() == height, "edge resize updates window height");
+                        check(pageStack->height() == height - titleBar->height(),
+                              "page stack relayout follows height during resize");
+                        check(pageStack->y() == titleBar->height() && titleBar->y() == 0
+                                  && titleBar->isVisible(), "title bar remains above the page");
+                        check(resizeFrame->property("resizing").toBool(), "resize session remains active");
+                        check(window->flags() == flags && window->color().alpha() == 255,
+                              "resize preserves flags and opaque background");
+                    }
+                    resizeHandler->finish();
+                    check(!resizeFrame->property("resizing").toBool(), "resize session ends");
+                }
+            }
             for (int w : {960, 1099, 1100, 1247, 1264, 1280}) {
                 window->resize(w, 800);
                 const qreal expected = w - (w < 1100 ? 64 : 200) - 344;
