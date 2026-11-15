@@ -65,6 +65,11 @@ Control {
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
+                        // A control narrower than its 240 implicit width (narrow settings
+                        // form) elides the labels inside their segments.
+                        width: Math.min(implicitWidth, Math.max(0, segment.width - Theme.space16
+                                        - (segment.modelData.iconName !== undefined ? 16 + Theme.space8 - 2 : 0)))
+                        elide: Text.ElideRight
                         text: segment.modelData.text
                         font: segment.selected ? Theme.bodyStrongFont : Theme.bodyFont
                         color: segment.selected ? Theme.textPrimary

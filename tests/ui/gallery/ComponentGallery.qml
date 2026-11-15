@@ -319,7 +319,7 @@ Rectangle {
                 extraText: "需要先打开“在通知区域显示图标”"
                 extraKind: "warning"
                 AppComboBox {
-                    width: 320
+                    implicitWidth: 320 // the row sizes its control from implicitWidth
                     model: [{ text: "每次询问", value: "ask" }, { text: "最小化到托盘", value: "tray" }, { text: "退出字录", value: "exit" }]
                 }
             }
@@ -328,7 +328,7 @@ Rectangle {
                 description: "录像和字幕都保存在这里"
                 wide: true
                 showDivider: false
-                AppTextField { width: parent.width; text: "D:\\Videos\\SubRec"; mono: true }
+                AppTextField { implicitWidth: 768; text: "D:\\Videos\\SubRec"; mono: true }
             }
         }
 

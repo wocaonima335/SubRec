@@ -4,9 +4,16 @@ import QtQuick
 // Module U5 (ZCode). P1 area E: "最近录制" title, "查看全部 ›" -> Navigation.open("library"),
 // three RecordingCards from RecordingLibrary.recent (limit 3, newest first), or the dashed
 // empty state "还没有录像。录完后会出现在这里。".
+// UI 1114: three cards per row while each stays at least 256 wide (64 px tile + 96 px text +
+// 80 px action slot + 16), two or one per row below that (window < 912 / < 640 with the
+// collapsed nav rail); the cards wrap onto further rows.
 // FROZEN API: none.
 Column {
     id: root
+    readonly property int minCardWidth: 256
+    readonly property int columns: Math.max(1, Math.min(3, Math.floor((width + Theme.space16)
+                                                                       / (minCardWidth + Theme.space16))))
+    readonly property real cardWidth: (width - Theme.space16 * (columns - 1)) / columns
 
     Item {
         width: parent.width
@@ -49,8 +56,9 @@ Column {
         }
     }
 
-    Row {
+    Grid {
         visible: RecordingLibrary.recent.count > 0
+        columns: root.columns
         spacing: Theme.space16
 
         Repeater {
@@ -65,7 +73,7 @@ Column {
                 required property string subtitleState
                 required property int subtitleProgress
 
-                width: (root.width - Theme.space16 * 2) / 3
+                width: root.cardWidth
                 height: 72
 
                 RecordingCard {

@@ -11,6 +11,10 @@ ColumnLayout {
 
     // TODO(U7): header and rows.
     BrandLogo {
+        // BrandLogo sets width/height, not implicit sizes: the ColumnLayout took its 0
+        // implicit height, so the page came out 48 px shorter than its content (UI 1114).
+        Layout.preferredWidth: 48
+        Layout.preferredHeight: 48
         size: 48
     }
     Text {
@@ -26,7 +30,10 @@ ColumnLayout {
     FormGroupTitle {
         text: "许可"
     }
-    RowLayout {
+    // Wraps instead of running past a narrow form (UI 1114).
+    Flow {
+        Layout.fillWidth: true
+        spacing: Theme.space8
         AppButton {
             text: "软件许可"
             onClicked: DesktopActions.openFile(AppInfo.licenseFilePath)

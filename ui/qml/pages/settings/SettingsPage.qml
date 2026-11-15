@@ -103,23 +103,38 @@ Item {
                     body: "部分设置会在录制结束后才能修改。"
                 }
                 ScrollView {
+                    objectName: "settingsScroll"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     contentWidth: availableWidth
                     StackLayout {
+                        objectName: "settingsStack"
                         width: parent.width
                         implicitHeight: children[currentIndex] ? children[currentIndex].implicitHeight : 0
                         currentIndex: ["general", "output", "devices", "subtitle", "hotkeys", "advanced", "about"].indexOf(Navigation.settingsPage === "subtitle" && !SubtitleView.serviceAttached ? "general" : Navigation.settingsPage)
 
-                        GeneralSettings {}
-                        OutputSettings {}
-                        DeviceSettings {}
+                        GeneralSettings {
+                            objectName: "settingsPage_general"
+                        }
+                        OutputSettings {
+                            objectName: "settingsPage_output"
+                        }
+                        DeviceSettings {
+                            objectName: "settingsPage_devices"
+                        }
                         SubtitleSettings {
+                            objectName: "settingsPage_subtitle"
                             visible: SubtitleView.serviceAttached
                         }
-                        HotkeySettings {}
-                        AdvancedSettings {}
-                        AboutSettings {}
+                        HotkeySettings {
+                            objectName: "settingsPage_hotkeys"
+                        }
+                        AdvancedSettings {
+                            objectName: "settingsPage_advanced"
+                        }
+                        AboutSettings {
+                            objectName: "settingsPage_about"
+                        }
                     }
                 }
             }

@@ -34,6 +34,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QMetaMethod>
+#include <QMouseEvent>
 #include <QQmlApplicationEngine>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -43,8 +44,10 @@
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QtQml/qqmlextensionplugin.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <initializer_list>
 #include <memory>
 #include <type_traits>
@@ -344,7 +347,312 @@ void checkControlBarContents(QQuickItem *bar, const QString &where)
     }
 }
 
-void checkLoad()
+QRectF rectIn(const QQuickItem *item, const QQuickItem *reference)
+{
+    return item->mapRectToItem(reference, QRectF(0, 0, item->width(), item->height()));
+}
+
+QString itemName(const QQuickItem *item)
+{
+    QString name = QString::fromLatin1(item->metaObject()->className());
+    if (!item->objectName().isEmpty()) name += QLatin1Char(' ') + item->objectName();
+    const QString text = item->property("text").toString();
+    if (!text.isEmpty()) name += QStringLiteral(" \"%1\"").arg(text);
+    return name;
+}
+
+bool typeContains(const QQuickItem *item, std::initializer_list<const char *> names)
+{
+    const QString type = QString::fromLatin1(item->metaObject()->className());
+    for (const char *name : names)
+        if (type.contains(QLatin1String(name))) return true;
+    return false;
+}
+
+// Visible controls and texts of a settings page: controls (and Text) are leaves, everything
+// else is walked into. FormRow / ModelRow are checked themselves and walked into.
+void collectFormItems(QQuickItem *item, QList<QQuickItem *> &items, QList<QQuickItem *> &rows)
+{
+    for (QQuickItem *child : item->childItems()) {
+        if (!child->isVisible()) continue;
+        const bool leaf = child->inherits("QQuickText")
+            || typeContains(child, {"AppComboBox", "AppSwitch", "SegmentedControl", "AppTextField",
+                                    "AppButton", "KeySequenceField", "AppRadioButton", "AppCheckBox",
+                                    "IconButton", "KeyCap", "InlineAlert", "BrandLogo"});
+        if (child->width() > 0 && child->height() > 0
+            && (leaf || typeContains(child, {"FormRow", "ModelRow"})))
+            items.append(child);
+        if (typeContains(child, {"FormRow"})) rows.append(child);
+        if (!leaf) collectFormItems(child, items, rows);
+    }
+}
+
+// UI 1114 settings (PC3 7d2539f at 970: half combo boxes "没有找到可用…", "System audic…",
+// switches and segmented control gone): every FormRow kept its 768 implicit width in a form
+// 630 (window 970) .. 220 (window 560) wide, its right-aligned control past the ScrollView's
+// right edge. Every visible control and Text of `page` lies completely inside the form, x in
+// [0, formWidth] and y in [0, page height] (rects via mapRectToItem); every FormRow control
+// lies inside its row and clear of the row's title and description boxes.
+void checkFormPage(QQuickItem *page, qreal formWidth, const QString &where)
+{
+    QList<QQuickItem *> items, rows;
+    collectFormItems(page, items, rows);
+    check(!items.isEmpty(), "settings page has visible controls");
+    const QRectF form(0, 0, formWidth, page->height());
+    for (QQuickItem *item : items) {
+        const QRectF rect = rectIn(item, page);
+        const bool inside = form.adjusted(-0.5, -0.5, 0.5, 0.5).contains(rect);
+        if (!inside)
+            std::fprintf(stderr, "  %s: %s %s not inside the form %s\n", qPrintable(where),
+                         qPrintable(itemName(item)), qPrintable(rectText(rect)), qPrintable(rectText(form)));
+        check(inside, "settings control lies completely inside the form");
+    }
+    for (QQuickItem *row : rows) {
+        auto *slot = row->findChild<QQuickItem *>(QStringLiteral("formRowControl"), Qt::FindDirectChildrenOnly);
+        auto *title = row->findChild<QQuickItem *>(QStringLiteral("formRowTitle"), Qt::FindDirectChildrenOnly);
+        auto *description =
+            row->findChild<QQuickItem *>(QStringLiteral("formRowDescription"), Qt::FindDirectChildrenOnly);
+        check(slot && title && description, "FormRow has its control slot, title and description");
+        if (!slot || !title || !description || slot->childItems().isEmpty()) continue;
+        QQuickItem *control = slot->childItems().first();
+        const QRectF box(0, 0, row->width(), row->height());
+        const QRectF controlRect = rectIn(control, row);
+        const QRectF titleRect = title->property("text").toString().isEmpty() ? QRectF() : rectIn(title, row);
+        const QRectF descRect = description->isVisible() ? rectIn(description, row) : QRectF();
+        const bool inside = box.adjusted(-0.5, -0.5, 0.5, 0.5).contains(controlRect)
+            && box.adjusted(-0.5, -0.5, 0.5, 0.5).contains(rectIn(slot, row));
+        const bool clear = !controlRect.intersects(titleRect) && !controlRect.intersects(descRect);
+        if (!inside || !clear)
+            std::fprintf(stderr, "  %s: FormRow \"%s\"%s %s: control %s %s, title %s, description %s\n",
+                         qPrintable(where), qPrintable(row->property("title").toString()),
+                         row->property("stacked").toBool() ? " (stacked)" : "", qPrintable(rectText(box)),
+                         qPrintable(itemName(control)), qPrintable(rectText(controlRect)),
+                         qPrintable(rectText(titleRect)), qPrintable(rectText(descRect)));
+        check(inside, "FormRow control lies inside its row");
+        check(clear, "FormRow control clear of the row's title and description");
+    }
+}
+
+// The settings form at the window widths of the PC3 shots. Same convention as the record page
+// loop: window width = content width (frameless), nav rail collapsed (64) below 1100, so the
+// form (ScrollView / StackLayout) is window - 64 - 2×24 page margins - 180 sub-nav - 16 gap -
+// 2×16 card padding = window - 340: 970 -> 630, 900 -> 560, 800 -> 460, 720 -> 380,
+// 640 -> 300, 560 -> 220. The caller has lowered the window minimum to 560.
+void checkSettingsPages(QObject *root, QQuickWindow *window, QObject *nav, QList<qreal> &formWidths)
+{
+    auto *scroll = root->findChild<QQuickItem *>(QStringLiteral("settingsScroll"));
+    auto *stack = root->findChild<QQuickItem *>(QStringLiteral("settingsStack"));
+    check(scroll && stack, "settingsScroll / settingsStack exist");
+    if (!scroll || !stack) return;
+    // SubtitleSettings is hidden while no subtitle service is attached: checkSubtitleSettingsWidths().
+    const char *pages[] = {"general", "output", "devices", "hotkeys", "advanced", "about"};
+    for (int w : {970, 900, 800, 720, 640, 560}) {
+        window->resize(w, 800);
+        QMetaObject::invokeMethod(nav, "open", Q_ARG(QString, QStringLiteral("settings/general")));
+        const qreal expected = w - 340;
+        waitFor([&] { return window->width() == w && stack->width() == expected; });
+        const QString width = QStringLiteral("window %1 (form %2)").arg(w).arg(stack->width());
+        if (stack->width() != expected)
+            std::fprintf(stderr, "  %s: settings form width %g, expected %g\n", qPrintable(width),
+                         stack->width(), expected);
+        check(stack->width() == expected, "settings form width follows the window width");
+        const QRectF scrollRect = sceneRect(scroll);
+        const bool formPlaced = scrollRect.left() >= 0 && scrollRect.right() <= w + 0.5
+            && rectIn(stack, scroll).left() >= -0.5 && rectIn(stack, scroll).right() <= scroll->width() + 0.5;
+        if (!formPlaced)
+            std::fprintf(stderr, "  %s: scroll view %s, form %s in it\n", qPrintable(width),
+                         qPrintable(rectText(scrollRect)), qPrintable(rectText(rectIn(stack, scroll))));
+        check(formPlaced, "settings form inside the scroll view and the window");
+        formWidths.append(stack->width());
+
+        for (const char *id : pages) {
+            QMetaObject::invokeMethod(nav, "open", Q_ARG(QString, QStringLiteral("settings/%1").arg(QLatin1String(id))));
+            auto *page = root->findChild<QQuickItem *>(QStringLiteral("settingsPage_%1").arg(QLatin1String(id)));
+            check(page != nullptr, "settings page exists");
+            if (!page) continue;
+            // StackLayout sizes the current page on polish; the rows settle after it.
+            waitFor([&] { return page->isVisible() && page->width() == stack->width(); });
+            settle(50);
+            const QString where = width + QStringLiteral(" page ") + QLatin1String(id);
+            check(page->isVisible() && page->width() == stack->width(), "settings page shown at the form width");
+            checkFormPage(page, stack->width(), where);
+
+            if (qstrcmp(id, "devices") != 0) continue;
+            // The open dropdowns stay inside the window and the form (they used to start at the
+            // combo's left edge, 200+ wide, and run past the window's right edge).
+            for (const char *name : {"videoDeviceCombo", "systemAudioCombo", "microphoneCombo"}) {
+                auto *combo = page->findChild<QQuickItem *>(QLatin1String(name));
+                QObject *popup = combo ? combo->property("popup").value<QObject *>() : nullptr;
+                auto *background = popup ? popup->property("background").value<QQuickItem *>() : nullptr;
+                check(combo && popup && background, "device combo and its popup exist");
+                if (!combo || !popup || !background) continue;
+                QMetaObject::invokeMethod(popup, "open");
+                waitFor([&] { return popup->property("opened").toBool(); });
+                settle(50);
+                check(popup->property("opened").toBool(), "device combo popup opens");
+                const QRectF popupRect = sceneRect(background);
+                const QRectF windowRect(0, 0, window->width(), window->height());
+                const bool inWindow = windowRect.adjusted(-0.5, -0.5, 0.5, 0.5).contains(popupRect);
+                const bool inForm = popupRect.left() >= scrollRect.left() - 0.5
+                    && popupRect.right() <= scrollRect.right() + 0.5;
+                if (!inWindow || !inForm)
+                    std::fprintf(stderr, "  %s: %s popup %s, combo %s, form %s, window %s\n", qPrintable(where),
+                                 name, qPrintable(rectText(popupRect)), qPrintable(rectText(sceneRect(combo))),
+                                 qPrintable(rectText(scrollRect)), qPrintable(rectText(windowRect)));
+                check(inWindow, "combo popup lies inside the window");
+                check(inForm, "combo popup stays within the settings form horizontally");
+                QMetaObject::invokeMethod(popup, "close");
+                waitFor([&] { return !popup->property("visible").toBool(); });
+            }
+        }
+    }
+}
+
+void collectChoiceControls(QQuickItem *item, QList<QQuickItem *> &out);
+void checkChoiceControl(QQuickItem *control, const char *where);
+
+// SubtitleSettings (hidden in AppWindow without a subtitle service) at the same form widths,
+// hosted on its own; its timing radios also keep the AppRadioButton geometry of UI 1114 #2.
+void checkSubtitleSettingsWidths(const QList<qreal> &formWidths)
+{
+    check(!formWidths.isEmpty(), "settings form widths measured");
+    for (qreal formWidth : formWidths) {
+        QQmlEngine engine;
+        QQmlComponent component(&engine);
+        component.setData(QByteArray("import QtQuick\nimport SubRec.Ui\n"
+                                     "Window {\n width: 960; height: 1200; visible: true\n"
+                                     " SubtitleSettings { objectName: \"settingsPage_subtitle\"; width: ")
+                              + QByteArray::number(formWidth) + " }\n}\n",
+                          QUrl::fromLocalFile(QStringLiteral(SUBREC_UI_SOURCE_DIR "/settings_host_subtitle.qml")));
+        std::unique_ptr<QObject> host(component.create());
+        auto *window = qobject_cast<QQuickWindow *>(host.get());
+        check(window != nullptr, "subtitle settings host window loads");
+        if (!window) {
+            std::fprintf(stderr, "  %s\n", qPrintable(component.errorString()));
+            continue;
+        }
+        settle(200);
+        auto *page = window->findChild<QQuickItem *>(QStringLiteral("settingsPage_subtitle"));
+        check(page != nullptr, "subtitle settings page exists");
+        if (!page) continue;
+        const QString where = QStringLiteral("form %1 page subtitle").arg(formWidth);
+        checkFormPage(page, formWidth, where);
+        QList<QQuickItem *> choices;
+        collectChoiceControls(page, choices);
+        check(choices.size() == 2, "subtitle timing radios found");
+        for (QQuickItem *choice : choices)
+            checkChoiceControl(choice, qPrintable(where));
+    }
+}
+
+// UI 1114 recent recordings: the hover actions (play, reveal; 72 px at the card's right edge)
+// were drawn over the 200-px file name and info line ("昨天 09:58 · 2.82 MiB"), and the
+// three-per-row cards (page - 32) / 3 wide got narrower than the texts on narrow windows.
+// Per window width: three cards at the expected column width, inside the page and apart;
+// each card hovered for real (mouse move), then play / reveal / name / info lie inside the
+// card, the buttons clear of both text lines, the texts elided inside their boxes and not
+// moved by the hover.
+void checkRecentRecordings(QQuickWindow *window, QObject *nav, QQuickItem *recordPage)
+{
+    QMetaObject::invokeMethod(nav, "open", Q_ARG(QString, QStringLiteral("record")));
+    for (int w : {1280, 970, 900, 800, 720, 640, 560}) {
+        window->resize(w, 800);
+        // Page = window - nav rail - 2×24; 3 columns while a card stays >= 256 wide.
+        const qreal pageWidth = w - (w < 1100 ? 64 : 200) - 48;
+        const int columns = std::clamp(int((pageWidth + 16) / (256 + 16)), 1, 3);
+        const qreal cardWidth = (pageWidth - 16 * (columns - 1)) / columns;
+        QList<QQuickItem *> cards;
+        const auto collect = [&] {
+            cards.clear();
+            std::function<void(QQuickItem *)> walk = [&](QQuickItem *item) {
+                for (QQuickItem *child : item->childItems()) {
+                    if (!child->isVisible()) continue;
+                    if (typeContains(child, {"RecordingCard"})) cards.append(child);
+                    else walk(child);
+                }
+            };
+            walk(recordPage);
+            return cards.size() == 3 && std::all_of(cards.cbegin(), cards.cend(), [&](QQuickItem *card) {
+                return std::abs(card->width() - cardWidth) < 0.5;
+            });
+        };
+        waitFor([&] { return window->width() == w && collect(); });
+        settle(50);
+        collect();
+        const QString width = QStringLiteral("window %1 (%2 column(s), card %3)").arg(w).arg(columns).arg(cardWidth);
+        if (cards.size() != 3)
+            std::fprintf(stderr, "  %s: %lld recent cards, expected 3\n", qPrintable(width),
+                         static_cast<long long>(cards.size()));
+        check(cards.size() == 3, "three recent-recording cards");
+        const QRectF page = sceneRect(recordPage);
+        for (int i = 0; i < cards.size(); ++i) {
+            QQuickItem *card = cards.at(i);
+            const QString where = width + QStringLiteral(" card %1").arg(i);
+            const QRectF cardScene = sceneRect(card);
+            const bool placed = std::abs(card->width() - cardWidth) < 0.5 && card->width() >= 256
+                && cardScene.left() >= page.left() - 0.5 && cardScene.right() <= page.right() + 0.5;
+            bool apart = true;
+            for (int j = 0; j < i; ++j)
+                apart = apart && !cardScene.intersects(sceneRect(cards.at(j)));
+            if (!placed || !apart)
+                std::fprintf(stderr, "  %s: card %s, page %s, overlaps an earlier card %d\n", qPrintable(where),
+                             qPrintable(rectText(cardScene)), qPrintable(rectText(page)), !apart);
+            check(placed, "recent card at the column width, inside the page");
+            check(apart, "recent cards do not overlap each other");
+
+            auto *actions = card->findChild<QQuickItem *>(QStringLiteral("recordingCardActions"));
+            auto *play = card->findChild<QQuickItem *>(QStringLiteral("recordingCardPlay"));
+            auto *reveal = card->findChild<QQuickItem *>(QStringLiteral("recordingCardReveal"));
+            auto *name = card->findChild<QQuickItem *>(QStringLiteral("recordingCardName"));
+            auto *info = card->findChild<QQuickItem *>(QStringLiteral("recordingCardInfo"));
+            check(actions && play && reveal && name && info, "recent card has actions, name and info line");
+            if (!actions || !play || !reveal || !name || !info) continue;
+            const QRectF nameBefore = rectIn(name, card), infoBefore = rectIn(info, card);
+
+            // Scroll the card well below the title bar, then hover its centre.
+            const qreal contentY = recordPage->property("contentY").toReal();
+            recordPage->setProperty("contentY", qMax(0.0, contentY + cardScene.top() - (page.top() + 120)));
+            settle(20);
+            const QPointF centre = sceneRect(card).center();
+            QMouseEvent move(QEvent::MouseMove, centre, centre, window->mapToGlobal(centre), Qt::NoButton,
+                             Qt::NoButton, Qt::NoModifier);
+            QCoreApplication::sendEvent(window, &move);
+            waitFor([&] { return actions->isVisible(); });
+            if (!actions->isVisible())
+                std::fprintf(stderr, "  %s: hover actions not shown after a mouse move to %g,%g\n",
+                             qPrintable(where), centre.x(), centre.y());
+            check(actions->isVisible(), "hover shows the play / reveal actions");
+
+            const QRectF box(0, 0, card->width(), card->height());
+            const QRectF playRect = rectIn(play, card), revealRect = rectIn(reveal, card),
+                         nameRect = rectIn(name, card), infoRect = rectIn(info, card);
+            const QRectF inner = box.adjusted(-0.5, -0.5, 0.5, 0.5);
+            const bool inside = inner.contains(playRect) && inner.contains(revealRect) && inner.contains(nameRect)
+                && inner.contains(infoRect) && play->isVisible() && reveal->isVisible() && nameRect.width() > 0;
+            const bool clear = !playRect.intersects(nameRect) && !playRect.intersects(infoRect)
+                && !revealRect.intersects(nameRect) && !revealRect.intersects(infoRect);
+            const bool stable = nameRect == nameBefore && infoRect == infoBefore;
+            const bool elided = name->property("contentWidth").toReal() <= name->width() + 0.5
+                && info->property("contentWidth").toReal() <= info->width() + 0.5;
+            if (!inside || !clear || !stable || !elided)
+                std::fprintf(stderr, "  %s: card %s play %s reveal %s name %s info %s (before hover: name %s info %s;"
+                             " painted %g / %g)\n", qPrintable(where), qPrintable(rectText(box)),
+                             qPrintable(rectText(playRect)), qPrintable(rectText(revealRect)),
+                             qPrintable(rectText(nameRect)), qPrintable(rectText(infoRect)),
+                             qPrintable(rectText(nameBefore)), qPrintable(rectText(infoBefore)),
+                             name->property("contentWidth").toReal(), info->property("contentWidth").toReal());
+            check(inside, "play / reveal / name / info lie inside the recent card");
+            check(clear, "recent-card hover actions never overlap the name or the info line");
+            check(stable, "hovering a recent card does not move its texts");
+            check(elided, "recent-card texts elide inside their boxes");
+        }
+        recordPage->setProperty("contentY", 0);
+    }
+}
+
+// `formWidths`: the settings form widths measured by checkSettingsPages(), for
+// checkSubtitleSettingsWidths().
+void checkLoad(QList<qreal> &formWidths)
 {
     using namespace subrec::ui;
     // Injected instances (what main.cpp will do in module INT-A).
@@ -352,6 +660,24 @@ void checkLoad()
     ShellView shell(nullptr);
     RecorderView::setInstance(&recorder);
     ShellView::setInstance(&shell);
+
+    // UI 1114 recent recordings: three recordings with long names (~2.82 MiB, one with a
+    // subtitle chip) so the record page shows three RecordingCards.
+    QTemporaryDir recordings;
+    RecordingLibrary library(nullptr);
+    check(recordings.isValid(), "temporary recordings folder");
+    for (const char *name : {"SubRec_20261114_225138_产品评审会议_第三轮讨论_完整版.mp4",
+                             "SubRec_20261113_095800.mp4", "SubRec_20261112_101500_屏幕录制_很长的文件名.mp4"}) {
+        QFile video(recordings.filePath(QString::fromUtf8(name)));
+        check(video.open(QIODevice::WriteOnly) && video.resize(2957000), "recording fixture written");
+    }
+    QFile subtitle(recordings.filePath(QString::fromUtf8("SubRec_20261113_095800.srt")));
+    check(subtitle.open(QIODevice::WriteOnly), "subtitle fixture written");
+    subtitle.close();
+    RecordingLibrary::setInstance(&library);
+    library.setFolder(recordings.path());
+    waitFor([&] { return library.recent()->count() == 3; });
+    check(library.recent()->count() == 3, "recording fixtures listed in RecordingLibrary.recent");
 
     qmlRegisterType<FakeGLView>("GLPreview", 1, 0, "GLView");
     {
@@ -478,10 +804,15 @@ void checkLoad()
                                - qMax(previewHeight + 16 + controlBar->height(), qreal(534))) < 0.5,
                       "source panel bottom edge level with the ControlBar");
             }
+
+            // UI 1114 settings / recent recordings at the same widths (minimum still 560).
+            checkSettingsPages(root, window, nav, formWidths);
+            checkRecentRecordings(window, nav, qobject_cast<QQuickItem *>(recordPage));
         }
     }
     RecorderView::setInstance(nullptr);
     ShellView::setInstance(nullptr);
+    RecordingLibrary::setInstance(nullptr);
 }
 
 // UI 1114 #1 (T1): the save area must never cover the record buttons or the folder button
@@ -693,9 +1024,11 @@ int main(int argc, char **argv)
 
     checkContracts();
     checkDefaults();
-    checkLoad();
+    QList<qreal> settingsFormWidths;
+    checkLoad(settingsFormWidths);
     checkControlBarLayout();
     checkChoiceControlLayout();
+    checkSubtitleSettingsWidths(settingsFormWidths);
     checkGallery();
 
     if (g_failures == 0) std::printf("ui_interface_smoke: all checks passed\n");

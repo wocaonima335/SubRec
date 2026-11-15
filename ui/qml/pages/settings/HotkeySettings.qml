@@ -13,19 +13,23 @@ ColumnLayout {
 
     // TODO(H3): rows.
     Text {
+        Layout.fillWidth: true
         font: Theme.captionFont
         text: "全局快捷键在应用最小化后仍然有效。"
         color: Theme.textSecondary
+        wrapMode: Text.WordWrap
     }
     FormGroupTitle {
         text: "录制"
     }
     FormRow {
         title: "开始/停止录制"
-        implicitHeight: recordKey.message.length > 0 ? 84 : 64
+        rowHeight: recordKey.message.length > 0 ? 84 : 64
         control: RowLayout {
             KeySequenceField {
                 id: recordKey
+                Layout.fillWidth: true
+                Layout.maximumWidth: implicitWidth
                 action: HotkeyController.ToggleRecord
             }
             AppButton {
@@ -37,10 +41,12 @@ ColumnLayout {
     }
     FormRow {
         title: "暂停/继续录制"
-        implicitHeight: pauseKey.message.length > 0 ? 84 : 64
+        rowHeight: pauseKey.message.length > 0 ? 84 : 64
         control: RowLayout {
             KeySequenceField {
                 id: pauseKey
+                Layout.fillWidth: true
+                Layout.maximumWidth: implicitWidth
                 action: HotkeyController.TogglePause
             }
             AppButton {
@@ -55,10 +61,12 @@ ColumnLayout {
     }
     FormRow {
         title: "显示/隐藏窗口"
-        implicitHeight: windowKey.message.length > 0 ? 84 : 64
+        rowHeight: windowKey.message.length > 0 ? 84 : 64
         control: RowLayout {
             KeySequenceField {
                 id: windowKey
+                Layout.fillWidth: true
+                Layout.maximumWidth: implicitWidth
                 action: HotkeyController.ToggleWindow
             }
             AppButton {

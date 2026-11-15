@@ -14,7 +14,12 @@ RadioButton {
 
     padding: 0
     spacing: Theme.space8
-    implicitWidth: Math.max(implicitContentWidth, implicitIndicatorWidth) + leftPadding + rightPadding
+    // From the texts' natural widths (not the content Column, whose width follows the control):
+    // a radio given less than this (narrow settings form) elides its lines inside itself.
+    implicitWidth: Math.max(implicitIndicatorWidth,
+                            (text.length > 0 ? implicitIndicatorWidth + spacing : 0)
+                            + Math.max(titleText.implicitWidth, description.length > 0 ? descriptionText.implicitWidth : 0))
+                   + leftPadding + rightPadding
     implicitHeight: Math.max(description.length > 0 ? 40 : 20,
                              implicitContentHeight + topPadding + bottomPadding,
                              implicitIndicatorHeight + topPadding + bottomPadding)
@@ -47,6 +52,7 @@ RadioButton {
     }
 
     contentItem: Column {
+        id: content
         // A text-less radio (ModelRow) is only the 16-px dot: nothing to reserve.
         leftPadding: root.text.length > 0 && !root.mirrored ? root.indicator.width + root.spacing : 0
         rightPadding: root.text.length > 0 && root.mirrored ? root.indicator.width + root.spacing : 0
@@ -55,15 +61,20 @@ RadioButton {
 
         Text {
             id: titleText
+            width: Math.max(0, content.width - content.leftPadding - content.rightPadding)
             text: root.text
             font: root.font
             color: Theme.textPrimary
+            elide: Text.ElideRight
         }
         Text {
+            id: descriptionText
             visible: root.description.length > 0
+            width: Math.max(0, content.width - content.leftPadding - content.rightPadding)
             text: root.description
             font: Theme.captionFont
             color: Theme.textSecondary
+            elide: Text.ElideRight
         }
     }
 }

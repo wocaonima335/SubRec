@@ -13,12 +13,20 @@ Card {
     property string subtitleState: "none"
     property int subtitleProgress: 0
 
-    padding: Theme.space16
+    // 0: the children below use card coordinates (§3.2.2 E: tile x 16, texts x 64). With
+    // Card's 16 they sat 16 px further right and down (tile 2 px above the bottom edge, hover
+    // actions flush with the right edge, 200-px texts running under the actions).
+    padding: 0
     implicitWidth: 336
     implicitHeight: 72
 
     readonly property bool hasSubtitle: subtitleState === "has"
     readonly property bool generating: subtitleState === "generating"
+    // UI 1114: the right-hand slot holds the subtitle chip, or on hover the play / reveal
+    // actions. The texts always end 8 px before the wider of the two, so the actions never
+    // cover them and hovering never moves them; long names elide.
+    readonly property real __slotWidth: Math.max(actions.width, chip.width)
+    readonly property real __textWidth: Math.max(0, width - 64 - Theme.space8 - __slotWidth - Theme.space16)
 
     // Icon tile: 36×36 surface-2 with the video glyph.
     Rectangle {
@@ -38,9 +46,10 @@ Card {
     }
 
     Text {
+        objectName: "recordingCardName"
         x: 64
         y: 16
-        width: 200
+        width: root.__textWidth
         text: root.fileName
         font: Theme.bodyStrongFont
         color: Theme.textPrimary
@@ -48,9 +57,10 @@ Card {
     }
 
     Text {
+        objectName: "recordingCardInfo"
         x: 64
         y: 38
-        width: 200
+        width: root.__textWidth
         text: root.modifiedText + " · " + root.sizeText
         font: Theme.captionFont
         color: Theme.textTertiary
@@ -59,8 +69,9 @@ Card {
 
     // Subtitle chip (§3.2.2 E): "字幕" / "字幕 63 %"; hidden on hover for the actions.
     Rectangle {
+        id: chip
         visible: (root.hasSubtitle || root.generating) && !hover.hovered
-        x: root.width - 16 - chipText.implicitWidth - 20
+        x: root.width - 16 - width
         y: (root.height - 24) / 2
         width: chipText.implicitWidth + 20
         height: 24
@@ -76,19 +87,27 @@ Card {
         }
     }
 
-    // Hover actions: play + reveal (§3.2.2 E).
-    Row {
+    // Hover actions: play + reveal (§3.2.2 E). Fixed slots, not a Row: same geometry whether
+    // shown or not.
+    Item {
+        id: actions
+        objectName: "recordingCardActions"
         visible: hover.hovered
-        x: root.width - 16 - 32 * 2 - Theme.space8
+        x: root.width - 16 - width
         y: (root.height - 32) / 2
-        spacing: Theme.space8
+        width: 32 * 2 + Theme.space8
+        height: 32
 
         IconButton {
+            objectName: "recordingCardPlay"
+            x: 0
             iconName: "play"
             toolTipText: qsTr("播放")
             onClicked: DesktopActions.openFile(root.filePath)
         }
         IconButton {
+            objectName: "recordingCardReveal"
+            x: 32 + Theme.space8
             iconName: "folder-open"
             toolTipText: qsTr("在文件夹中显示")
             onClicked: DesktopActions.revealInFolder(root.filePath)

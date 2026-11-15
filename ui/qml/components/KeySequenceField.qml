@@ -48,9 +48,12 @@ Rectangle {
             Layout.fillWidth: true
             text: HotkeyController.capturingAction === root.action ? (HotkeyController.captureText.length > 0 ? HotkeyController.captureText : "请按下组合键…") : root.bindingText.length > 0 ? root.bindingText : "未设置"
             color: Theme.textPrimary
+            elide: Text.ElideRight
         }
         Text {
             visible: root.message.length > 0
+            Layout.fillWidth: true
+            elide: Text.ElideRight
             text: root.message
             color: root.messageKind === "danger" ? Theme.dangerFg : root.messageKind === "warning" ? Theme.warningFg : Theme.textSecondary
             font: Theme.captionFont

@@ -102,6 +102,7 @@ ColumnLayout {
             font: Theme.captionFont
             text: RecorderView.audioMixingAvailable ? "支持" : "仅一路混音"
             color: Theme.textSecondary
+            elide: Text.ElideRight
         }
     }
     InlineAlert {

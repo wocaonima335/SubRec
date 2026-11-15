@@ -107,9 +107,13 @@ ComboBox {
                 color: Theme.accentDefault
             }
 
+            // Ends before "不可用" (or the row's right padding): long device names elide
+            // inside the popup instead of running under its edge.
             Column {
                 anchors.left: parent.left
                 anchors.leftMargin: 16 + Theme.space4 // 16 px check slot + 4 gap
+                anchors.right: parent.right
+                anchors.rightMargin: unavailableText.visible ? unavailableText.implicitWidth + Theme.space8 : 0
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 0
 
@@ -132,6 +136,7 @@ ComboBox {
             }
 
             Text {
+                id: unavailableText
                 visible: !option.enabled
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
@@ -152,8 +157,13 @@ ComboBox {
     }
 
     popup: Popup {
+        // A popup wider than its trigger opens towards the trigger's start edge: settings
+        // combos sit at the right edge of the form (UI 1114). The margins keep it inside the
+        // window (negative margins, the Popup default, let it run past the window edges).
+        x: root.mirrored ? 0 : root.width - width
         y: root.height + Theme.space4
         width: Math.max(200, root.width)
+        margins: Theme.space8
         padding: Theme.space4
         implicitHeight: Math.min(contentItem.implicitHeight + 2 * padding,
                                   8 * root.__rowHeight + 2 * padding)

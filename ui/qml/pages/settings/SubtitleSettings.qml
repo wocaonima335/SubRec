@@ -18,6 +18,7 @@ ColumnLayout {
 
     // TODO(U8): rows.
     Text {
+        Layout.fillWidth: true
         font: Theme.captionFont
         text: "在本机离线识别语音，停止录制后在视频旁生成同名 .srt 字幕。录音不会上传，只有下载模型时需要联网。"
         color: Theme.textSecondary
@@ -48,13 +49,14 @@ ColumnLayout {
     }
     FormRow {
         title: "识别时机"
-        implicitHeight: 104
+        rowHeight: 104
         control: ColumnLayout {
             enabled: SubtitleView.enabled && !SubtitleView.settingsLocked
             ButtonGroup {
                 id: timingGroup
             }
             AppRadioButton {
+                Layout.fillWidth: true
                 text: "录制时识别（推荐）"
                 description: "边录边识别，停止后几秒内生成字幕"
                 checked: SubtitleView.mode === "live"
@@ -62,6 +64,7 @@ ColumnLayout {
                 onClicked: SubtitleView.mode = "live"
             }
             AppRadioButton {
+                Layout.fillWidth: true
                 text: "录完后识别"
                 description: "停止录制后再识别，适合配置较低的电脑"
                 checked: SubtitleView.mode === "after"

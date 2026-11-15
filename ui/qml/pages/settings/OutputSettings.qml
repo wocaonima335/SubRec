@@ -46,7 +46,7 @@ ColumnLayout {
         title: "文件名模板"
         description: "支持 {日期}、{时间}、{来源}"
         control: AppTextField {
-            width: 464
+            implicitWidth: 464
             locked: RecorderView.capturing
             suffixText: ".mp4"
             text: OutputNaming.fileNameTemplate
@@ -55,9 +55,11 @@ ColumnLayout {
         }
     }
     Text {
+        Layout.fillWidth: true
         font: Theme.captionFont
         text: "示例：" + OutputNaming.previewFileName
         color: Theme.textSecondary
+        elide: Text.ElideMiddle
     }
     FormGroupTitle {
         text: "输出格式与编码器"
@@ -68,6 +70,7 @@ ColumnLayout {
             font: Theme.captionFont
             text: "MP4（H.264 视频 + AAC 音频）"
             color: Theme.textSecondary
+            elide: Text.ElideRight
         }
     }
     FormRow {
@@ -77,6 +80,7 @@ ColumnLayout {
             font: Theme.captionFont
             text: RecorderView.selectedVideoEncoder.length > 0 ? RecorderView.selectedVideoEncoder + (RecorderView.selectedVideoEncoderIsHardware ? "（硬件）" : "（软件）") : "开始录制后确定"
             color: Theme.textSecondary
+            elide: Text.ElideRight
         }
     }
 
