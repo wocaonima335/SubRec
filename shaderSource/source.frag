@@ -8,21 +8,17 @@ uniform sampler2D vTexture;
 out vec4 FragColor;
 
 void main() {
-    // Y 分量直接采样（范围 [0, 1]）
-    float y = texture(yTexture, v_texCoord).r;
+    // 预览帧是 yuv420p，BT.601 limited range（ddagrab/GpuPreview 的 out_range=tv、swscale 默认）：
+    // Y 在 [16, 235]，U/V 在 [16, 240]，中心 128。先展开到 full range，再用 BT.601 系数转 RGB。
+    // UV 纹理尺寸是 Y 的 1/2，纹理坐标归一化，所以与 Y 共用同一坐标。
+    float y = (texture(yTexture, v_texCoord).r - 16.0 / 255.0) * (255.0 / 219.0);
+    float u = (texture(uTexture, v_texCoord).r - 128.0 / 255.0) * (255.0 / 224.0);
+    float v = (texture(vTexture, v_texCoord).r - 128.0 / 255.0) * (255.0 / 224.0);
 
-    // **修正 UV 纹理坐标**：UV 纹理尺寸是 Y 的 1/2，坐标需映射到 [0, 1] 范围内的 UV 纹理
-    vec2 uvCoord = v_texCoord * vec2(1.0, 1.0);  // 不缩放，直接使用原坐标，但 UV 纹理尺寸是 1/2
-    // 等价于：uvCoord.x = v_texCoord.x * 0.5 + 0.0;  // 左半部分（若 UV 存储为平面左半）
-    // 或根据实际存储方式调整，YUV420P 中 UV 通常是水平和垂直均为 1/2，故坐标无需缩放，直接采样即可
-
-    float u = texture(uTexture, uvCoord).r - 0.5;  // 减去偏置（YUV 格式中 U/V 范围通常是 [-0.5, 0.5]）
-    float v = texture(vTexture, uvCoord).r - 0.5;
-
-    // BT.601 转换矩阵（适用于 4:2:0 采样，假设输入为平面 YUV）
+    // BT.601 YCbCr -> RGB（full-range 系数）
     vec3 rgb;
     rgb.r = y + 1.402 * v;
-    rgb.g = y - 0.34414 * u - 0.71414 * v;
+    rgb.g = y - 0.344136 * u - 0.714136 * v;
     rgb.b = y + 1.772 * u;
 
     FragColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);
