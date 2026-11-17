@@ -87,6 +87,14 @@ Card {
         }
     }
 
+    // Double-click plays. Declared before the actions so the buttons stack above it: declared
+    // after them, it took their press and play / reveal never clicked (as RecordingRow).
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.LeftButton
+        onDoubleClicked: DesktopActions.openFile(root.filePath)
+    }
+
     // Hover actions: play + reveal (§3.2.2 E). Fixed slots, not a Row: same geometry whether
     // shown or not.
     Item {
@@ -116,11 +124,5 @@ Card {
 
     HoverHandler {
         id: hover
-    }
-
-    MouseArea {
-        anchors.fill: parent
-        acceptedButtons: Qt.LeftButton
-        onDoubleClicked: DesktopActions.openFile(root.filePath)
     }
 }

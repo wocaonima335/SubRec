@@ -784,6 +784,46 @@ void checkRecentRecordings(QQuickWindow *window, QObject *nav, QQuickItem *recor
             check(clear, "recent-card hover actions never overlap the name or the info line");
             check(stable, "hovering a recent card does not move its texts");
             check(elided, "recent-card texts elide inside their boxes");
+
+            // Recent-card play / reveal did nothing on click (plans/recent-buttons-1117.md): the
+            // card-wide double-click MouseArea, declared after the actions, lay over both buttons
+            // and took their press (hover still lit them). Hover, then a real press on each button
+            // must leave that button pressed, and a press on the card's text area the MouseArea
+            // (double-click plays). Released outside the card, so nothing is opened.
+            QQuickItem *cardArea = nullptr;
+            for (QQuickItem *child : card->findChildren<QQuickItem *>())
+                if (child->inherits("QQuickMouseArea") && rectIn(child, card) == box) cardArea = child;
+            check(cardArea, "recent card has its double-click MouseArea");
+            if (!cardArea) continue;
+            const QRectF cardNow = sceneRect(card);
+            const QPointF away(cardNow.left() - 8, cardNow.center().y());
+            const auto mouse = [&](QEvent::Type type, const QPointF &at, Qt::MouseButton button,
+                                   Qt::MouseButtons buttons) {
+                QMouseEvent event(type, at, at, window->mapToGlobal(at), button, buttons, Qt::NoModifier);
+                QCoreApplication::sendEvent(window, &event);
+            };
+            const auto press = [&](QQuickItem *target, const char *what) {
+                const QPointF at = sceneRect(target).center();
+                mouse(QEvent::MouseMove, at, Qt::NoButton, Qt::NoButton);
+                waitFor([&] { return actions->isVisible(); });
+                mouse(QEvent::MouseButtonPress, at, Qt::LeftButton, Qt::LeftButton);
+                const bool pressed = target->property("pressed").toBool();
+                const bool playPressed = play->property("pressed").toBool(),
+                           revealPressed = reveal->property("pressed").toBool(),
+                           areaPressed = cardArea->property("pressed").toBool();
+                mouse(QEvent::MouseMove, away, Qt::NoButton, Qt::LeftButton);
+                mouse(QEvent::MouseButtonRelease, away, Qt::LeftButton, Qt::NoButton);
+                const bool released = !target->property("pressed").toBool();
+                if (!pressed || !released)
+                    std::fprintf(stderr, "  %s: press on the %s at %g,%g: pressed play %d reveal %d card"
+                                 " MouseArea %d; after release at %g,%g still pressed %d\n", qPrintable(where),
+                                 what, at.x(), at.y(), playPressed, revealPressed, areaPressed, away.x(),
+                                 away.y(), !released);
+                return pressed && released;
+            };
+            check(press(play, "play button"), "hover + press on the recent-card play button presses it");
+            check(press(reveal, "reveal button"), "hover + press on the recent-card reveal button presses it");
+            check(press(cardArea, "card text area"), "press on the recent card's text area reaches its MouseArea");
         }
         recordPage->setProperty("contentY", 0);
     }
