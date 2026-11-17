@@ -1,6 +1,7 @@
 #include "logging/frame_log.h"
 #include "queue/media_clock.h"
 #include "demuxer.h"
+#include "dshow_video_size.h"
 extern "C" {
 #include <libavutil/time.h>
 }
@@ -418,12 +419,16 @@ void Demuxer::initDemuxer(const std::function<bool()> &shouldOpen)
         av_dict_set(&localOpts, "use_video_device_timestamps", "false", 0);
         av_dict_set(&localOpts, "rtbufsize", "256M", 0);
         if (QScreen *screen = QGuiApplication::primaryScreen()) {
+            // QScreen::size() is logical (DIP); request the physical pixels.
             const QSize size = screen->size();
-            if (size.width() > 0 && size.height() > 0) {
+            const DshowVideoSize physical =
+                dshowPhysicalVideoSize(size.width(), size.height(), screen->devicePixelRatio());
+            if (physical.width > 0 && physical.height > 0) {
                 const QByteArray videoSize =
-                    QString("%1x%2").arg(size.width()).arg(size.height()).toLatin1();
+                    QString("%1x%2").arg(physical.width).arg(physical.height).toLatin1();
                 av_dict_set(&localOpts, "video_size", videoSize.constData(), 0);
-                qDebug() << "[Demux] Screen device, set video_size=" << videoSize;
+                qDebug() << "[Demux] Screen device, set video_size=" << videoSize
+                         << "logical=" << size << "dpr=" << screen->devicePixelRatio();
             }
         }
         qDebug() << "[Demux] Screen device opts:"

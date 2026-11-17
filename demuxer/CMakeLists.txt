@@ -1,7 +1,8 @@
 # Demuxer模块
 qt_add_library(demuxer_module STATIC
     demuxer.h
-    demuxer.cpp)
+    demuxer.cpp
+    dshow_video_size.h)
 
 
 
