@@ -61,8 +61,8 @@ void run(int w, int h, int expectedW, int expectedH) {
         }
         CHECK(ret==AVERROR(EAGAIN));
     }
-    CHECK(count>=22 && count<=24);
-    std::printf("PASS preview graph %dx%d -> %dx%d frames=%d (~8 fps), main unchanged\n",w,h,expectedW,expectedH,count);
+    CHECK(count>=43 && count<=45);
+    std::printf("PASS preview graph %dx%d -> %dx%d frames=%d (~15 fps), main unchanged\n",w,h,expectedW,expectedH,count);
 }
 // Exercise the exact non-blocking capture-side topology, without a native device.
 void handoff() {
@@ -95,6 +95,7 @@ void handoff() {
     std::puts("PASS split handoff: 10000 frames, NO_REQUEST drains exactly one, no source requests/backlog");
 }
 int main() {
-    try { handoff();run(1920,1080,640,360);run(1080,1920,202,360);run(320,240,320,240); }
+    try { handoff();run(1920,1080,1280,720);run(2560,1440,1280,720);run(1280,1024,900,720);
+          run(1080,1920,406,720);run(320,240,320,240); }
     catch(const std::exception &e){std::fprintf(stderr,"FAIL %s\n",e.what());return 1;}
 }

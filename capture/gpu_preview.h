@@ -8,9 +8,10 @@ struct AVFrame;
 // on the recording graph's thread. Consumer returns false when a GUI frame was dropped.
 inline std::string gpuPreviewFilterSpec(bool hardware = true)
 {
-    // Rate limit before GPU transfer. No upscaling, even dimensions including portrait.
-    return std::string("fps=8,") + (hardware ? "hwdownload,format=bgra," : "")
-        + "scale=w=-2:h='max(2,trunc(min(ih,360)/2)*2)':flags=bilinear:"
+    // Rate limit (15 fps) before GPU transfer. At most 720 rows, no upscaling, even
+    // dimensions including portrait; bicubic keeps small text sharper than bilinear.
+    return std::string("fps=15,") + (hardware ? "hwdownload,format=bgra," : "")
+        + "scale=w=-2:h='max(2,trunc(min(ih,720)/2)*2)':flags=bicubic:"
           "out_color_matrix=bt601:out_range=tv,format=yuv420p";
 }
 class GpuPreview

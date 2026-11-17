@@ -36,7 +36,9 @@ int main() {
         producer.join();
         CHECK(ordered); slot.take().reset(); CHECK(Tracked::live == 0);
         const auto gpu = gpuPreviewFilterSpec();
-        CHECK(gpu.find("fps=8,hwdownload,format=bgra,") == 0);
+        CHECK(gpu.find("fps=15,hwdownload,format=bgra,") == 0);
+        CHECK(gpu.find("min(ih,720)") != std::string::npos);
+        CHECK(gpu.find("flags=bicubic") != std::string::npos);
         CHECK(gpu.find("format=yuv420p") != std::string::npos);
         CHECK(gpuPreviewFilterSpec(false).find("hwdownload") == std::string::npos);
         std::puts("PASS latest slot: 100000 overwrites, concurrent producer/consumer, no retained frames");
