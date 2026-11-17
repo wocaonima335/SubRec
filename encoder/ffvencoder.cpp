@@ -1,5 +1,6 @@
 #include "logging/frame_log.h"
 #include "ffvencoder.h"
+#include "encoder/video_encoder_setup.h"
 #include "queue/ffvpacketqueue.h"
 
 #include <QCryptographicHash>
@@ -286,13 +287,8 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
     requestedPars.videoFmt = AV_PIX_FMT_YUV420P;
     requestedPars.frameRate = fps;
 
-    const int pixelCount = requestedPars.width * requestedPars.height;
-    if (pixelCount > 1920 * 1080)
-        requestedPars.biteRate = 4 * 1024 * 1024;
-    else if (pixelCount > 1280 * 720)
-        requestedPars.biteRate = 2 * 1024 * 1024;
-    else
-        requestedPars.biteRate = 1 * 1024 * 1024;
+    const video_tuning::RateLimits rates = video_tuning::rateLimitsFor(requestedPars.width, requestedPars.height);
+    requestedPars.biteRate = static_cast<int>(rates.target);
 
     struct EncoderCandidate
     {
@@ -343,21 +339,22 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
             continue;
         }
 
+        for (const video_tuning::EncoderAttempt &attempt :
+             video_tuning::encoderAttempts(video_tuning::encoderFamily(codec->name)))
+        {
+        const QString attemptLabel = QStringLiteral("%1/%2").arg(label, QLatin1String(attempt.profile));
         AVCodecContext *candidateCtx = avcodec_alloc_context3(codec);
         if (!candidateCtx)
         {
             const QString reason = QStringLiteral("context allocation failed");
-            failures.append(QStringLiteral("%1: %2").arg(label, reason));
+            failures.append(QStringLiteral("%1: %2").arg(attemptLabel, reason));
             qWarning().noquote() << QStringLiteral("[VEncSelection] candidate=%1 stage=allocate result=failed reason=%2")
-                                             .arg(label, reason);
+                                             .arg(attemptLabel, reason);
             continue;
         }
 
         candidateCtx->width = requestedPars.width;
         candidateCtx->height = requestedPars.height;
-        candidateCtx->bit_rate = requestedPars.biteRate;
-        candidateCtx->rc_max_rate = requestedPars.biteRate * 12 / 10;
-        candidateCtx->rc_buffer_size = requestedPars.biteRate;
         candidateCtx->framerate = requestedPars.frameRate;
         candidateCtx->time_base = av_inv_q(requestedPars.frameRate);
         if (passthrough)
@@ -379,9 +376,6 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
             candidateCtx->gop_size = 60;
             candidateCtx->thread_count = 1;
             candidateCtx->thread_type = 0;
-            candidateCtx->qmin = 10;
-            candidateCtx->qmax = 40;
-            candidateCtx->max_qdiff = 4;
         }
         else
         {
@@ -391,33 +385,10 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
             candidateCtx->thread_count = std::max(1, std::min(threadCount, 16));
             candidateCtx->thread_type = FF_THREAD_FRAME;
             candidateCtx->slices = candidateCtx->thread_count;
-            candidateCtx->qmin = 18;
-            candidateCtx->qmax = 45;
         }
         candidateCtx->keyint_min = candidateCtx->gop_size;
 
-        AVDictionary *options = nullptr;
-        if (std::strstr(codec->name, "nvenc"))
-        {
-            av_dict_set(&options, "preset", "fast", 0);
-            av_dict_set(&options, "rc", "cbr", 0);
-        }
-        else if (std::strstr(codec->name, "amf"))
-        {
-            av_dict_set(&options, "quality", "speed", 0);
-            av_dict_set(&options, "rc", "cbr", 0);
-        }
-        else if (std::strstr(codec->name, "qsv"))
-        {
-            av_dict_set(&options, "preset", "fast", 0);
-        }
-        else
-        {
-            av_dict_set(&options, "preset", "ultrafast", 0);
-            av_dict_set(&options, "tune", "zerolatency", 0);
-            av_dict_set(&options, "x264-params", "no-cabac:ref=1:deblock=0:me=dia:subme=0:rc-lookahead=0:weightp=0:mixed-refs=0:8x8dct=0:trellis=0", 0);
-        }
-
+        AVDictionary *options = applyEncoderAttempt(candidateCtx, attempt, rates);
         const int ret = avcodec_open2(candidateCtx, codec, &options);
         av_dict_free(&options);
         if (ret < 0)
@@ -425,9 +396,9 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
             char errorBuffer[AV_ERROR_MAX_STRING_SIZE] = {};
             av_strerror(ret, errorBuffer, sizeof(errorBuffer));
             const QString reason = QString::fromLocal8Bit(errorBuffer);
-            failures.append(QStringLiteral("%1: %2").arg(label, reason));
+            failures.append(QStringLiteral("%1: %2").arg(attemptLabel, reason));
             qWarning().noquote() << QStringLiteral("[VEncSelection] candidate=%1 stage=open result=failed fferr=%2 error=%3")
-                                             .arg(label)
+                                             .arg(attemptLabel)
                                              .arg(ret)
                                              .arg(reason);
             avcodec_free_context(&candidateCtx);
@@ -449,7 +420,7 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
         else if (m_downloadHwFrames)
             m_selection.detail += QStringLiteral("; input D3D11 frames downloaded to yuv420p");
 
-        qInfo().noquote() << QStringLiteral("[VEncSelection] winner=%1 hardware=%2 width=%3 height=%4 fps=%5/%6 bitrate=%7 detail=%8")
+        qInfo().noquote() << QStringLiteral("[VEncSelection] winner=%1 hardware=%2 width=%3 height=%4 fps=%5/%6 bitrate=%7 maxrate=%8 profile=%9 detail=%10")
                                   .arg(m_selection.codecName)
                                   .arg(m_selection.isHardware ? QStringLiteral("true") : QStringLiteral("false"))
                                   .arg(vPars->width)
@@ -457,8 +428,11 @@ bool FFVEncoder::initVideo(AVFrame *frame, AVRational fps)
                                   .arg(vPars->frameRate.num)
                                   .arg(vPars->frameRate.den)
                                   .arg(vPars->biteRate)
+                                  .arg(codecCtx->rc_max_rate)
+                                  .arg(QLatin1String(attempt.profile))
                                   .arg(m_selection.detail);
         return true;
+        } // attempt
     }
     } // pass
 

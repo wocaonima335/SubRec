@@ -1,5 +1,6 @@
 #include "ddagrab_screen_source.h"
 #include "gpu_preview.h"
+#include "encoder/video_encoder_setup.h"
 #include "queue/media_clock.h"
 
 #include <QDebug>
@@ -300,29 +301,40 @@ int DdagrabScreenSource::buildGraph(bool gpuFrames, QString *error)
 bool DdagrabScreenSource::probeGpuEncoder(AVBufferRef *framesContext)
 {
     const auto *frames = reinterpret_cast<const AVHWFramesContext *>(framesContext->data);
+    // Same attempt chain and rate settings as FFVEncoder::initVideo, so "probe ok" means
+    // the recording encoder opens too.
+    const video_tuning::RateLimits rates = video_tuning::rateLimitsFor(m_width, m_height);
     for (const QString &name : d3d11FrameEncoders()) {
         const AVCodec *codec = avcodec_find_encoder_by_name(name.toLatin1().constData());
-        AVCodecContext *probe = codec ? avcodec_alloc_context3(codec) : nullptr;
-        if (!probe) {
+        if (!codec) {
             continue;
         }
-        probe->width = m_width;
-        probe->height = m_height;
-        probe->time_base = av_inv_q(kRecordFrameRate);
-        probe->framerate = kRecordFrameRate;
-        probe->pix_fmt = AV_PIX_FMT_D3D11;
-        probe->sw_pix_fmt = frames->sw_format;
-        probe->bit_rate = 4 * 1024 * 1024;
-        probe->max_b_frames = 0;
-        probe->hw_frames_ctx = av_buffer_ref(framesContext);
-        const int ret = probe->hw_frames_ctx ? avcodec_open2(probe, codec, nullptr) : AVERROR(ENOMEM);
-        avcodec_free_context(&probe);
-        qInfo().noquote() << QStringLiteral("[Ddagrab] GPU-frame probe %1 (%2): %3")
-                                 .arg(name, QString::fromLatin1(av_get_pix_fmt_name(frames->sw_format)),
-                                      ret >= 0 ? QStringLiteral("ok") : ffmpegErrorText(ret));
-        if (ret >= 0) {
-            m_probedEncoder = name;
-            return true;
+        for (const video_tuning::EncoderAttempt &attempt :
+             video_tuning::encoderAttempts(video_tuning::encoderFamily(codec->name))) {
+            AVCodecContext *probe = avcodec_alloc_context3(codec);
+            if (!probe) {
+                break;
+            }
+            probe->width = m_width;
+            probe->height = m_height;
+            probe->time_base = av_inv_q(kRecordFrameRate);
+            probe->framerate = kRecordFrameRate;
+            probe->pix_fmt = AV_PIX_FMT_D3D11;
+            probe->sw_pix_fmt = frames->sw_format;
+            probe->max_b_frames = 0;
+            probe->hw_frames_ctx = av_buffer_ref(framesContext);
+            AVDictionary *options = applyEncoderAttempt(probe, attempt, rates);
+            const int ret = probe->hw_frames_ctx ? avcodec_open2(probe, codec, &options) : AVERROR(ENOMEM);
+            av_dict_free(&options);
+            avcodec_free_context(&probe);
+            qInfo().noquote() << QStringLiteral("[Ddagrab] GPU-frame probe %1/%2 (%3): %4")
+                                     .arg(name, QLatin1String(attempt.profile),
+                                          QString::fromLatin1(av_get_pix_fmt_name(frames->sw_format)),
+                                          ret >= 0 ? QStringLiteral("ok") : ffmpegErrorText(ret));
+            if (ret >= 0) {
+                m_probedEncoder = name;
+                return true;
+            }
         }
     }
     return false;
