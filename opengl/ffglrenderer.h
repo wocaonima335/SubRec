@@ -31,6 +31,7 @@ private:
 
     QByteArray m_yData, m_uData, m_vData;
     int m_imgWidth = 0, m_imgHeight = 0;
+    int m_texWidth = 0, m_texHeight = 0; // size the Y texture storage was allocated with
     quint64 m_previewVersion = 0;
     quint64 m_previewFingerprint = 0;
     bool m_keepRatio = false;

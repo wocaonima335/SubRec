@@ -59,14 +59,29 @@ void FFGLRenderer::render()
         int w = m_imgWidth, h = m_imgHeight;
         int uvW = w / 2, uvH = h / 2;
 
-        glBindTexture(GL_TEXTURE_2D, yTex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, m_yData.constData());
-
-        glBindTexture(GL_TEXTURE_2D, uTex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, uvW, uvH, 0, GL_RED, GL_UNSIGNED_BYTE, m_uData.constData());
-
-        glBindTexture(GL_TEXTURE_2D, vTex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, uvW, uvH, 0, GL_RED, GL_UNSIGNED_BYTE, m_vData.constData());
+        // makePreviewFrame packs every plane row by row without padding, so rows are not
+        // 4-byte aligned whenever a plane width is not a multiple of 4 (1366-wide Y, 450-wide
+        // U/V, ...). Unpack with alignment 1 and give the scene graph its own value back.
+        GLint previousAlignment = 4;
+        glGetIntegerv(GL_UNPACK_ALIGNMENT, &previousAlignment);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        const bool reallocate = w != m_texWidth || h != m_texHeight;
+        auto upload = [&](GLuint tex, int texW, int texH, const QByteArray &plane) {
+            glBindTexture(GL_TEXTURE_2D, tex);
+            if (reallocate)
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, texW, texH, 0, GL_RED, GL_UNSIGNED_BYTE, plane.constData());
+            else
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, texW, texH, GL_RED, GL_UNSIGNED_BYTE, plane.constData());
+            // Full-size CPU-path frames are shrunk into the preview box; mipmaps keep small
+            // text from aliasing when the frame is reduced to less than half its size.
+            glGenerateMipmap(GL_TEXTURE_2D);
+        };
+        upload(yTex, w, h, m_yData);
+        upload(uTex, uvW, uvH, m_uData);
+        upload(vTex, uvW, uvH, m_vData);
+        m_texWidth = w;
+        m_texHeight = h;
+        glPixelStorei(GL_UNPACK_ALIGNMENT, previousAlignment);
 
         program->bind();
         program->setUniformValue("yTexture", 0);
@@ -168,7 +183,7 @@ void FFGLRenderer::ensureTextures()
     {
         glBindTexture(GL_TEXTURE_2D, tex);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, 1, 1, 0, GL_RED, GL_UNSIGNED_BYTE, &v);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
