@@ -27,10 +27,27 @@
 - 录制过程中显示计时；可选择输出目录和文件名；“视频”页可浏览已录制文件。
 - 控制链路：`QmlBridge → CaptureScheduler → CaptureSession → FFRecorder`。
 
-### 已知限制（如实说明）
+### v0.3.2-beta 更新（相对 v0.3.1-beta）
+
+画质（编码器）：
+
+- 码率按像素数分档，每档包含其参考分辨率：≤1280×720 为 4 Mbps，≤1920×1080 为 8 Mbps，≤2560×1440 为 12 Mbps，更高为 20 Mbps；峰值为 1.5 倍，VBV 为 2 倍（`encoder/video_encoder_tuning.h`）。
+- 编码器先按画质控制、再封顶码率，预设提到中档：NVENC `p5`/`tune hq`/`vbr`/`cq 23`（打不开再试 `p4`），AMF `balanced`/`vbr_peak`，QSV `medium` + QVBR 23（再试普通 VBR），libx264 `veryfast`/`crf 23`/`zerolatency`（去掉了原来的 `x264-params` 覆盖）。之前分别是 `fast`、`speed`、`fast`、`ultrafast`。新模式打不开时，硬件编码器回退到原来的 CBR/VBR 设置（码率用新表）。
+
+画质（预览与采集）：
+
+- GPU 预览支路最高 720 行、15 fps（原为 360 行、8 fps），缩放改用双三次插值（`capture/gpu_preview.h`）。
+- 预览着色器按 BT.601 limited range 解码，黑色和白色不再发灰（`shaderSource/source.frag`）。
+- 预览纹理上传时 `GL_UNPACK_ALIGNMENT` 设为 1，修正宽度不是 4 的倍数（如 1366）时的画面错位；尺寸不变时只更新纹理内容；生成 mipmap，CPU 路径的全尺寸帧缩小显示时不再出现混叠（`opengl/ffglrenderer.cpp`）。
+- DirectShow 屏幕采集按屏幕的物理像素请求 `video_size`（之前在 150% 缩放的 2560×1440 屏幕上请求的是 1707×960）（`demuxer/dshow_video_size.h`）。
+
+界面：
+
+- 新界面录制页“最近录制”卡片上的播放和“在文件夹中显示”按钮现在可以单击了（之前整张卡片的 `MouseArea` 盖在按钮上方，按钮只能显示悬停效果；`ui/qml/pages/record/RecordingCard.qml`）。双击卡片其它位置仍然播放。
+
 
 - 屏幕采集有两个后端（设置页“Screen backend”或环境变量 `SUBREC_CAPTURE_BACKEND=auto|ddagrab|dshow`）：
-  - **Desktop Duplication（FFmpeg `ddagrab` 滤镜，默认 auto 时优先）**：无需第三方组件；NVIDIA/AMD 上 D3D11 帧直接交给 `h264_nvenc`/`h264_amf`，其它情况下载到内存转 yuv420p。GPU 直通仍从独立的 hwdownload 预览支路生成约 360p、8 fps 的 yuv420p 画面。**尚未在真机上验证**（见 `tools/pc2_verify.ps1`）。只能采集默认显卡上的显示器；遇到 UAC/锁屏/分辨率变化时视频流结束（文件保留）。
+  - **Desktop Duplication（FFmpeg `ddagrab` 滤镜，默认 auto 时优先）**：无需第三方组件；NVIDIA/AMD 上 D3D11 帧直接交给 `h264_nvenc`/`h264_amf`，其它情况下载到内存转 yuv420p。GPU 直通仍从独立的 hwdownload 预览支路生成最高 720 行、15 fps 的 yuv420p 画面。**尚未在真机上验证**（见 `tools/pc2_verify.ps1`）。只能采集默认显卡上的显示器；遇到 UAC/锁屏/分辨率变化时视频流结束（文件保留）。
   - **DirectShow（dshow）+ `screen-capture-recorder`**：需用户自行安装该第三方组件；ddagrab 打不开时自动回退到它（若已安装）。
 - 原生 WASAPI loopback 已在 `capture/wasapi_*` 实现，是默认系统声音后端；`SUBREC_SYSTEM_AUDIO_BACKEND` 为 `auto`（默认）或 `wasapi` 时行为相同：优先 WASAPI；没有 WASAPI 设备或打开失败时，若已自行安装 `virtual-audio-capturer`（DirectShow，本仓库不包含）则回退到它（混音模式不回退）；`dshow` 直接使用 `virtual-audio-capturer`。麦克风与摄像头走 DirectShow；WGC 未实现。
 - 系统音频和麦克风按钮可以独立打开；两者同时打开时使用 WASAPI 系统音频与 DirectShow 麦克风混音。DirectShow 系统音频后端不支持混音，界面会显示提示。两者都关闭时输出不含音轨的无声 MP4，视频时钟独立推进，暂停时不推进。
@@ -42,7 +59,7 @@
 
 依赖：
 
-- Qt **6.5+**（工程预设使用 6.8.0），模块：Core、Gui、Widgets、Qml、Quick、Multimedia（QML 还使用 Quick Controls / Layouts / Effects、`Qt.labs.platform`、`Qt.labs.folderlistmodel`）。
+- Qt **6.5+**（工程预设使用 6.8.0），模块：Core、Gui、Widgets、Network、Qml、Quick、QuickControls2、Multimedia（QML 还使用 Quick Controls / Layouts / Effects、`QtQuick.Dialogs`、`QtCore`、`QtQuick.Shapes`、`Qt.labs.folderlistmodel`）。
 - CMake ≥ 3.21（使用 `CMakePresets.json` 需 ≥ 3.25），Ninja，C++17 编译器（CI 与预设使用 MinGW 13.1 x64）。
 - **FFmpeg 共享库（shared）**：**本仓库不含 FFmpeg，需自行提供。** 需要 `include/`、`lib/`（`avcodec` `avformat` `avutil` `swscale` `swresample` `avfilter` `avdevice` 的 `.lib`/`.dll.a`）、`bin/`（DLL）。用 `-DFFMPEG_ROOT=<目录>` 或环境变量 `SUBREC_FFMPEG_ROOT` 指定；**未指定时 CMake 会报错并给出提示**。推荐使用本仓库的脚本 [`packaging/ffmpeg/build-ffmpeg.sh`](packaging/ffmpeg/README.md) 从固定的上游源码交叉编译最小 FFmpeg（Linux 主机 + MinGW-w64；FFmpeg **n8.0.3**，commit `8ae0b349`；x264 stable `b35605ac`；libvpl v2.16.0；nv-codec-headers n12.2.72.0；AMF v1.5.3；`--enable-gpl --enable-libx264`，**无** `--enable-version3`、**无** `--enable-nonfree`；DLL：`avutil-60` `avcodec-62` `avformat-62` `avfilter-11` `avdevice-62` `swscale-9` `swresample-6`，合计约 11 MB），产物目录即可作为 `FFMPEG_ROOT`；CI 的 `ffmpeg` job 做同样的事并把产物交给 Windows job。其它 FFmpeg 构建需自行验证 API 兼容性。源码：<https://git.ffmpeg.org/ffmpeg.git>。
 
@@ -61,6 +78,8 @@ build/windows-mingw-release/appSubRec.exe
 ```
 
 可选：`-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` 关闭 Windows 下默认开启的全部 CTest 测试。按 CI 的方式在本地运行测试：构建 `subrec_tests` 目标后执行 `ctest --test-dir <build> -L "^ci$" -LE "^(device|needs_ffmpeg_test_components|needs_powershell)$" --output-on-failure`。
+
+界面：`-DSUBREC_BUILD_NEW_UI=ON` 构建新界面（QML 模块 `SubRec.Ui`，源码在 `ui/`）并默认启动它，加 `--old-ui` 参数可回到旧界面；默认 `OFF` 时只有旧界面。CI 打包的发布版使用 `ON` 构建。
 
 > 关于 FFmpeg 的许可：发布包中的 FFmpeg 是 **GPL-2.0-or-later** 构建（`--enable-gpl --enable-libx264`；无 version3、无 nonfree；与 SubRec 的 GPL-3.0 兼容）。本仓库不分发它；但发布包（zip 及将来的安装包）会包含它，因此发布包的 **`sources/` 目录附带对应源码**：`ffmpeg-n8.0.3.tar.xz`、`x264-b35605ace3dd.tar.xz`、`libvpl-v2.16.0.tar.xz`、`nv-codec-headers-n12.2.72.0.tar.xz`、`amf-headers-v1.5.3.tar.xz`、`subrec-ffmpeg-build-scripts.tar.xz`（构建脚本）、`BUILD_CONFIG.txt`（configure 参数、工具链版本、DLL 哈希）和 `SHA256SUMS`（合计约 18 MB）。发布包不含 x265，也**不含 `ffmpeg.exe`**（SubRec 从不启动它）。构建时的警告分类见 [`packaging/ffmpeg/BUILD_WARNINGS.md`](packaging/ffmpeg/BUILD_WARNINGS.md)；详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
 
@@ -103,6 +122,10 @@ build/windows-mingw-release/appSubRec.exe
 - 界面图标（`icons/*.png`）由项目维护者本人制作，与本项目其余代码一样按 **GPL-3.0** 发布。
 - `reference/ffmpeg-fftools/ffmpeg_mux.c` 是保留原版权头的 FFmpeg 参考文件（LGPL-2.1+），仅供参考，不参与构建，不适用本项目的 CLA；详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
 
+### 友链
+
+- [LINUX DO](https://linux.do)
+
 ---
 
 ## English
@@ -121,10 +144,28 @@ SubRec (字录) is a Windows screen recorder built with **Qt 6 Quick (QML) and F
 - Elapsed-time display, configurable output folder / file name, and a "video" page that lists recorded files.
 - Control path: `QmlBridge → CaptureScheduler → CaptureSession → FFRecorder`.
 
+### What's new in v0.3.2-beta (since v0.3.1-beta)
+
+Quality (encoder):
+
+- Bit rate is tiered by pixel count, each tier including its reference size: up to 1280×720 4 Mbps, up to 1920×1080 8 Mbps, up to 2560×1440 12 Mbps, larger 20 Mbps; peak 1.5×, VBV 2× (`encoder/video_encoder_tuning.h`).
+- Encoders use capped quality with mid presets: NVENC `p5`/`tune hq`/`vbr`/`cq 23` (then `p4`), AMF `balanced`/`vbr_peak`, QSV `medium` with QVBR 23 (then plain VBR), libx264 `veryfast`/`crf 23`/`zerolatency` (the old `x264-params` overrides are gone). Previously `fast`, `speed`, `fast` and `ultrafast`. If a newer mode does not open, hardware encoders fall back to the previous CBR/VBR settings with the new bit rate table.
+
+Quality (preview and capture):
+
+- The GPU preview branch runs at up to 720 rows and 15 fps (was 360 rows, 8 fps) and scales with bicubic instead of bilinear (`capture/gpu_preview.h`).
+- The preview shader decodes BT.601 limited range, so black and white are no longer greyed out (`shaderSource/source.frag`).
+- Preview texture uploads use `GL_UNPACK_ALIGNMENT` 1, fixing skewed images when a plane width is not a multiple of 4 (e.g. 1366); unchanged sizes update the textures in place; mipmaps keep full-size CPU-path frames from aliasing when shrunk into the preview (`opengl/ffglrenderer.cpp`).
+- DirectShow screen capture requests the screen's physical pixels as `video_size` (a 2560×1440 screen at 150 % used to request 1707×960) (`demuxer/dshow_video_size.h`).
+
+Interface:
+
+- The play and "Show in folder" buttons on the new interface's recent-recording cards (record page) can now be clicked. The card's full-size `MouseArea` used to sit above them, so they only showed hover feedback (`ui/qml/pages/record/RecordingCard.qml`). Double-clicking elsewhere on the card still plays.
+
 ### Known limitations (stated honestly)
 
 - Screen capture has two backends (settings page "Screen backend", or `SUBREC_CAPTURE_BACKEND=auto|ddagrab|dshow`):
-  - **Desktop Duplication (FFmpeg's `ddagrab` filter, preferred by `auto`)**: no third-party component; on NVIDIA/AMD the D3D11 frames go straight to `h264_nvenc`/`h264_amf`, otherwise they are downloaded and converted to yuv420p. GPU passthrough uses a separate hwdownload preview branch at about 360p and 8 fps. **Not yet verified on real hardware** (see `tools/pc2_verify.ps1`). Only displays on the default GPU; a UAC prompt, lock screen or resolution change ends the video stream (the file is kept).
+  - **Desktop Duplication (FFmpeg's `ddagrab` filter, preferred by `auto`)**: no third-party component; on NVIDIA/AMD the D3D11 frames go straight to `h264_nvenc`/`h264_amf`, otherwise they are downloaded and converted to yuv420p. GPU passthrough uses a separate hwdownload preview branch at up to 720 rows and 15 fps. **Not yet verified on real hardware** (see `tools/pc2_verify.ps1`). Only displays on the default GPU; a UAC prompt, lock screen or resolution change ends the video stream (the file is kept).
   - **DirectShow (dshow) + `screen-capture-recorder`**: the third-party filter must be installed by you; used automatically if ddagrab cannot open (when installed).
 - Native WASAPI loopback is implemented in `capture/wasapi_*` and is the default system audio backend. `SUBREC_SYSTEM_AUDIO_BACKEND=auto` (default) and `wasapi` behave the same: WASAPI is preferred, and if no WASAPI device is available or it fails to open, capture falls back to the separately installed `virtual-audio-capturer` (DirectShow, not bundled) when present (no fallback in mixed mode). `dshow` uses `virtual-audio-capturer` directly. Microphone and camera use DirectShow; WGC is not implemented.
 - System audio and microphone buttons are independent. Mixed mode uses WASAPI system audio plus a DirectShow microphone; the UI explains why a DirectShow system backend cannot be mixed. With both buttons off, SubRec writes a video-only MP4 without an audio track. Its video clock advances independently and excludes paused frames. See [audio modes](docs/AUDIO_MIXING.md).
@@ -136,7 +177,7 @@ SubRec (字录) is a Windows screen recorder built with **Qt 6 Quick (QML) and F
 
 Requirements:
 
-- Qt **6.5+** (presets use 6.8.0): Core, Gui, Widgets, Qml, Quick, Multimedia (QML additionally uses Quick Controls / Layouts / Effects, `Qt.labs.platform`, `Qt.labs.folderlistmodel`).
+- Qt **6.5+** (presets use 6.8.0): Core, Gui, Widgets, Network, Qml, Quick, QuickControls2, Multimedia (QML additionally uses Quick Controls / Layouts / Effects, `QtQuick.Dialogs`, `QtCore`, `QtQuick.Shapes`, `Qt.labs.folderlistmodel`).
 - CMake ≥ 3.21 (≥ 3.25 to use `CMakePresets.json`), Ninja, a C++17 compiler (CI and the preset use MinGW 13.1 x64).
 - **FFmpeg shared libraries**: **this repository does not include FFmpeg; you must provide it.** You need `include/`, `lib/` (import libraries for `avcodec avformat avutil swscale swresample avfilter avdevice`) and `bin/` (DLLs). Point to it with `-DFFMPEG_ROOT=<dir>` or the `SUBREC_FFMPEG_ROOT` environment variable; **CMake stops with a clear error if it is not set**. The recommended way is the repository's script [`packaging/ffmpeg/build-ffmpeg.sh`](packaging/ffmpeg/README.md), which cross-compiles a minimal FFmpeg from pinned upstream sources (Linux host + MinGW-w64; FFmpeg **n8.0.3**, commit `8ae0b349`; x264 stable `b35605ac`; libvpl v2.16.0; nv-codec-headers n12.2.72.0; AMF v1.5.3; `--enable-gpl --enable-libx264`, **no** `--enable-version3`, **no** `--enable-nonfree`; DLLs: `avutil-60` `avcodec-62` `avformat-62` `avfilter-11` `avdevice-62` `swscale-9` `swresample-6`, about 11 MB together). The output directory can be used directly as `FFMPEG_ROOT`; the CI `ffmpeg` job does the same and hands the result to the Windows job. Other FFmpeg builds need their API compatibility checked. Source: <https://git.ffmpeg.org/ffmpeg.git>.
 
@@ -155,6 +196,8 @@ build/windows-mingw-release/appSubRec.exe
 ```
 
 Optional: `-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` disables all CTest tests, which are ON by default on Windows. To run the tests locally the way CI does, build the `subrec_tests` target and run `ctest --test-dir <build> -L "^ci$" -LE "^(device|needs_ffmpeg_test_components|needs_powershell)$" --output-on-failure`.
+
+Interface: `-DSUBREC_BUILD_NEW_UI=ON` builds the new interface (QML module `SubRec.Ui`, sources in `ui/`) and starts on it; pass `--old-ui` to fall back to the old one. With the default `OFF` only the old interface is built. The release packages built by CI use `ON`.
 
 > FFmpeg licensing note: the FFmpeg in the release packages is a **GPL-2.0-or-later** build (`--enable-gpl --enable-libx264`; no version3, no nonfree; compatible with SubRec's GPL-3.0). This repository does not distribute it, but the release packages (zip, and any future installer) do include it, so every package carries the corresponding source in its **`sources/` directory**: `ffmpeg-n8.0.3.tar.xz`, `x264-b35605ace3dd.tar.xz`, `libvpl-v2.16.0.tar.xz`, `nv-codec-headers-n12.2.72.0.tar.xz`, `amf-headers-v1.5.3.tar.xz`, `subrec-ffmpeg-build-scripts.tar.xz` (the build scripts), `BUILD_CONFIG.txt` (configure arguments, toolchain versions, DLL hashes) and `SHA256SUMS` (about 18 MB in total). The packages contain no x265 and **no `ffmpeg.exe`** (SubRec never starts it). Build warnings are classified in [`packaging/ffmpeg/BUILD_WARNINGS.md`](packaging/ffmpeg/BUILD_WARNINGS.md). See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
@@ -200,13 +243,17 @@ This is a personal open-source project and **does not use a code-signing certifi
 - The UI icons (`icons/*.png`) were created by the project maintainer and are released under **GPL-3.0**, like the rest of the project.
 - `reference/ffmpeg-fftools/ffmpeg_mux.c` is a reference file from FFmpeg that keeps its original copyright header (LGPL-2.1+). It is for reference only, is not part of the build, and is not covered by this project's CLA; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
+### Friends
+
+- [LINUX DO](https://linux.do)
+
 ### GPU preview implementation and verification
 
 The ddagrab GPU graph splits unchanged D3D11 frames to the encoder and a second
 hardware sink. Capture drains that sink with `AV_BUFFERSINK_FLAG_NO_REQUEST`,
 then offers references through a single pending-frame slot without waiting for
-the consumer. A separate worker graph runs `fps=8,hwdownload,format=bgra,scale,...,format=yuv420p`
-to a software preview sink (even dimensions, height at most 360). This worker
+the consumer. A separate worker graph runs `fps=15,hwdownload,format=bgra,scale,...,format=yuv420p`
+to a software preview sink (even dimensions, height at most 720, bicubic scaling). This worker
 boundary keeps GPU transfers and conversion off the recording thread. It also
 works when the encoder downloads GPU frames internally; only the GPU branch
 submits preview in that mode. CPU capture retains its existing preview path.
@@ -216,7 +263,7 @@ requires the production `split` and `fps` filters as well as `hwdownload`,
 `format`, and `scale`. Every five seconds while frames arrive,
 `[Preview] gpu-branch frames=N fps=X dropped=Y` reports converted preview frames,
 interval rate, and drops from the pending slot/conversion output/GUI handoff.
-Normal 8 fps sampling is not a drop. GUI stalls replace pending frames instead
+Normal 15 fps sampling is not a drop. GUI stalls replace pending frames instead
 of growing queues. A conversion failure is logged and leaves recording running.
 Verify NVENC passthrough and GPU-to-CPU encoder fallback on Windows, including
 GUI stalls, sustained capture rate, and pause/stop/restart. D3D11 driver/device
