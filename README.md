@@ -1,13 +1,11 @@
-<!-- 发布前请替换 <OWNER> 占位符（GitHub 用户名或组织名）。 / Replace the <OWNER> placeholder (GitHub user or organization) before publishing. -->
-
 # 字录 · SubRec
 
 **录屏即出片 · Record once, get a finished video.**
 
 [中文](#中文) | [English](#english)
 
-> Status / 状态：早期原型（early prototype）。仅 Windows。构建说明基于对源码的阅读，**尚未在 Windows 上完整构建并录制验证**。
-> Windows only. Build notes are derived from reading the sources and have **not yet been verified by a full build and recording on Windows**.
+> Status / 状态：早期原型（early prototype）。仅 Windows。Windows 版由 GitHub Actions 构建并打包（`.github/workflows/windows-build.yml`），维护者也在 Windows 10 实机上做过录制验证；但实机测试覆盖的硬件、驱动和系统版本有限，各采集后端与编码器的组合**尚未全部验证**。
+> Windows only. Windows builds and packages are produced by GitHub Actions (`.github/workflows/windows-build.yml`), and the maintainer has verified recording on a real Windows 10 machine. Real-hardware coverage of hardware, drivers and OS versions is limited, and **not every combination of capture backend and encoder has been verified**.
 
 ---
 
@@ -24,7 +22,7 @@
 - **实时预览**：CPU 模式由编码线程提交 YUV 帧；GPU 模式由独立工作线程转换预览帧，再送入 OpenGL（GLSL）预览控件。
 - 显式的媒体流水线：demux → decode → filter → encode → mux，带有界阻塞队列。
 - 编码器按顺序尝试 **NVENC → AMD AMF → Intel QSV → libx264（软件）**，取第一个可用者（`encoder/ffvencoder.cpp`）。
-- 录制过程中显示计时；可选择输出目录和文件名；“视频”页可浏览已录制文件。
+- 录制过程中显示计时；可选择输出目录和文件名；可浏览已录制文件（新界面的“录像库”页，旧界面的“视频”页）。
 - 控制链路：`QmlBridge → CaptureScheduler → CaptureSession → FFRecorder`。
 
 ### v0.3.2-beta 更新（相对 v0.3.1-beta）
@@ -51,8 +49,10 @@
   - **DirectShow（dshow）+ `screen-capture-recorder`**：需用户自行安装该第三方组件；ddagrab 打不开时自动回退到它（若已安装）。
 - 原生 WASAPI loopback 已在 `capture/wasapi_*` 实现，是默认系统声音后端；`SUBREC_SYSTEM_AUDIO_BACKEND` 为 `auto`（默认）或 `wasapi` 时行为相同：优先 WASAPI；没有 WASAPI 设备或打开失败时，若已自行安装 `virtual-audio-capturer`（DirectShow，本仓库不包含）则回退到它（混音模式不回退）；`dshow` 直接使用 `virtual-audio-capturer`。麦克风与摄像头走 DirectShow；WGC 未实现。
 - 系统音频和麦克风按钮可以独立打开；两者同时打开时使用 WASAPI 系统音频与 DirectShow 麦克风混音。DirectShow 系统音频后端不支持混音，界面会显示提示。两者都关闭时输出不含音轨的无声 MP4，视频时钟独立推进，暂停时不推进。
-- “设置”“滤镜”等部分界面尚未完成（见 Issues）。
-- 目前没有视频剪辑功能；“视频”页只是已录制文件的列表。
+- 界面有新旧两套（如何构建见“构建”一节）：
+  - **新界面**（发布包默认）：分“录制”“录像库”“设置”三页。“录像库”列出已录制文件，可按名称、录制时间、大小排序，可播放、在文件夹中显示、复制路径、删除（移到回收站）。“设置”有常规、输出、设备、快捷键、高级、关于等子页；输出格式固定为 MP4（H.264 + AAC），视频编码器只显示、不能手动选择。字幕相关的界面已经有了，但语音识别服务尚未接入，所以字幕设置页不显示，也不会生成字幕。
+  - **旧界面**（默认构建，或新界面构建加 `--old-ui` 启动）：分“主页”“设置”“视频”三项。“视频”页只是已录制文件的列表（可刷新、打开文件夹）；设置页里的“Start recording on launch”“Show FPS overlay”“Output Format”三项还没有接到实际功能上。
+- 两套界面都没有滤镜和视频剪辑功能。
 - 代码注释以中文为主。
 
 ### 构建（Windows）
@@ -60,7 +60,7 @@
 依赖：
 
 - Qt **6.5+**（工程预设使用 6.8.0），模块：Core、Gui、Widgets、Network、Qml、Quick、QuickControls2、Multimedia（QML 还使用 Quick Controls / Layouts / Effects、`QtQuick.Dialogs`、`QtCore`、`QtQuick.Shapes`、`Qt.labs.folderlistmodel`）。
-- CMake ≥ 3.21（使用 `CMakePresets.json` 需 ≥ 3.25），Ninja，C++17 编译器（CI 与预设使用 MinGW 13.1 x64）。
+- CMake ≥ 3.21：默认会一并配置测试，`tests/` 下的 CMakeLists 要求 3.21；用 `-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` 只构建程序时，根 `CMakeLists.txt` 声明的是 3.16；使用 `CMakePresets.json` 需 ≥ 3.25。CI 用的是 GitHub `windows-latest` 预装的 CMake，没有固定版本。另需 Ninja，C++17 编译器（CI 与预设使用 MinGW 13.1 x64）。
 - **FFmpeg 共享库（shared）**：**本仓库不含 FFmpeg，需自行提供。** 需要 `include/`、`lib/`（`avcodec` `avformat` `avutil` `swscale` `swresample` `avfilter` `avdevice` 的 `.lib`/`.dll.a`）、`bin/`（DLL）。用 `-DFFMPEG_ROOT=<目录>` 或环境变量 `SUBREC_FFMPEG_ROOT` 指定；**未指定时 CMake 会报错并给出提示**。推荐使用本仓库的脚本 [`packaging/ffmpeg/build-ffmpeg.sh`](packaging/ffmpeg/README.md) 从固定的上游源码交叉编译最小 FFmpeg（Linux 主机 + MinGW-w64；FFmpeg **n8.0.3**，commit `8ae0b349`；x264 stable `b35605ac`；libvpl v2.16.0；nv-codec-headers n12.2.72.0；AMF v1.5.3；`--enable-gpl --enable-libx264`，**无** `--enable-version3`、**无** `--enable-nonfree`；DLL：`avutil-60` `avcodec-62` `avformat-62` `avfilter-11` `avdevice-62` `swscale-9` `swresample-6`，合计约 11 MB），产物目录即可作为 `FFMPEG_ROOT`；CI 的 `ffmpeg` job 做同样的事并把产物交给 Windows job。其它 FFmpeg 构建需自行验证 API 兼容性。源码：<https://git.ffmpeg.org/ffmpeg.git>。
 
 ```powershell
@@ -100,7 +100,7 @@ build/windows-mingw-release/appSubRec.exe
 
 本项目是个人开源项目，**没有购买代码签名证书**，因此发布的 `.exe` / 安装包**没有数字签名**。首次运行时 Windows SmartScreen 可能弹出“Windows 已保护你的电脑 / 无法识别的应用”（发布者显示为“未知发布者”）。这是未签名程序的正常现象，**不代表**文件已被判定为恶意；但也意味着系统无法替你确认来源，请自行核对：
 
-1. **只从本项目官方 Release 页面下载**（`https://github.com/<OWNER>/SubRec/releases`，发布前替换 `<OWNER>`）。不要运行来自网盘转载、第三方下载站或他人转发的同名文件。
+1. **只从本项目官方 Release 页面下载**（<https://github.com/wocaonima335/SubRec/releases>）。不要运行来自网盘转载、第三方下载站或他人转发的同名文件。
 2. **校验 SHA256**（强烈建议）：每个发布文件旁会附带 SHA256 校验值（Release 说明或随附的 `SHA256SUMS.txt` 文件）。在 PowerShell 中执行：
 
    ```powershell
@@ -141,7 +141,7 @@ SubRec (字录) is a Windows screen recorder built with **Qt 6 Quick (QML) and F
 - **Live preview**: CPU frames come from the encoder thread; GPU frames use an independent conversion worker. Both feed YUV frames to an OpenGL (GLSL) preview item.
 - Explicit media pipeline: demux → decode → filter → encode → mux, connected by bounded blocking queues.
 - Video encoder selection in order **NVENC → AMD AMF → Intel QSV → libx264 (software)**; the first usable one wins (`encoder/ffvencoder.cpp`).
-- Elapsed-time display, configurable output folder / file name, and a "video" page that lists recorded files.
+- Elapsed-time display, configurable output folder / file name, and a list of recorded files (the "录像库" library page in the new interface, the "视频" video page in the old one).
 - Control path: `QmlBridge → CaptureScheduler → CaptureSession → FFRecorder`.
 
 ### What's new in v0.3.2-beta (since v0.3.1-beta)
@@ -169,8 +169,10 @@ Interface:
   - **DirectShow (dshow) + `screen-capture-recorder`**: the third-party filter must be installed by you; used automatically if ddagrab cannot open (when installed).
 - Native WASAPI loopback is implemented in `capture/wasapi_*` and is the default system audio backend. `SUBREC_SYSTEM_AUDIO_BACKEND=auto` (default) and `wasapi` behave the same: WASAPI is preferred, and if no WASAPI device is available or it fails to open, capture falls back to the separately installed `virtual-audio-capturer` (DirectShow, not bundled) when present (no fallback in mixed mode). `dshow` uses `virtual-audio-capturer` directly. Microphone and camera use DirectShow; WGC is not implemented.
 - System audio and microphone buttons are independent. Mixed mode uses WASAPI system audio plus a DirectShow microphone; the UI explains why a DirectShow system backend cannot be mixed. With both buttons off, SubRec writes a video-only MP4 without an audio track. Its video clock advances independently and excludes paused frames. See [audio modes](docs/AUDIO_MIXING.md).
-- Some UI pages (settings, filters) are incomplete (see the issue tracker).
-- There is no video editing; the "video" page is only a list of recorded files.
+- There are two interfaces (see "Building" for how each is built):
+  - **New interface** (the default in release packages): "录制" (record), "录像库" (library) and "设置" (settings). The library lists recordings, sorts by name, recording time or size, and can play, show in folder, copy the path and delete (move to the Recycle Bin). Settings has general, output, devices, hotkeys, advanced and about pages; the output format is fixed to MP4 (H.264 + AAC) and the video encoder is shown, not selectable. Subtitle UI exists, but no speech-recognition service is connected yet, so the subtitle settings page is hidden and no subtitles are produced.
+  - **Old interface** (default build, or a new-interface build started with `--old-ui`): "主页" (home), "设置" (settings) and "视频" (video). The video page is only a list of recorded files (refresh, open folder); the settings page's "Start recording on launch", "Show FPS overlay" and "Output Format" controls are not wired to anything yet.
+- Neither interface has filters or video editing.
 - Code comments are mostly in Chinese.
 
 ### Building (Windows)
@@ -178,7 +180,7 @@ Interface:
 Requirements:
 
 - Qt **6.5+** (presets use 6.8.0): Core, Gui, Widgets, Network, Qml, Quick, QuickControls2, Multimedia (QML additionally uses Quick Controls / Layouts / Effects, `QtQuick.Dialogs`, `QtCore`, `QtQuick.Shapes`, `Qt.labs.folderlistmodel`).
-- CMake ≥ 3.21 (≥ 3.25 to use `CMakePresets.json`), Ninja, a C++17 compiler (CI and the preset use MinGW 13.1 x64).
+- CMake ≥ 3.21: tests are configured by default and the `tests/` CMakeLists require 3.21; with `-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` (app only) the root `CMakeLists.txt` declares 3.16; `CMakePresets.json` needs ≥ 3.25. CI uses the CMake preinstalled on GitHub's `windows-latest` image, not a pinned version. Also Ninja, a C++17 compiler (CI and the preset use MinGW 13.1 x64).
 - **FFmpeg shared libraries**: **this repository does not include FFmpeg; you must provide it.** You need `include/`, `lib/` (import libraries for `avcodec avformat avutil swscale swresample avfilter avdevice`) and `bin/` (DLLs). Point to it with `-DFFMPEG_ROOT=<dir>` or the `SUBREC_FFMPEG_ROOT` environment variable; **CMake stops with a clear error if it is not set**. The recommended way is the repository's script [`packaging/ffmpeg/build-ffmpeg.sh`](packaging/ffmpeg/README.md), which cross-compiles a minimal FFmpeg from pinned upstream sources (Linux host + MinGW-w64; FFmpeg **n8.0.3**, commit `8ae0b349`; x264 stable `b35605ac`; libvpl v2.16.0; nv-codec-headers n12.2.72.0; AMF v1.5.3; `--enable-gpl --enable-libx264`, **no** `--enable-version3`, **no** `--enable-nonfree`; DLLs: `avutil-60` `avcodec-62` `avformat-62` `avfilter-11` `avdevice-62` `swscale-9` `swresample-6`, about 11 MB together). The output directory can be used directly as `FFMPEG_ROOT`; the CI `ffmpeg` job does the same and hands the result to the Windows job. Other FFmpeg builds need their API compatibility checked. Source: <https://git.ffmpeg.org/ffmpeg.git>.
 
 ```powershell
@@ -221,7 +223,7 @@ and [release checklist](docs/WINDOWS_INSTALLER_RELEASE.md).
 
 This is a personal open-source project and **does not use a code-signing certificate**, so the released `.exe` / installer is **not digitally signed**. On first launch Windows SmartScreen may show "Windows protected your PC" / "unrecognized app" with the publisher listed as "Unknown publisher". This is expected for unsigned software and does **not** mean the file has been judged malicious — but it also means Windows cannot vouch for where it came from, so please verify it yourself:
 
-1. **Download only from this project's official Releases page** (`https://github.com/<OWNER>/SubRec/releases`; replace `<OWNER>` before publishing). Do not run same-named files from mirrors, file-sharing links or third-party download sites.
+1. **Download only from this project's official Releases page** (<https://github.com/wocaonima335/SubRec/releases>). Do not run same-named files from mirrors, file-sharing links or third-party download sites.
 2. **Verify the SHA256** (strongly recommended). The SHA256 of every release file is published next to it (in the release notes or the attached `SHA256SUMS.txt` file). In PowerShell:
 
    ```powershell

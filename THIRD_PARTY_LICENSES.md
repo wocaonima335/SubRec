@@ -89,7 +89,7 @@ The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.s
 
 ## 2. Qt 6
 
-**证据 [文件]：**`CMakeLists.txt`：`find_package(Qt6 COMPONENTS Quick Qml Multimedia Widgets Gui)`，`qt_standard_project_setup(REQUIRES 6.5)`；各子模块 `target_link_libraries` 使用 `Qt6::Core/Gui/Widgets/Qml/Quick/Multimedia`；预设与 CI 使用 Qt **6.8.0** MinGW 64 位。QML 导入：`QtQuick`、`QtQuick.Controls`（含 `Material` 样式）、`QtQuick.Layouts`、`QtQuick.Window`、`QtQuick.Effects`、`Qt.labs.platform`、`Qt.labs.folderlistmodel`。源码另使用 `QOpenGLShaderProgram/QOpenGLFunctions`（Qt Gui）、`QQuickFramebufferObject`（Qt Quick）、`QAudioOutput/QAudioDevice`（Qt Multimedia）。
+**证据 [文件]：**`CMakeLists.txt`：`find_package(Qt6 COMPONENTS Quick Qml Multimedia Widgets Gui)`，`qt_standard_project_setup(REQUIRES 6.5)`；各子模块 `target_link_libraries` 使用 `Qt6::Core/Gui/Widgets/Qml/Quick/Multimedia`；预设与 CI 使用 Qt **6.8.0** MinGW 64 位。QML 导入：`QtQuick`、`QtQuick.Controls`（含 `Material` 样式）、`QtQuick.Layouts`、`QtQuick.Window`、`QtQuick.Effects`、`Qt.labs.folderlistmodel`（旧界面 `qml/cuttingpage.qml`；`Qt.labs.platform` 已不再使用，文件夹选择改用 `QtQuick.Dialogs`，见 b020f9d）。源码另使用 `QOpenGLShaderProgram/QOpenGLFunctions`（Qt Gui）、`QQuickFramebufferObject`（Qt Quick）、`QAudioOutput/QAudioDevice`（Qt Multimedia）。
 
 | Qt 模块 / Module | 用途 | 开源许可（Qt 6）[知识] |
 | --- | --- | --- |
@@ -99,7 +99,7 @@ The FFmpeg of the official packages is built by `packaging/ffmpeg/build-ffmpeg.s
 | Qt Qml | QML 引擎 | 同上 |
 | Qt Quick（含 Controls 2、Layouts、Window、Effects、Material 样式） | 界面、`QQuickFramebufferObject` 预览 | 同上 |
 | Qt Multimedia | 音频输出/设备 | 同上（Qt 6.5+ 的 Windows 版本使用基于 FFmpeg 的后端，其自带的 FFmpeg 为 **LGPL 构建**，与本项目所用的 GPL FFmpeg 是**两套独立库**；需确认两套 DLL 名称/版本不冲突，并在发布物中分别注明） |
-| `Qt.labs.platform` / `Qt.labs.folderlistmodel` | 系统对话框、文件列表 | 同上（实验性 labs 模块，API 可能变动） |
+| `Qt.labs.folderlistmodel` | 文件列表（旧界面“视频”页 `qml/cuttingpage.qml`） | 同上（实验性 labs 模块，API 可能变动） |
 | Qt 内部捆绑的第三方代码（libpng、libjpeg、zlib、freetype、harfbuzz 等） | 随 Qt DLL 分发 | 各自许可，需在发布物中带上 Qt 的第三方声明 |
 
 **未使用**（因此不触发）的 GPL-only/商业-only Qt 附加模块 [知识]：如 Qt Charts、Qt Data Visualization、Qt Virtual Keyboard、Qt Quick 3D Physics 等。如果将来引入，必须重新核对其许可证（这些模块可能仅提供 GPLv3 或商业授权，将直接阻断闭源商业版本）。
