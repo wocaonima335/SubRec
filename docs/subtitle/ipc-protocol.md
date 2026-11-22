@@ -2,6 +2,7 @@
 
 状态：M0 冻结（2026-11-22）。依据 `design-live-v2.md` §7.2–§7.6、§10.3 C、§11.1；上版 `design-verified.md` §11.3 C。
 代码契约：`subtitle/host/asr_protocol.h`（结构体、常量、`encode`/`decode`），本文与之逐字段一致；任何一方修改都要同时改另一方，并经 Codex 终端与 ZCode 终端双方同意。
+子进程：源码在 `tools/asr_host/`（CMake 工程 `SubRecAsrHost`），安装后为 `{app}\asr\subrec-asr.exe`（安装目录名仍叫 `asr/`）。
 
 ## 1. 通道与通则
 
@@ -112,9 +113,9 @@
 
 两层，都不需要模型：
 
-1. **进程内假引擎**：`subrec-asr --engine=fake --fake=<k=v,...>` 或 `load{request:{engineId:"fake"}, fakeOptions:"..."}`。只有环境变量 `SUBREC_ASR_TEST_HOOKS=1` 时可用（主进程只在自身 `hooksEnabled()` 时设置），否则 `EngineUnknown`(300)。参数（`asr/src/engine_fake.h` 为准）：
+1. **进程内假引擎**：`subrec-asr --engine=fake --fake=<k=v,...>` 或 `load{request:{engineId:"fake"}, fakeOptions:"..."}`。只有环境变量 `SUBREC_ASR_TEST_HOOKS=1` 时可用（主进程只在自身 `hooksEnabled()` 时设置），否则 `EngineUnknown`(300)。参数（`tools/asr_host/src/engine_fake.h` 为准）：
    `rtf`、`crashAtSeg`、`hangAtSeg`、`hangAll`、`oomAtSeg`、`illegalInstr`、`garbageStdout`、`loadFail`、`partialNoise`、`partialRegress`、`finalDiffers`、`lang`（zh/en/mix）、`refineRtf`、`refineEmpty`、`seed`。输出 final 文本 `"第<id>段"`，按段长均匀生成 token 时间戳。
-2. **进程外假宿主**：`subrec-asr-fakehost --script=<path>`，按脚本回放协议，用于 `AsrHostClient`/Runner/看门狗测试。脚本指令（`asr/fake_host/fake_host_script.h` 为准）：`expect <type>`、`send <json>`、`reply-hello [n]`、`hb <ms>|off`、`sleep <ms>`、`garbage <text>`、`longline <bytes>`、`exit <code>`、`crash`、`hang`。示例：
+2. **进程外假宿主**：`subrec-asr-fakehost --script=<path>`，按脚本回放协议，用于 `AsrHostClient`/Runner/看门狗测试。脚本指令（`tools/asr_host/fake_host/fake_host_script.h` 为准）：`expect <type>`、`send <json>`、`reply-hello [n]`、`hb <ms>|off`、`sleep <ms>`、`garbage <text>`、`longline <bytes>`、`exit <code>`、`crash`、`hang`。示例：
 
 ```
 reply-hello

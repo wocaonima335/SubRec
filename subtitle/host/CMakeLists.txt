@@ -1,4 +1,4 @@
-# subtitle_protocol：asr_protocol.h/.cpp，编解码实现归工作包 C；asr/ 子进程直接编译同一个 .cpp。
+# subtitle_protocol：asr_protocol.h/.cpp，编解码实现归工作包 C；tools/asr_host 子进程直接编译同一个 .cpp。
 add_library(subtitle_protocol STATIC
     asr_protocol.h
     asr_protocol.cpp

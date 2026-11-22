@@ -3,7 +3,7 @@
 // 上版 design-verified.md §11.3 C）。完整字段表、时序与示例见 docs/subtitle/ipc-protocol.md，两者必须一致。
 //
 // 接口归属：M0。编解码实现 asr_protocol.cpp 归工作包 C（ZCode 终端）；主进程侧使用方是工作包 D。
-// 纯 C++17，无 Qt、无 FFmpeg：主进程（MinGW，经 CMake 目标 subtitle_protocol）与 asr/ 子进程（MSVC，
+// 纯 C++17，无 Qt、无 FFmpeg：主进程（MinGW，经 CMake 目标 subtitle_protocol）与 tools/asr_host 子进程（MSVC，
 // 直接编译 asr_protocol.cpp）共用同一份源码。只 include subtitle_types.h / subtitle_error.h。
 //
 // 通则

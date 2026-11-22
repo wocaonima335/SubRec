@@ -1,9 +1,10 @@
 # subrec-asr：AI 字幕识别宿主子进程（M0 骨架）。design-live-v2.md §9.1、§10.3 C、§11.1；D12（MSVC）。
 #
-# 独立工程，不依赖 Qt、FFmpeg，也不被顶层 CMakeLists.txt 构建（主程序是 MinGW，宿主按 D12 用 MSVC，
-# CI 由集成挂接点 I7 新增单独 job）。M0 不链接 sherpa-onnx、不下载任何模型。
-#
-#   cmake -S asr -B build-asr && cmake --build build-asr
+# 源码目录 tools/asr_host/；安装目录名仍是 asr/（运行时 {app}\asr\subrec-asr.exe），二者不要混淆。
+# 不依赖 Qt、FFmpeg。M0 不链接 sherpa-onnx、不下载任何模型。两种用法：
+#   1) 独立（发布宿主按 D12 用 MSVC）：cmake -S tools/asr_host -B build-asr && cmake --build build-asr
+#   2) 仓库内：顶层 -DSUBREC_BUILD_SUBTITLE=ON 时随 subtitle/ 一起 add_subdirectory(tools/asr_host)，
+#      用主程序工具链（MinGW）编译，只作编译检查；appSubRec 不依赖它，也不复制到输出目录（I5 由包 G 做）。
 #
 # 目标
 #   subrec_asr_core          宿主内部库：引擎/VAD 接口、假引擎、运行时骨架 + 共享的协议编解码
@@ -25,7 +26,7 @@ if(MSVC)
     add_compile_options(/utf-8 /W4)
 endif()
 
-get_filename_component(SUBREC_ASR_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+get_filename_component(SUBREC_ASR_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(SUBREC_ASR_VERSION "0.0.0-m0" CACHE STRING "subrec-asr version string reported in hello")
 
 find_package(Threads REQUIRED)

@@ -13,7 +13,7 @@
 // - 同一数值同时用于 IPC 协议的 error{code} 字段与子进程退出码（见 docs/subtitle/ipc-protocol.md）。
 // - Status::message 是给日志用的诊断细节（UTF-8）。UI 中文文案由 SubtitleService 按 code 映射，
 //   不直接显示 message。
-// - 本头文件纯 C++17，无 Qt、无 FFmpeg；主进程与 asr/ 子进程都 include。
+// - 本头文件纯 C++17，无 Qt、无 FFmpeg；主进程与 tools/asr_host 子进程都 include。
 
 #include <cstdint>
 #include <string>

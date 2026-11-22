@@ -4,7 +4,7 @@
 //
 // 用途：Runner 与 RefineScheduler 不直接 new AsrHostClient，而是经工厂创建，测试即可注入「假 ASR」：
 // - 进程内假引擎：exePath = 真 subrec-asr，extraArguments = {"--engine=fake", "--fake=crashAtSeg=3,..."}；
-// - 进程外假宿主：exePath = subrec-asr-fakehost（asr/fake_host，按脚本回放协议消息）。
+// - 进程外假宿主：exePath = subrec-asr-fakehost（源码 tools/asr_host/fake_host，按脚本回放协议消息）。
 // 两种方式都不需要模型（docs/subtitle/ipc-protocol.md §8、design-live-v2.md §11.1）。
 // 线程：create 在 Runner 线程调用；返回对象归调用方所有（parent 为空时）。
 

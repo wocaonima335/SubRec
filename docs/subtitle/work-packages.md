@@ -7,13 +7,13 @@
 
 | 包 | 模块 / 文件（独占路径） | 负责方 | 里程碑 |
 |---|---|---|---|
-| M0 | `subtitle/*.h`、`subtitle/*/*.h`（接口冻结）、`subtitle/**/CMakeLists.txt` 骨架、`subtitle/m0_check/`、`asr/` 骨架、本目录文档 | 已完成（本提交） | M0 |
+| M0 | `subtitle/*.h`、`subtitle/*/*.h`（接口冻结）、`subtitle/**/CMakeLists.txt` 骨架、`subtitle/m0_check/`、`tools/asr_host/` 骨架、本目录文档 | 已完成 | M0 |
 | A | AudioTap `subtitle/tap/audio_tap.cpp`；MonoResampler16k、PcmSpool、IngestWorker `subtitle/audio/*.cpp`（替换 `audio_stubs.cpp`）；`tests/subtitle_tap`、`tests/subtitle_audio` | Codex 终端 | M1 |
 | B | TextNormalizer、HallucinationFilter、CueBuilder、SubtitleWriters `subtitle/core/{text_normalizer,hallucination_filter,cue_builder,subtitle_writers}.cpp`（替换 `core_stubs.cpp`）；`tests/subtitle_core` | Codex 终端 | M1 |
 | K | Glossary、EventTags、ItnExtra `subtitle/core/{glossary,event_tags,itn_extra}.cpp`（替换 `rules_extra_stubs.cpp`）；`tests/subtitle_rules` | ZCode 终端 | M2/M3 |
 | H | LocalAgreement、SentenceFixer、SubtitleDocument、SubtitleMerger `subtitle/live/{local_agreement,sentence_fixer,subtitle_merger}.cpp`（替换 `merger_stubs.cpp`）；`tests/subtitle_live` 中 H 的用例 | Codex 终端 | M1 |
 | W | DegradeController、HostWatchdog `subtitle/live/{degrade_controller,host_watchdog}.cpp`（替换 `degrade_watchdog_stubs.cpp`）；`tests/subtitle_live` 中 W 的用例 | Codex 终端 | M1 |
-| C | subrec-asr 全部：`asr/**`（协议 IO、SpoolTailReader、段状态机、partial 调度、sherpa 引擎、假引擎、父进程看门、fake 宿主）；**协议编解码 `subtitle/host/asr_protocol.cpp`**；`packaging/asr/**`；`tests/asr_host` | ZCode 终端 | M1（Whisper 引擎 M2） |
+| C | subrec-asr 全部：`tools/asr_host/**`（协议 IO、SpoolTailReader、段状态机、partial 调度、sherpa 引擎、假引擎、父进程看门、fake 宿主）；**协议编解码 `subtitle/host/asr_protocol.cpp`**；`packaging/asr/**`；`tests/asr_host` | ZCode 终端 | M1（Whisper 引擎 M2） |
 | S0 | PC3 Spike：MSVC 宿主原型跑 SenseVoice + Silero VAD 尾随增长中的 WAV，测 RTF/partial 成本/RSS/启动耗时 | ZCode 终端 | M1 前 |
 | D | AsrHostClient + 工厂 `subtitle/host/asr_host_client.cpp`；SubtitleService、SubtitleJobRunner `subtitle/service/{subtitle_service,subtitle_job_runner}.cpp`（替换 `service_stubs.cpp`）；`tests/subtitle_host`、`tests/subtitle_service` | Codex 终端 | M1 |
 | R | RefineScheduler `subtitle/service/refine_scheduler.cpp`；`tests/subtitle_refine` | Codex 终端 | M2 |
@@ -35,7 +35,7 @@ M0（完成）
  │                                     （D 需要 H、W；需要 C 的 fake 宿主或 fake 引擎）
  │                                                          R（M2：需要 D、C 的 refine 命令与 Whisper 引擎）
  └─ ZCode 主线：S0 ─▶ C（先交付：协议编解码 + fake 引擎 + fake 宿主）─▶ E ─▶ F ─▶ K（M2）
-交汇点：M0 头文件；docs/subtitle/ipc-protocol.md；fake 宿主脚本格式与 --fake 参数（asr/fake_host/fake_host_script.h、asr/src/engine_fake.h）。
+交汇点：M0 头文件；docs/subtitle/ipc-protocol.md；fake 宿主脚本格式与 --fake 参数（tools/asr_host/fake_host/fake_host_script.h、tools/asr_host/src/engine_fake.h）。
 ```
 
 关键时间约束：**C 的「协议编解码 + 假引擎 + fake 宿主」必须早于 D 开始联调**；ZCode 应在 S0 之后优先交付这三项（不依赖 sherpa），再做 sherpa 引擎。
@@ -66,7 +66,7 @@ M0（完成）
 
 - M0 头文件（`subtitle/` 下全部 `.h`）冻结：公共签名、结构体字段语义、错误码数值、协议字段只追加不修改；追加也要双方同意，并同步 `design-live-v2.md` §10 与本目录文档。
 - 头文件中标「私有成员归实现方，可自由调整」的 `private:` 部分不受冻结约束。
-- `asr/src/` 下除 `engine_fake.h`（参数名）与 `asr/fake_host/fake_host_script.h`（脚本格式）外，均为 C 包内部接口，ZCode 可自行调整。
+- `tools/asr_host/src/` 下除 `engine_fake.h`（参数名）与 `tools/asr_host/fake_host/fake_host_script.h`（脚本格式）外，均为 C 包内部接口，ZCode 可自行调整。
 - 桩文件（`*_stubs.cpp`）由对应包实现时删除并拆分为同名 `.cpp`，同时更新本子目录 `CMakeLists.txt` 中自己的行。
 
 ## 5. 本地检查命令
@@ -74,8 +74,27 @@ M0（完成）
 ```
 # subtitle 独立构建（无 FFmpeg；有 Qt6 Core 时同时构建并检查 Qt 目标）
 cmake -S subtitle -B build-subtitle -G Ninja && cmake --build build-subtitle && ctest --test-dir build-subtitle
-# 仓库内（Windows，与主程序同配置）
-cmake --preset windows-mingw-release -DSUBREC_BUILD_SUBTITLE=ON && cmake --build build/windows-mingw-release --target subtitle_m0_link_check subtitle_header_check_pure subtitle_header_check_qt
-# asr 子进程（MSVC 或任意 C++17 编译器）
-cmake -S asr -B build-asr && cmake --build build-asr
+# 仓库内（Windows，与主程序同配置；ON 时同时编译 tools/asr_host）
+cmake --preset windows-mingw-release -DSUBREC_BUILD_SUBTITLE=ON && cmake --build build/windows-mingw-release --target subtitle_m0_link_check subtitle_header_check_pure subtitle_header_check_qt subrec-asr subrec-asr-fakehost
+# 识别子进程独立构建（MSVC 或任意 C++17 编译器）
+cmake -S tools/asr_host -B build-asr && cmake --build build-asr
 ```
+
+Windows CI：`.github/workflows/windows-build.yml` 的 build job 在「Configure tests」加 `-DSUBREC_BUILD_SUBTITLE=ON`，
+随后单独一步编译全部字幕目标（含 Qt 目标 `subtitle_host` / `subtitle_service` / `subtitle_models` 与 `subrec-asr`、`subrec-asr-fakehost`）
+并跑 `subtitle_m0_link_check`。不下载模型，打包用的 `build/ci-new-ui` 不打开该开关，安装包与发布产物不变。
+
+## 6. 已定决定（M0 收尾，用户已批准）
+
+1. **识别子进程源码目录 = `tools/asr_host/`**（原 `asr/`，已 `git mv` 保留历史）。安装目录名仍叫 `asr/`，运行时路径仍是
+   `{app}\asr\subrec-asr.exe`（`DefaultAsrHostClientFactory`、`ErrorCode::HostMissing` 的注释说的是安装路径，不变）。
+   顶层 `SUBREC_BUILD_SUBTITLE=ON` 时 `add_subdirectory(subtitle)` 之后再 `add_subdirectory(tools/asr_host)`，用主程序工具链做编译检查；
+   `tools/asr_host` 仍可 `cmake -S tools/asr_host` 独立配置（发布宿主按 D12 用 MSVC）。appSubRec 不链接、不复制宿主（I5 归 G）。
+2. **协议编解码 = `subtitle/host/asr_protocol.h` + `subtitle/host/asr_protocol.cpp`**，归 ZCode 终端的工作包 C 独占；
+   主进程经 `subtitle_protocol` 目标使用，宿主直接编译同一个 `.cpp`；D 只使用，不改。
+3. **假引擎解锁 = 子进程环境变量 `SUBREC_ASR_TEST_HOOKS=1`**；未设置时 `engineId=fake` → `EngineUnknown`(300)。
+   主进程只在自身 `hooksEnabled()` 时给子进程设置该变量（见 `ipc-protocol.md` §8、`tools/asr_host/src/engine_fake.h`）。
+4. **「M0 补齐」成员全部保留**，按冻结接口对待：`HostWatchdog::onProcessStarted/setBackend/resetForJob`；
+   `SubtitleDocument::hardBoundaries16k/setSentenceState/setRefineTotal`；`SubtitleMerger::setLiveConfig/onSplice/onHostRestarted`；
+   `SubtitleJobRunner::setLiveConfig/restoreLive` 与信号 `currentSplitChanged`。
+5. **包 K（Glossary / EventTags / ItnExtra）维持 ZCode 终端**（见 §1 说明）。

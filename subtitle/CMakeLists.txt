@@ -2,14 +2,14 @@
 #
 # 两种用法：
 #   1) 仓库内：顶层 -DSUBREC_BUILD_SUBTITLE=ON 时 add_subdirectory(subtitle)。默认 OFF，appSubRec 不链接任何字幕目标
-#      （链接与 POST_BUILD 复制 asr/ 属于集成挂接点 I5，由工作包 G 最后做）。
+#      （链接与 POST_BUILD 复制 tools/asr_host 产物到 asr/ 属于集成挂接点 I5，由工作包 G 最后做）。
 #   2) 独立：cmake -S subtitle -B <build>。不需要 FFmpeg；找到 Qt6 Core 才构建 Qt 目标，否则只构建纯 C++17 目标。
 #
 # 目标与依赖方向（单向）：
 #   subtitle_headers（INTERFACE：include 根 = 仓库根，C++17）
 #   subtitle_tap ← subtitle_audio            纯 C++17（tap 实现阶段再加 avutil）
 #   subtitle_core ← subtitle_live            纯 C++17
-#   subtitle_protocol                        纯 C++17，与 asr/ 子进程共用 host/asr_protocol.cpp
+#   subtitle_protocol                        纯 C++17，与 tools/asr_host 子进程共用 host/asr_protocol.cpp
 #   subtitle_host（Qt Core）← subtitle_service（Qt Core）    subtitle_models（Qt Core；E 实现时加 Network）
 #   subtitle_pure（INTERFACE 聚合全部纯 C++ 目标）
 # subtitle/* 不得 include recorder/、thread/ 等录制代码。

@@ -2,7 +2,7 @@
 // M0 冻结：AI 字幕共享类型（design-live-v2.md §10.1；上版 design-verified.md §11.2）。
 // 归属：M0。冻结后修改需 Codex 终端与 ZCode 终端双方同意，并同步修订设计文档 §10.1。
 //
-// - 纯 C++17，无 Qt、无 FFmpeg；主进程（MinGW）与 asr/ 子进程（MSVC）共用。
+// - 纯 C++17，无 Qt、无 FFmpeg；主进程（MinGW）与 tools/asr_host 子进程（MSVC）共用。
 // - 时间轴：字幕毫秒 = tap 48 kHz 样本号 / 48 = spool 16 kHz 样本号 / 16（§8.1）。
 //   带 16k 后缀的字段一律是 spool 的 16 kHz 样本号；区间一律半开 [begin, end)。
 // - 文本一律 UTF-8。
