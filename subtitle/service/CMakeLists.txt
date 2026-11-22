@@ -2,7 +2,8 @@
 add_library(subtitle_service STATIC
     subtitle_service.h
     subtitle_job_runner.h
-    service_stubs.cpp
+    subtitle_service.cpp
+    subtitle_job_runner.cpp
     # ---- R ----
     refine_scheduler.h
     refine_scheduler.cpp

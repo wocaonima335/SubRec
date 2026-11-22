@@ -83,4 +83,8 @@ if((SUBREC_SUBTITLE_STANDALONE AND BUILD_TESTING) OR
     add_subdirectory("${SUBREC_SUBTITLE_INCLUDE_ROOT}/tests/subtitle_core" "tests/subtitle_core")
     # Package H: synthetic live subtitle tests.
     add_subdirectory("${SUBREC_SUBTITLE_INCLUDE_ROOT}/tests/subtitle_live" "tests/subtitle_live")
+    if(SUBREC_SUBTITLE_HAS_QT)
+        add_subdirectory("${SUBREC_SUBTITLE_INCLUDE_ROOT}/tests/subtitle_host" "tests/subtitle_host")
+        add_subdirectory("${SUBREC_SUBTITLE_INCLUDE_ROOT}/tests/subtitle_service" "tests/subtitle_service")
+    endif()
 endif()

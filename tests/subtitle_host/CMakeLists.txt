@@ -1,0 +1,22 @@
+find_package(Qt6 REQUIRED COMPONENTS Test)
+# Only the standalone subtitle build owns this addition. The app's top-level
+# CMake already adds tools/asr_host after subtitle, so do not add it twice there.
+if(SUBREC_SUBTITLE_STANDALONE AND NOT TARGET subrec-asr-fakehost)
+    add_subdirectory("${SUBREC_SUBTITLE_INCLUDE_ROOT}/tools/asr_host" "${CMAKE_CURRENT_BINARY_DIR}/asr_host")
+endif()
+add_executable(subtitle_d_host_tests host_tests.cpp)
+set_target_properties(subtitle_d_host_tests PROPERTIES AUTOMOC ON)
+target_link_libraries(subtitle_d_host_tests PRIVATE subtitle_host subtitle_live Qt6::Test)
+target_compile_definitions(subtitle_d_host_tests PRIVATE
+    ASR_EXE="$<TARGET_FILE:subrec-asr>" FAKEHOST_EXE="$<TARGET_FILE:subrec-asr-fakehost>")
+add_dependencies(subtitle_d_host_tests subrec-asr subrec-asr-fakehost)
+set(cases version_mismatch overlong_line non_json unknown_type crash_restart_plan quit_kill_hang hooks_enabled hooks_disabled commands_append)
+if(WIN32)
+    list(APPEND cases job_object_parent_death)
+endif()
+foreach(case IN LISTS cases)
+    add_test(NAME subtitle_d_host_${case} COMMAND subtitle_d_host_tests ${case})
+    set_tests_properties(subtitle_d_host_${case} PROPERTIES TIMEOUT 15 LABELS "subtitle;host;D")
+endforeach()
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
+subrec_configure_tests()
