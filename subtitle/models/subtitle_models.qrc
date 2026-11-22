@@ -1,0 +1,8 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <!-- 工作包 E：内置模型清单。运行时路径 :/subtitle/models/models.json；
+         model_manager.cpp 里用 Q_INIT_RESOURCE(subtitle_models) 保证静态库链接时资源被保留。 -->
+    <qresource prefix="/subtitle/models">
+        <file>models.json</file>
+    </qresource>
+</RCC>

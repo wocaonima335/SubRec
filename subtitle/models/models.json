@@ -1,0 +1,68 @@
+{
+    "manifestVersion": 1,
+    "_note": "URL/大小/sha256 来自 Hugging Face 官方仓库（下列链接，2026-11-22 核实）。只下载数据文件，不下载可执行文件（design-verified.md §5.3）。ModelScope 未找到相同文件（iic/SenseVoiceSmall 是 PyTorch 原模型；k2-fsa/sherpa-onnx releases 的 asr-models 只有整包 tar.bz2 且无 digest），占位不列，不编造 URL 或哈希。",
+    "models": [
+        {
+            "modelId": "sensevoice-small",
+            "engine": "sherpa-onnx",
+            "displayName": "SenseVoice Small",
+            "tag": "recommended",
+            "summary": "中文、英文、日语、韩语、粤语 · 自带标点",
+            "milestone": "M1",
+            "license": {
+                "name": "FunASR Model Open Source License Agreement",
+                "version": "1.1",
+                "url": "https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE",
+                "text": ""
+            },
+            "files": [
+                {
+                    "name": "model.int8.onnx",
+                    "size": 239233841,
+                    "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51",
+                    "urls": [
+                        "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/model.int8.onnx",
+                        "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/model.int8.onnx"
+                    ],
+                    "_note": "来源 https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/tree/2365baeacb507f821a0c8120fcee3d484dba7a07（commit 2365baeacb507f821a0c8120fcee3d484dba7a07）；size/sha256 = HF LFS 元数据（lfs.oid）。"
+                },
+                {
+                    "name": "tokens.txt",
+                    "size": 315894,
+                    "sha256": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc",
+                    "urls": [
+                        "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/tokens.txt",
+                        "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/tokens.txt"
+                    ],
+                    "_note": "来源 https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/tree/2365baeacb507f821a0c8120fcee3d484dba7a07（commit 2365baeacb507f821a0c8120fcee3d484dba7a07）；非 LFS，sha256 为下载后实测。"
+                }
+            ]
+        },
+        {
+            "modelId": "whisper-small",
+            "engine": "whisper.cpp",
+            "displayName": "Whisper Small",
+            "tag": "alternative",
+            "summary": "多语言 · 中文可能出现繁体，标点不稳定",
+            "milestone": "M2",
+            "license": {
+                "name": "MIT License",
+                "version": "",
+                "url": "https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE",
+                "text": ""
+            },
+            "files": [
+                {
+                    "name": "ggml-small-q5_1.bin",
+                    "size": 190085487,
+                    "sha256": "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+                    "urls": [
+                        "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q5_1.bin",
+                        "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q5_1.bin"
+                    ],
+                    "_note": "来源 https://huggingface.co/ggerganov/whisper.cpp/tree/5359861c739e955e79d9a303bcbc70fb988958b1（commit 5359861c739e955e79d9a303bcbc70fb988958b1），size/sha256 = HF LFS 元数据；M2 备选；许可 MIT 无版本号。"
+                }
+            ]
+        }
+    ]
+}
