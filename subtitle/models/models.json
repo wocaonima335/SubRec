@@ -1,6 +1,6 @@
 {
     "manifestVersion": 1,
-    "_note": "URL/大小/sha256 均来自 /workspace/zcode-work/e-sources/SOURCES.md（2026-11-22 联网核实）。只下载数据文件，不下载可执行文件（design-verified.md §5.3）。ModelScope 未找到与下列文件相同的官方镜像（iic/SenseVoiceSmall 是 PyTorch 原模型；k2-fsa releases 的 asr-models 标签只有整包 tar.bz2 且无 digest），因此占位不列，绝不编造 URL 或哈希。",
+    "_note": "URL/大小/sha256 来自 Hugging Face 官方仓库（下列链接，2026-11-22 核实）。只下载数据文件，不下载可执行文件（design-verified.md §5.3）。ModelScope 未找到相同文件（iic/SenseVoiceSmall 是 PyTorch 原模型；k2-fsa/sherpa-onnx releases 的 asr-models 只有整包 tar.bz2 且无 digest），占位不列，不编造 URL 或哈希。",
     "models": [
         {
             "modelId": "sensevoice-small",
@@ -24,7 +24,7 @@
                         "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/model.int8.onnx",
                         "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/model.int8.onnx"
                     ],
-                    "_note": "HF 仓库 csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17，钉死 commit 2365bae（size/sha256 来自 HF tree API 的 lfs.oid，resolve 响应头 x-linked-etag 同值）。ModelScope 占位未列：查无官方同文件。"
+                    "_note": "来源 https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/tree/2365baeacb507f821a0c8120fcee3d484dba7a07（commit 2365baeacb507f821a0c8120fcee3d484dba7a07）；size/sha256 = HF LFS 元数据（lfs.oid）。"
                 },
                 {
                     "name": "tokens.txt",
@@ -34,7 +34,7 @@
                         "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/tokens.txt",
                         "https://hf-mirror.com/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/tokens.txt"
                     ],
-                    "_note": "非 LFS 文件，sha256 为本机下载后 sha256sum 实测（hf-mirror 下载结果一致）。ModelScope 占位未列。"
+                    "_note": "来源 https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/tree/2365baeacb507f821a0c8120fcee3d484dba7a07（commit 2365baeacb507f821a0c8120fcee3d484dba7a07）；非 LFS，sha256 为下载后实测。"
                 }
             ]
         },
@@ -60,7 +60,7 @@
                         "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q5_1.bin",
                         "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q5_1.bin"
                     ],
-                    "_note": "M2 备选（whisper.cpp 引擎未实现，清单先列出）。size/sha256 来自 HF ggerganov/whisper.cpp commit 5359861 tree API 的 lfs.oid。许可为 HF 卡片 license=mit（无版本号，licenseVersion 留空）。ModelScope 占位未列。"
+                    "_note": "来源 https://huggingface.co/ggerganov/whisper.cpp/tree/5359861c739e955e79d9a303bcbc70fb988958b1（commit 5359861c739e955e79d9a303bcbc70fb988958b1），size/sha256 = HF LFS 元数据；M2 备选；许可 MIT 无版本号。"
                 }
             ]
         }
