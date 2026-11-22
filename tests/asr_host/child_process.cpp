@@ -132,6 +132,18 @@ bool ChildProcess::spawn(const std::string &exe, const std::vector<std::string> 
         CloseHandle(inWrite);
         return false;
     }
+    // 父进程一侧的两端（stdin 写端、stdout 读端）不得被子进程继承：CreateProcessW(bInheritHandles=TRUE)
+    // 会把所有可继承句柄复制进子进程。若子进程持有自己 stdin 管道的写端，父进程 closeStdin() 后
+    // 管道仍有写者，子进程的 ReadFile/fgets 永远等不到 ERROR_BROKEN_PIPE（EOF），EOF 类用例超时。
+    // （POSIX 侧 fork 后在子进程里 close 掉这两端，等价。）
+    if (!SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0)
+        || !SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0)) {
+        CloseHandle(inRead);
+        CloseHandle(inWrite);
+        CloseHandle(outRead);
+        CloseHandle(outWrite);
+        return false;
+    }
 
     std::string cmdline = quoteWindowsArg(exe);
     for (const std::string &a : args)
