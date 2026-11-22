@@ -30,4 +30,8 @@ public:
 signals:
     void modelsChanged();
     void downloadFinished(QString modelId);  void downloadFailed(QString modelId, QString error);
+private:
+    // 私有成员归实现方，可自由调整（工作包 E 追加的 d 指针；上方公共接口与信号仍按 M0 冻结）
+    class ModelManagerPrivate;
+    ModelManagerPrivate *d;
 };
