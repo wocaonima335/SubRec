@@ -16,3 +16,9 @@ set_target_properties(subtitle_models PROPERTIES AUTOMOC ON AUTORCC ON)
 target_link_libraries(subtitle_models
     PUBLIC subtitle_headers Qt6::Core
     PRIVATE Qt6::Network)
+
+# tests/subtitle_models：独立 subtitle 构建（SUBREC_SUBTITLE_STANDALONE，§5 第一条）始终进入；
+# 仓库内顶层构建跟随 SUBREC_BUILD_LIFECYCLE_TESTS / BUILD_TESTING（Windows CI 的 build/ci-tests）。
+if(SUBREC_SUBTITLE_STANDALONE OR SUBREC_BUILD_LIFECYCLE_TESTS OR BUILD_TESTING)
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../../tests/subtitle_models" subtitle_models_tests)
+endif()
