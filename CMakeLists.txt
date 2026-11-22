@@ -14,6 +14,9 @@ option(SUBREC_BUILD_LIFECYCLE_TESTS "Build all in-tree CTest harnesses" ON)
 # carries the ungated H4/FB1 changes, e.g. N5 when a start is rejected synchronously while
 # the window is hidden (docs/UI_BATCH_PLAN.md INT-B).
 option(SUBREC_BUILD_NEW_UI "Build the SubRec.Ui module and batch-2 shell units and start on the new interface" OFF)
+# AI 字幕库（subtitle/，M0 骨架）。ON 只构建 subtitle_* 库与 M0 检查；appSubRec 不链接它们，
+# 录制链路不变（链接属于集成挂接点 I5）。asr/ 子进程是独立 CMake 工程（MSVC），不在这里构建。
+option(SUBREC_BUILD_SUBTITLE "Build the AI subtitle libraries under subtitle/ (not linked into appSubRec)" OFF)
 option(SUBREC_STRIP_TEST_HOOKS
     "Compile video startup test hooks out of the application" OFF)
 if(SUBREC_STRIP_TEST_HOOKS)
@@ -114,6 +117,9 @@ if(SUBREC_BUILD_NEW_UI)
         OUTPUT_VARIABLE subrec_ui_git_hash OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
     target_compile_definitions(ui_module PRIVATE
         SUBREC_VERSION="${SUBREC_VERSION}" SUBREC_GIT_HASH="${subrec_ui_git_hash}")
+endif()
+if(SUBREC_BUILD_SUBTITLE)
+    add_subdirectory(subtitle)
 endif()
 
 if(SUBREC_BUILD_LIFECYCLE_TESTS)
