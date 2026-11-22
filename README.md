@@ -1,272 +1,85 @@
 # 字录 · SubRec
 
-**录屏即出片 · Record once, get a finished video.**
+**录屏即出片。**
 
-[中文](#中文) | [English](#english)
+## 字录是什么？
 
-> Status / 状态：早期原型（early prototype）。仅 Windows。Windows 版由 GitHub Actions 构建并打包（`.github/workflows/windows-build.yml`），维护者也在 Windows 10 实机上做过录制验证；但实机测试覆盖的硬件、驱动和系统版本有限，各采集后端与编码器的组合**尚未全部验证**。
-> Windows only. Windows builds and packages are produced by GitHub Actions (`.github/workflows/windows-build.yml`), and the maintainer has verified recording on a real Windows 10 machine. Real-hardware coverage of hardware, drivers and OS versions is limited, and **not every combination of capture backend and encoder has been verified**.
+字录（SubRec）是一款面向 Windows 的开源录屏工具，基于 Qt 6 和 FFmpeg 开发，适合录教程、录会议、录游戏片段等日常场景。点一下开始，再点一下结束，得到的就是可以直接播放的 MP4 文件，不需要再导出或转码。
 
----
+目前处于预发布测试阶段，仅支持 Windows。
 
-## 中文
+本项目以 GNU General Public License v3.0 发布，详见 [LICENSE](LICENSE)。
 
-### 这是什么
+## 截图
 
-字录（SubRec）是一款基于 **Qt 6 Quick（QML）+ FFmpeg** 的 Windows 录屏工具。点击红色按钮开始、再点击结束，程序在停止时直接写出可播放的 **MP4 成片**（H.264 视频，可选 AAC 音频，MP4 文件头已前置 `+faststart`），无需额外的导出/转码步骤。
+![录制页](docs/images/main.png)
 
-### 已实现的功能（以代码为准）
+| 录像库 | 设置 |
+|---|---|
+| ![录像库](docs/images/library.png) | ![设置](docs/images/settings.png) |
 
-- 同时采集 **屏幕、摄像头、系统声音、麦克风**，在界面中切换视频源。
-- 录制 **暂停 / 恢复**，并修正时间轴，避免暂停后时间戳跳变。
-- **实时预览**：CPU 模式由编码线程提交 YUV 帧；GPU 模式由独立工作线程转换预览帧，再送入 OpenGL（GLSL）预览控件。
-- 显式的媒体流水线：demux → decode → filter → encode → mux，带有界阻塞队列。
-- 编码器按顺序尝试 **NVENC → AMD AMF → Intel QSV → libx264（软件）**，取第一个可用者（`encoder/ffvencoder.cpp`）。
-- 录制过程中显示计时；可选择输出目录和文件名；可浏览已录制文件（新界面的“录像库”页，旧界面的“视频”页）。
-- 控制链路：`QmlBridge → CaptureScheduler → CaptureSession → FFRecorder`。
+> 以上为 Windows 上的实际运行截图（已隐去本机路径和桌面图标）。
 
-### v0.3.2-beta 更新（相对 v0.3.1-beta）
+![录制中（设计预览）](docs/images/design-recording.png)
 
-画质（编码器）：
+> **设计预览**：录制中的界面效果图，来自 Figma 设计稿，并非实际运行截图。
 
-- 码率按像素数分档，每档包含其参考分辨率：≤1280×720 为 4 Mbps，≤1920×1080 为 8 Mbps，≤2560×1440 为 12 Mbps，更高为 20 Mbps；峰值为 1.5 倍，VBV 为 2 倍（`encoder/video_encoder_tuning.h`）。
-- 编码器先按画质控制、再封顶码率，预设提到中档：NVENC `p5`/`tune hq`/`vbr`/`cq 23`（打不开再试 `p4`），AMF `balanced`/`vbr_peak`，QSV `medium` + QVBR 23（再试普通 VBR），libx264 `veryfast`/`crf 23`/`zerolatency`（去掉了原来的 `x264-params` 覆盖）。之前分别是 `fast`、`speed`、`fast`、`ultrafast`。新模式打不开时，硬件编码器回退到原来的 CBR/VBR 设置（码率用新表）。
+## 功能
 
-画质（预览与采集）：
+- 屏幕、摄像头、系统声音、麦克风采集，可在界面中切换视频源
+- 系统声音与麦克风可单独开关，也可同时开启混音
+- 录制暂停 / 继续
+- 录制前和录制中的实时预览
+- 停止即得 MP4 成片（H.264 视频 + AAC 音频）
+- 自动选择硬件编码器（NVIDIA NVENC、AMD AMF、Intel QSV），没有可用硬件时使用 x264 软件编码
+- 录像库：搜索、按名称 / 时间 / 大小排序，播放、在文件夹中显示、复制路径、删除到回收站
+- 设置：浅色 / 深色主题、系统托盘与悬浮条、全局快捷键、保存位置与文件名模板、录制时从画面中排除本窗口
 
-- GPU 预览支路最高 720 行、15 fps（原为 360 行、8 fps），缩放改用双三次插值（`capture/gpu_preview.h`）。
-- 预览着色器按 BT.601 limited range 解码，黑色和白色不再发灰（`shaderSource/source.frag`）。
-- 预览纹理上传时 `GL_UNPACK_ALIGNMENT` 设为 1，修正宽度不是 4 的倍数（如 1366）时的画面错位；尺寸不变时只更新纹理内容；生成 mipmap，CPU 路径的全尺寸帧缩小显示时不再出现混叠（`opengl/ffglrenderer.cpp`）。
-- DirectShow 屏幕采集按屏幕的物理像素请求 `video_size`（之前在 150% 缩放的 2560×1440 屏幕上请求的是 1707×960）（`demuxer/dshow_video_size.h`）。
+## 快速链接
 
-界面：
+- 下载（v0.3.2-beta）：<https://github.com/wocaonima335/SubRec/releases/tag/v0.3.2-beta>
+- 全部版本：<https://github.com/wocaonima335/SubRec/releases>
+- 源码仓库：<https://github.com/wocaonima335/SubRec>
+- 问题反馈：<https://github.com/wocaonima335/SubRec/issues>
 
-- 新界面录制页“最近录制”卡片上的播放和“在文件夹中显示”按钮现在可以单击了（之前整张卡片的 `MouseArea` 盖在按钮上方，按钮只能显示悬停效果；`ui/qml/pages/record/RecordingCard.qml`）。双击卡片其它位置仍然播放。
+具体提供哪些文件（安装版 / 绿色版 zip、SHA256 校验文件）以 Release 页面为准。程序未做数字签名，请只从上面的 Release 页面下载。
 
+## 从源码构建
 
-- 屏幕采集有两个后端（设置页“Screen backend”或环境变量 `SUBREC_CAPTURE_BACKEND=auto|ddagrab|dshow`）：
-  - **Desktop Duplication（FFmpeg `ddagrab` 滤镜，默认 auto 时优先）**：无需第三方组件；NVIDIA/AMD 上 D3D11 帧直接交给 `h264_nvenc`/`h264_amf`，其它情况下载到内存转 yuv420p。GPU 直通仍从独立的 hwdownload 预览支路生成最高 720 行、15 fps 的 yuv420p 画面。**尚未在真机上验证**（见 `tools/pc2_verify.ps1`）。只能采集默认显卡上的显示器；遇到 UAC/锁屏/分辨率变化时视频流结束（文件保留）。
-  - **DirectShow（dshow）+ `screen-capture-recorder`**：需用户自行安装该第三方组件；ddagrab 打不开时自动回退到它（若已安装）。
-- 原生 WASAPI loopback 已在 `capture/wasapi_*` 实现，是默认系统声音后端；`SUBREC_SYSTEM_AUDIO_BACKEND` 为 `auto`（默认）或 `wasapi` 时行为相同：优先 WASAPI；没有 WASAPI 设备或打开失败时，若已自行安装 `virtual-audio-capturer`（DirectShow，本仓库不包含）则回退到它（混音模式不回退）；`dshow` 直接使用 `virtual-audio-capturer`。麦克风与摄像头走 DirectShow；WGC 未实现。
-- 系统音频和麦克风按钮可以独立打开；两者同时打开时使用 WASAPI 系统音频与 DirectShow 麦克风混音。DirectShow 系统音频后端不支持混音，界面会显示提示。两者都关闭时输出不含音轨的无声 MP4，视频时钟独立推进，暂停时不推进。
-- 界面有新旧两套（如何构建见“构建”一节）：
-  - **新界面**（发布包默认）：分“录制”“录像库”“设置”三页。“录像库”列出已录制文件，可按名称、录制时间、大小排序，可播放、在文件夹中显示、复制路径、删除（移到回收站）。“设置”有常规、输出、设备、快捷键、高级、关于等子页；输出格式固定为 MP4（H.264 + AAC），视频编码器只显示、不能手动选择。字幕相关的界面已经有了，但语音识别服务尚未接入，所以字幕设置页不显示，也不会生成字幕。
-  - **旧界面**（默认构建，或新界面构建加 `--old-ui` 启动）：分“主页”“设置”“视频”三项。“视频”页只是已录制文件的列表（可刷新、打开文件夹）；设置页里的“Start recording on launch”“Show FPS overlay”“Output Format”三项还没有接到实际功能上。
-- 两套界面都没有滤镜和视频剪辑功能。
-- 代码注释以中文为主。
-
-### 构建（Windows）
-
-依赖：
-
-- Qt **6.5+**（工程预设使用 6.8.0），模块：Core、Gui、Widgets、Network、Qml、Quick、QuickControls2、Multimedia（QML 还使用 Quick Controls / Layouts / Effects、`QtQuick.Dialogs`、`QtCore`、`QtQuick.Shapes`、`Qt.labs.folderlistmodel`）。
-- CMake ≥ 3.21：默认会一并配置测试，`tests/` 下的 CMakeLists 要求 3.21；用 `-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` 只构建程序时，根 `CMakeLists.txt` 声明的是 3.16；使用 `CMakePresets.json` 需 ≥ 3.25。CI 用的是 GitHub `windows-latest` 预装的 CMake，没有固定版本。另需 Ninja，C++17 编译器（CI 与预设使用 MinGW 13.1 x64）。
-- **FFmpeg 共享库（shared）**：**本仓库不含 FFmpeg，需自行提供。** 需要 `include/`、`lib/`（`avcodec` `avformat` `avutil` `swscale` `swresample` `avfilter` `avdevice` 的 `.lib`/`.dll.a`）、`bin/`（DLL）。用 `-DFFMPEG_ROOT=<目录>` 或环境变量 `SUBREC_FFMPEG_ROOT` 指定；**未指定时 CMake 会报错并给出提示**。推荐使用本仓库的脚本 [`packaging/ffmpeg/build-ffmpeg.sh`](packaging/ffmpeg/README.md) 从固定的上游源码交叉编译最小 FFmpeg（Linux 主机 + MinGW-w64；FFmpeg **n8.0.3**，commit `8ae0b349`；x264 stable `b35605ac`；libvpl v2.16.0；nv-codec-headers n12.2.72.0；AMF v1.5.3；`--enable-gpl --enable-libx264`，**无** `--enable-version3`、**无** `--enable-nonfree`；DLL：`avutil-60` `avcodec-62` `avformat-62` `avfilter-11` `avdevice-62` `swscale-9` `swresample-6`，合计约 11 MB），产物目录即可作为 `FFMPEG_ROOT`；CI 的 `ffmpeg` job 做同样的事并把产物交给 Windows job。其它 FFmpeg 构建需自行验证 API 兼容性。源码：<https://git.ffmpeg.org/ffmpeg.git>。
+需要 Windows、Qt 6.5 及以上、CMake、Ninja 和 MinGW 编译器，以及一份 FFmpeg 共享库（仓库不附带，可用 [`packaging/ffmpeg`](packaging/ffmpeg/README.md) 里的脚本自行编译）。
 
 ```powershell
-# 1. 配置（MinGW g++ 与 Ninja 需在 PATH 中），显式传参；或设置 QT_ROOT 与 SUBREC_FFMPEG_ROOT 环境变量后改用 `cmake --preset windows-mingw-release`：
-cmake -S . -B build/windows-mingw-release -G Ninja `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_PREFIX_PATH="<你的 Qt>/6.8.0/mingw_64" `
-  -DFFMPEG_ROOT="<你的 FFmpeg 目录>"
-
-# 2. 编译（目标名为 appSubRec）
+# 先设置 QT_ROOT 和 SUBREC_FFMPEG_ROOT 环境变量
+cmake --preset windows-mingw-release -DSUBREC_BUILD_NEW_UI=ON
 cmake --build build/windows-mingw-release --target appSubRec
-
-# 3. 运行：构建时 CMake 会把 FFmpeg DLL 复制到输出目录
-build/windows-mingw-release/appSubRec.exe
 ```
 
-可选：`-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` 关闭 Windows 下默认开启的全部 CTest 测试。按 CI 的方式在本地运行测试：构建 `subrec_tests` 目标后执行 `ctest --test-dir <build> -L "^ci$" -LE "^(device|needs_ffmpeg_test_components|needs_powershell)$" --output-on-failure`。
+打包与发布流程见 [安装器说明](packaging/installer/README.md)。
 
-界面：`-DSUBREC_BUILD_NEW_UI=ON` 构建新界面（QML 模块 `SubRec.Ui`，源码在 `ui/`）并默认启动它，加 `--old-ui` 参数可回到旧界面；默认 `OFF` 时只有旧界面。CI 打包的发布版使用 `ON` 构建。
+## 路线图
 
-> 关于 FFmpeg 的许可：发布包中的 FFmpeg 是 **GPL-2.0-or-later** 构建（`--enable-gpl --enable-libx264`；无 version3、无 nonfree；与 SubRec 的 GPL-3.0 兼容）。本仓库不分发它；但发布包（zip 及将来的安装包）会包含它，因此发布包的 **`sources/` 目录附带对应源码**：`ffmpeg-n8.0.3.tar.xz`、`x264-b35605ace3dd.tar.xz`、`libvpl-v2.16.0.tar.xz`、`nv-codec-headers-n12.2.72.0.tar.xz`、`amf-headers-v1.5.3.tar.xz`、`subrec-ffmpeg-build-scripts.tar.xz`（构建脚本）、`BUILD_CONFIG.txt`（configure 参数、工具链版本、DLL 哈希）和 `SHA256SUMS`（合计约 18 MB）。发布包不含 x265，也**不含 `ffmpeg.exe`**（SubRec 从不启动它）。构建时的警告分类见 [`packaging/ffmpeg/BUILD_WARNINGS.md`](packaging/ffmpeg/BUILD_WARNINGS.md)；详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
+下一阶段的重点是 **AI 字幕：边录边识别**。语音识别在本机离线运行，录制时就逐句生成字幕，录完立刻得到同名 `.srt` 文件；识别出问题不会影响录制本身。
 
-### 下载与安装：Windows SmartScreen 警告
+- **M1 边录边出字幕**：录制时实时识别语音，界面上显示当前这句话；停止录制后几秒内生成完整字幕文件。
+- **M2 更多模型、更准**：可在程序内下载和管理识别模型；录完后可选用更大的模型再精修一遍，并支持自定义热词。
+- **M3 编辑与导出**：在录像库里查看、修改字幕，导出 VTT / ASS / TXT 等格式，预览画面上也能看到当前字幕。
+- **M4 更多场景**：只识别麦克风的声音、给已有视频生成字幕、区分不同说话人。
 
-安装器方案提供 `SubRec-vX.Y.Z-beta-win64-setup.exe`，绿色版为
-`SubRec-vX.Y.Z-beta-win64-portable.zip`；另附 `...-ffmpeg-corresponding-source.zip`
-和覆盖三份文件的 `SHA256SUMS.txt`。仅预发布，实际可下载文件以 Release 为准。
-安装器仅为当前用户安装到 `%LOCALAPPDATA%\Programs\SubRec`，默认创建桌面快捷方式；
-升级前先停止录制并从托盘退出。卸载保留设置和录像、删除程序目录的日志。
-程序图标由 AI 图像模型 gpt-image-2.5（经维护者自己的 CLIProxyAPI 调用）于 2026-11-12 生成。AI 生成图像的版权状态可能不明确。
-提示词为：
+![AI 字幕设置（设计预览）](docs/images/design-ai-subtitle.png)
 
-> Flat minimal app icon for a Windows screen-recording and subtitle app called SubRec (字录). Rounded square tile filled solid red #DC2626, full bleed, no background outside the tile except transparent/white. Bold thick white simplified Chinese character "字" centered. No text other than the character, no gradients, no shadows, no fine details, high contrast, must stay legible at 16x16 pixels.
+> **设计预览**：AI 字幕设置页的效果图，功能尚在开发中，并非实际运行截图。
 
-中文翻译及许可原文已补齐，Windows 构建仍未验证，详见
-[安装器维护说明](packaging/installer/README.md)及[发布验收清单](docs/WINDOWS_INSTALLER_RELEASE.md)。
+## 参与贡献
 
-本项目是个人开源项目，**没有购买代码签名证书**，因此发布的 `.exe` / 安装包**没有数字签名**。首次运行时 Windows SmartScreen 可能弹出“Windows 已保护你的电脑 / 无法识别的应用”（发布者显示为“未知发布者”）。这是未签名程序的正常现象，**不代表**文件已被判定为恶意；但也意味着系统无法替你确认来源，请自行核对：
+- 提交代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，所有贡献需先签署 [CLA](CLA.md)。
+- 行为准则：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- 安全问题：[SECURITY.md](SECURITY.md)
+- 第三方组件与许可：[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 
-1. **只从本项目官方 Release 页面下载**（<https://github.com/wocaonima335/SubRec/releases>）。不要运行来自网盘转载、第三方下载站或他人转发的同名文件。
-2. **校验 SHA256**（强烈建议）：每个发布文件旁会附带 SHA256 校验值（Release 说明或随附的 `SHA256SUMS.txt` 文件）。在 PowerShell 中执行：
+## 许可
 
-   ```powershell
-   Get-FileHash .\<下载的文件名> -Algorithm SHA256
-   # 或：certutil -hashfile .\<下载的文件名> SHA256
-   ```
+字录以 [GPL-3.0](LICENSE) 发布。
 
-   输出的哈希必须与 Release 页面公布的**完全一致**（不区分大小写）；不一致请不要运行，并[报告问题](SECURITY.md)。注意：校验和与文件同处一个页面，只能发现下载损坏或中途被替换，不能替代代码签名。
-3. 校验通过且信任来源后，若系统提供该选项，在 SmartScreen 弹窗上点击 **「更多信息」**，再点击 **「仍要运行」**。
-4. 如果文件属性里有“解除锁定”复选框（右键 → 属性 → 常规 → 安全），勾选后再运行；解压 zip 后若仍被拦截，对 zip 文件先做此操作再解压。
-5. 杀毒软件对未签名、且会采集屏幕/音频的程序可能误报；你也可以自己用源码构建（见上文“构建”），避免信任预编译文件。
-
-### 许可证与贡献
-
-- 许可证：**GPL-3.0**（见 [LICENSE](LICENSE)）。项目方计划在未来提供商业授权版本（双重授权）。
-- **所有贡献都需要先签署 [CLA](CLA.md)**，详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
-- 行为准则：[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)；安全问题请见 [SECURITY.md](SECURITY.md)。
-- 第三方组件清单：[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
-- 界面图标（`icons/*.png`）由项目维护者本人制作，与本项目其余代码一样按 **GPL-3.0** 发布。
-- `reference/ffmpeg-fftools/ffmpeg_mux.c` 是保留原版权头的 FFmpeg 参考文件（LGPL-2.1+），仅供参考，不参与构建，不适用本项目的 CLA；详见 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)。
-
-### 友链
+## 友链
 
 - [LINUX DO](https://linux.do)
-
----
-
-## English
-
-### What is it
-
-SubRec (字录) is a Windows screen recorder built with **Qt 6 Quick (QML) and FFmpeg**. Press the red button to start and again to stop; on stop the app has already written a playable **MP4** (H.264 video with optional AAC audio, with `+faststart` set on the MP4 muxer), so there is no separate export or transcode step. The project's tagline is "录屏即出片" ("record, and the finished video is ready").
-
-### Implemented (per the source code)
-
-- Capture of **screen, camera, system audio and microphone**, switchable from the UI.
-- **Pause / resume** with timeline correction so timestamps do not jump after a pause.
-- **Live preview**: CPU frames come from the encoder thread; GPU frames use an independent conversion worker. Both feed YUV frames to an OpenGL (GLSL) preview item.
-- Explicit media pipeline: demux → decode → filter → encode → mux, connected by bounded blocking queues.
-- Video encoder selection in order **NVENC → AMD AMF → Intel QSV → libx264 (software)**; the first usable one wins (`encoder/ffvencoder.cpp`).
-- Elapsed-time display, configurable output folder / file name, and a list of recorded files (the "录像库" library page in the new interface, the "视频" video page in the old one).
-- Control path: `QmlBridge → CaptureScheduler → CaptureSession → FFRecorder`.
-
-### What's new in v0.3.2-beta (since v0.3.1-beta)
-
-Quality (encoder):
-
-- Bit rate is tiered by pixel count, each tier including its reference size: up to 1280×720 4 Mbps, up to 1920×1080 8 Mbps, up to 2560×1440 12 Mbps, larger 20 Mbps; peak 1.5×, VBV 2× (`encoder/video_encoder_tuning.h`).
-- Encoders use capped quality with mid presets: NVENC `p5`/`tune hq`/`vbr`/`cq 23` (then `p4`), AMF `balanced`/`vbr_peak`, QSV `medium` with QVBR 23 (then plain VBR), libx264 `veryfast`/`crf 23`/`zerolatency` (the old `x264-params` overrides are gone). Previously `fast`, `speed`, `fast` and `ultrafast`. If a newer mode does not open, hardware encoders fall back to the previous CBR/VBR settings with the new bit rate table.
-
-Quality (preview and capture):
-
-- The GPU preview branch runs at up to 720 rows and 15 fps (was 360 rows, 8 fps) and scales with bicubic instead of bilinear (`capture/gpu_preview.h`).
-- The preview shader decodes BT.601 limited range, so black and white are no longer greyed out (`shaderSource/source.frag`).
-- Preview texture uploads use `GL_UNPACK_ALIGNMENT` 1, fixing skewed images when a plane width is not a multiple of 4 (e.g. 1366); unchanged sizes update the textures in place; mipmaps keep full-size CPU-path frames from aliasing when shrunk into the preview (`opengl/ffglrenderer.cpp`).
-- DirectShow screen capture requests the screen's physical pixels as `video_size` (a 2560×1440 screen at 150 % used to request 1707×960) (`demuxer/dshow_video_size.h`).
-
-Interface:
-
-- The play and "Show in folder" buttons on the new interface's recent-recording cards (record page) can now be clicked. The card's full-size `MouseArea` used to sit above them, so they only showed hover feedback (`ui/qml/pages/record/RecordingCard.qml`). Double-clicking elsewhere on the card still plays.
-
-### Known limitations (stated honestly)
-
-- Screen capture has two backends (settings page "Screen backend", or `SUBREC_CAPTURE_BACKEND=auto|ddagrab|dshow`):
-  - **Desktop Duplication (FFmpeg's `ddagrab` filter, preferred by `auto`)**: no third-party component; on NVIDIA/AMD the D3D11 frames go straight to `h264_nvenc`/`h264_amf`, otherwise they are downloaded and converted to yuv420p. GPU passthrough uses a separate hwdownload preview branch at up to 720 rows and 15 fps. **Not yet verified on real hardware** (see `tools/pc2_verify.ps1`). Only displays on the default GPU; a UAC prompt, lock screen or resolution change ends the video stream (the file is kept).
-  - **DirectShow (dshow) + `screen-capture-recorder`**: the third-party filter must be installed by you; used automatically if ddagrab cannot open (when installed).
-- Native WASAPI loopback is implemented in `capture/wasapi_*` and is the default system audio backend. `SUBREC_SYSTEM_AUDIO_BACKEND=auto` (default) and `wasapi` behave the same: WASAPI is preferred, and if no WASAPI device is available or it fails to open, capture falls back to the separately installed `virtual-audio-capturer` (DirectShow, not bundled) when present (no fallback in mixed mode). `dshow` uses `virtual-audio-capturer` directly. Microphone and camera use DirectShow; WGC is not implemented.
-- System audio and microphone buttons are independent. Mixed mode uses WASAPI system audio plus a DirectShow microphone; the UI explains why a DirectShow system backend cannot be mixed. With both buttons off, SubRec writes a video-only MP4 without an audio track. Its video clock advances independently and excludes paused frames. See [audio modes](docs/AUDIO_MIXING.md).
-- There are two interfaces (see "Building" for how each is built):
-  - **New interface** (the default in release packages): "录制" (record), "录像库" (library) and "设置" (settings). The library lists recordings, sorts by name, recording time or size, and can play, show in folder, copy the path and delete (move to the Recycle Bin). Settings has general, output, devices, hotkeys, advanced and about pages; the output format is fixed to MP4 (H.264 + AAC) and the video encoder is shown, not selectable. Subtitle UI exists, but no speech-recognition service is connected yet, so the subtitle settings page is hidden and no subtitles are produced.
-  - **Old interface** (default build, or a new-interface build started with `--old-ui`): "主页" (home), "设置" (settings) and "视频" (video). The video page is only a list of recorded files (refresh, open folder); the settings page's "Start recording on launch", "Show FPS overlay" and "Output Format" controls are not wired to anything yet.
-- Neither interface has filters or video editing.
-- Code comments are mostly in Chinese.
-
-### Building (Windows)
-
-Requirements:
-
-- Qt **6.5+** (presets use 6.8.0): Core, Gui, Widgets, Network, Qml, Quick, QuickControls2, Multimedia (QML additionally uses Quick Controls / Layouts / Effects, `QtQuick.Dialogs`, `QtCore`, `QtQuick.Shapes`, `Qt.labs.folderlistmodel`).
-- CMake ≥ 3.21: tests are configured by default and the `tests/` CMakeLists require 3.21; with `-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` (app only) the root `CMakeLists.txt` declares 3.16; `CMakePresets.json` needs ≥ 3.25. CI uses the CMake preinstalled on GitHub's `windows-latest` image, not a pinned version. Also Ninja, a C++17 compiler (CI and the preset use MinGW 13.1 x64).
-- **FFmpeg shared libraries**: **this repository does not include FFmpeg; you must provide it.** You need `include/`, `lib/` (import libraries for `avcodec avformat avutil swscale swresample avfilter avdevice`) and `bin/` (DLLs). Point to it with `-DFFMPEG_ROOT=<dir>` or the `SUBREC_FFMPEG_ROOT` environment variable; **CMake stops with a clear error if it is not set**. The recommended way is the repository's script [`packaging/ffmpeg/build-ffmpeg.sh`](packaging/ffmpeg/README.md), which cross-compiles a minimal FFmpeg from pinned upstream sources (Linux host + MinGW-w64; FFmpeg **n8.0.3**, commit `8ae0b349`; x264 stable `b35605ac`; libvpl v2.16.0; nv-codec-headers n12.2.72.0; AMF v1.5.3; `--enable-gpl --enable-libx264`, **no** `--enable-version3`, **no** `--enable-nonfree`; DLLs: `avutil-60` `avcodec-62` `avformat-62` `avfilter-11` `avdevice-62` `swscale-9` `swresample-6`, about 11 MB together). The output directory can be used directly as `FFMPEG_ROOT`; the CI `ffmpeg` job does the same and hands the result to the Windows job. Other FFmpeg builds need their API compatibility checked. Source: <https://git.ffmpeg.org/ffmpeg.git>.
-
-```powershell
-# 1. Configure (MinGW g++ and Ninja on PATH) with explicit paths; or set QT_ROOT and SUBREC_FFMPEG_ROOT and use `cmake --preset windows-mingw-release` instead:
-cmake -S . -B build/windows-mingw-release -G Ninja `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DCMAKE_PREFIX_PATH="<your Qt>/6.8.0/mingw_64" `
-  -DFFMPEG_ROOT="<your FFmpeg dir>"
-
-# 2. Build (the executable target is named appSubRec)
-cmake --build build/windows-mingw-release --target appSubRec
-
-# 3. Run. CMake copies the FFmpeg DLLs next to the executable post-build.
-build/windows-mingw-release/appSubRec.exe
-```
-
-Optional: `-DSUBREC_BUILD_LIFECYCLE_TESTS=OFF` disables all CTest tests, which are ON by default on Windows. To run the tests locally the way CI does, build the `subrec_tests` target and run `ctest --test-dir <build> -L "^ci$" -LE "^(device|needs_ffmpeg_test_components|needs_powershell)$" --output-on-failure`.
-
-Interface: `-DSUBREC_BUILD_NEW_UI=ON` builds the new interface (QML module `SubRec.Ui`, sources in `ui/`) and starts on it; pass `--old-ui` to fall back to the old one. With the default `OFF` only the old interface is built. The release packages built by CI use `ON`.
-
-> FFmpeg licensing note: the FFmpeg in the release packages is a **GPL-2.0-or-later** build (`--enable-gpl --enable-libx264`; no version3, no nonfree; compatible with SubRec's GPL-3.0). This repository does not distribute it, but the release packages (zip, and any future installer) do include it, so every package carries the corresponding source in its **`sources/` directory**: `ffmpeg-n8.0.3.tar.xz`, `x264-b35605ace3dd.tar.xz`, `libvpl-v2.16.0.tar.xz`, `nv-codec-headers-n12.2.72.0.tar.xz`, `amf-headers-v1.5.3.tar.xz`, `subrec-ffmpeg-build-scripts.tar.xz` (the build scripts), `BUILD_CONFIG.txt` (configure arguments, toolchain versions, DLL hashes) and `SHA256SUMS` (about 18 MB in total). The packages contain no x265 and **no `ffmpeg.exe`** (SubRec never starts it). Build warnings are classified in [`packaging/ffmpeg/BUILD_WARNINGS.md`](packaging/ffmpeg/BUILD_WARNINGS.md). See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
-
-### Downloading and installing: Windows SmartScreen warning
-
-The installer pipeline produces `SubRec-vX.Y.Z-beta-win64-setup.exe`,
-`SubRec-vX.Y.Z-beta-win64-portable.zip`, `...-ffmpeg-corresponding-source.zip`, and
-`SHA256SUMS.txt` covering all three files. Pre-releases only; check the Release for
-actual availability. Setup installs for the current user under
-`%LOCALAPPDATA%\Programs\SubRec`, with a desktop shortcut selected by default.
-Stop recording and exit the tray application before upgrading. Uninstall preserves
-settings and recordings and removes the application-directory log. The application
-icon was generated by AI image model gpt-image-2.5 via the maintainer's own CLIProxyAPI
-on 2026-11-12. Copyright status of AI-generated images may be unclear. Exact prompt:
-
-> Flat minimal app icon for a Windows screen-recording and subtitle app called SubRec (字录). Rounded square tile filled solid red #DC2626, full bleed, no background outside the tile except transparent/white. Bold thick white simplified Chinese character "字" centered. No text other than the character, no gradients, no shadows, no fine details, high contrast, must stay legible at 16x16 pixels.
-
-The upstream Chinese translation and license record are now included; the Windows
-installer build remains unverified. See the [installer notes](packaging/installer/README.md)
-and [release checklist](docs/WINDOWS_INSTALLER_RELEASE.md).
-
-This is a personal open-source project and **does not use a code-signing certificate**, so the released `.exe` / installer is **not digitally signed**. On first launch Windows SmartScreen may show "Windows protected your PC" / "unrecognized app" with the publisher listed as "Unknown publisher". This is expected for unsigned software and does **not** mean the file has been judged malicious — but it also means Windows cannot vouch for where it came from, so please verify it yourself:
-
-1. **Download only from this project's official Releases page** (<https://github.com/wocaonima335/SubRec/releases>). Do not run same-named files from mirrors, file-sharing links or third-party download sites.
-2. **Verify the SHA256** (strongly recommended). The SHA256 of every release file is published next to it (in the release notes or the attached `SHA256SUMS.txt` file). In PowerShell:
-
-   ```powershell
-   Get-FileHash .\<downloaded-file> -Algorithm SHA256
-   # or: certutil -hashfile .\<downloaded-file> SHA256
-   ```
-
-   The hash must match the published value **exactly** (case-insensitive). If it does not, do not run the file and [report it](SECURITY.md). Note: a checksum published on the same page only detects corruption or tampering in transit; it is not a substitute for code signing.
-3. Once verified and trusted, if Windows offers the option, on the SmartScreen dialog click **"More info"**, then **"Run anyway"**.
-4. If the file's Properties dialog shows an "Unblock" checkbox (right-click → Properties → General → Security), tick it before running. For a zip, unblock the zip first and then extract it.
-5. Antivirus tools may flag unsigned programs that capture the screen and audio. You can also build from source (see "Building" above) and avoid trusting a prebuilt binary.
-
-### License and contributing
-
-- License: **GPL-3.0** ([LICENSE](LICENSE)). The maintainers intend to offer a commercial license for future versions (dual licensing).
-- **Every contribution requires a signed [CLA](CLA.md)**; see [CONTRIBUTING.md](CONTRIBUTING.md).
-- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Security reports: [SECURITY.md](SECURITY.md).
-- Third-party components: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
-- The UI icons (`icons/*.png`) were created by the project maintainer and are released under **GPL-3.0**, like the rest of the project.
-- `reference/ffmpeg-fftools/ffmpeg_mux.c` is a reference file from FFmpeg that keeps its original copyright header (LGPL-2.1+). It is for reference only, is not part of the build, and is not covered by this project's CLA; see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
-
-### Friends
-
-- [LINUX DO](https://linux.do)
-
-### GPU preview implementation and verification
-
-The ddagrab GPU graph splits unchanged D3D11 frames to the encoder and a second
-hardware sink. Capture drains that sink with `AV_BUFFERSINK_FLAG_NO_REQUEST`,
-then offers references through a single pending-frame slot without waiting for
-the consumer. A separate worker graph runs `fps=15,hwdownload,format=bgra,scale,...,format=yuv420p`
-to a software preview sink (even dimensions, height at most 720, bicubic scaling). This worker
-boundary keeps GPU transfers and conversion off the recording thread. It also
-works when the encoder downloads GPU frames internally; only the GPU branch
-submits preview in that mode. CPU capture retains its existing preview path.
-
-Rebuild the packaged FFmpeg with `packaging/ffmpeg/build-ffmpeg.sh`: GPU preview
-requires the production `split` and `fps` filters as well as `hwdownload`,
-`format`, and `scale`. Every five seconds while frames arrive,
-`[Preview] gpu-branch frames=N fps=X dropped=Y` reports converted preview frames,
-interval rate, and drops from the pending slot/conversion output/GUI handoff.
-Normal 15 fps sampling is not a drop. GUI stalls replace pending frames instead
-of growing queues. A conversion failure is logged and leaves recording running.
-Verify NVENC passthrough and GPU-to-CPU encoder fallback on Windows, including
-GUI stalls, sustained capture rate, and pause/stop/restart. D3D11 driver/device
-contention and actual transfer latency still require real-hardware measurement.
