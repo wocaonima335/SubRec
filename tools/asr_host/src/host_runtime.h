@@ -11,6 +11,7 @@
 #include "subtitle/subtitle_error.h"
 #include "subtitle/subtitle_types.h"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
@@ -30,10 +31,13 @@ public:
     void write(const subtitle::proto::Message &);
     // 阻塞读一行；EOF 返回 nullopt；超长（> kMaxLineBytes）或非 JSON → 发 error{HostProtocolError} 后返回 nullopt。
     std::optional<subtitle::proto::Message> readCommand();
+    // 上次 readCommand 返回 nullopt 是否因协议错误（区分 stdin EOF：EOF → 退出码 0）。
+    bool hadProtocolError() const { return m_protocolError; }
 
 private:
     std::mutex m_writeMutex;
     std::FILE *m_out = nullptr;
+    bool m_protocolError = false;
 };
 
 // ---- spool 尾随读取（只读共享打开；以主进程 append 告知的 committed16k 为准，不信任 RIFF 长度）----
@@ -45,6 +49,15 @@ public:
     // 读 [from16k, to16k) 的 float 样本；to16k 不得超过 committed()，否则 SpoolRangeNotCommitted。
     subtitle::Status read(int64_t from16k, int64_t to16k, std::vector<float> &out);
     void close();
+
+private:
+    std::FILE *m_file = nullptr;
+    uint64_t m_dataOffset = 0;        // data 块首个样本的字节偏移
+    int m_bytesPerSample = 0;
+    int m_sampleRate = 0;
+    int m_channels = 0;
+    int m_formatTag = 0;              // WAV fmt 的 audioFormat：1 = PCM16，3 = float32
+    std::atomic<int64_t> m_committed{0};
 };
 
 // ---- 段状态机（§3.4、§3.5、§8.2）----
@@ -65,6 +78,23 @@ public:
     void onFinish(int64_t total16k);
     void setPartialIntervalMs(int ms);               // setLevel：0 = 关 partial
     Action next(int64_t committed16k, int64_t nowMs, bool partialInFlight);
+    bool idle() const;                               // 无未出完的 final 且无进行中的段（finish 完成判定用）
+
+private:
+    struct Pending {
+        subtitle::SegId id = -1;
+        int64_t b16k = 0, e16k = 0;
+        bool forcedCut = false;
+    };
+    int64_t m_maxSegment16k = 0;       // 0 = 不限制
+    int m_partialIntervalMs = 0;
+    int64_t m_pos = 0;                 // 已终结到的位置（resume 点 / 最后封口点）
+    subtitle::SegId m_nextId = 0;
+    bool m_open = false;
+    int64_t m_segBegin = 0;
+    subtitle::SegId m_segId = -1;
+    int64_t m_nextPartialAtMs = -1;    // -1 = 未武装（新段的首次 next() 只武装不出 partial）
+    std::vector<Pending> m_pending;
 };
 
 // ---- 父进程看门（§7.3）----
