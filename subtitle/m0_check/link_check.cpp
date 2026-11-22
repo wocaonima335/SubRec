@@ -66,7 +66,8 @@ int main()
 
     auto spool = std::make_shared<PcmSpool>();
     (void)spool->create("x.wav");
-    (void)spool->append(nullptr, 0);
+    const float silence[160]{};
+    (void)spool->append(silence, 160);
     spool->publish(160);
     spool->markSplice16k(80);
     expect(spool->takeSplice() == 80 && spool->takeSplice() == -1, "PcmSpool::takeSplice");
