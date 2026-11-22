@@ -52,6 +52,18 @@ private:                                            // 私有成员归实现方 
     IClock &m_clock;
     int64_t m_lastHbMs = 0;
     std::deque<int64_t> m_restartTimesMs;
+    bool m_running = false;
+    bool m_loading = false;
+    int64_t m_loadStartedMs = 0;
+    bool m_busy = false;
+    int64_t m_busyStartedMs = 0;
+    int64_t m_begin16k = 0, m_end16k = 0;
+    double m_decodeTimeoutMs = 0;
+    bool m_hasFailedInterval = false;
+    int64_t m_failedBegin16k = 0, m_failedEnd16k = 0;
+    Backend m_backend = Backend::Auto;
+    bool m_forceCpu = false;
+    int m_nextBackoffMs = 0;
 };
 
 } // namespace subtitle

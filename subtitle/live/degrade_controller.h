@@ -57,6 +57,14 @@ private:                                            // 私有成员归实现方 
     DegradeThresholds m_thresholds;
     DegradeLevel m_level = DegradeLevel::L0Live;
     std::string m_reason;
+    std::optional<int64_t> m_lastSampleMs;
+    std::optional<int64_t> m_lastTransitionMs;
+    bool m_anchorForcedTransition = false;
+    std::optional<int64_t> m_lagSince, m_rtfSince, m_cpuSince, m_recoverySince;
+    std::vector<LoadSample> m_healthWindow;
+
+    void clearSustain();
+    bool recordingUnhealthy(const LoadSample &);
 };
 
 } // namespace subtitle

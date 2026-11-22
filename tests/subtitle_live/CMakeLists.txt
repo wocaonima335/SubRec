@@ -22,5 +22,21 @@ target_compile_definitions(subtitle_h_atomic_tests PRIVATE SUBREC_CORE_TEST_SEAM
 add_test(NAME subtitle_h_flush_midwrite_failure COMMAND subtitle_h_atomic_tests)
 set_tests_properties(subtitle_h_flush_midwrite_failure PROPERTIES TIMEOUT 30 LABELS "subtitle;live;H")
 
+# ---- Package W: injected timestamps and ManualClock, no sleeps or host process. ----
+add_executable(subtitle_w_degrade_tests w_degrade.cpp)
+add_executable(subtitle_w_watchdog_tests w_watchdog.cpp)
+set(w_degrade_cases l0_l1_lag l0_l1_rtf l0_l1_cpu l1_l2_lag l1_l2_rtf sustain_reset
+    l1_l0_hysteresis l2_l1_hysteresis min_interval l2_l3_lag recording_health health_window
+    l3_latched force_level timestamps)
+set(w_watchdog_cases heartbeat decode_rtf load_timeout backoff restart_window poison poison_idle
+    gpu_cpu nonretry oom process_started set_backend reset_for_job)
+foreach(group IN ITEMS degrade watchdog)
+    target_link_libraries(subtitle_w_${group}_tests PRIVATE subtitle_live)
+    foreach(case IN LISTS w_${group}_cases)
+        add_test(NAME subtitle_w_${group}_${case} COMMAND subtitle_w_${group}_tests ${case})
+        set_tests_properties(subtitle_w_${group}_${case} PROPERTIES TIMEOUT 10 LABELS "subtitle;live;W")
+    endforeach()
+endforeach()
+
 include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/SubRecTests.cmake")
 subrec_configure_tests()

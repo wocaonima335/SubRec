@@ -10,6 +10,7 @@ add_library(subtitle_live STATIC
     # ---- W ----
     degrade_controller.h
     host_watchdog.h
-    degrade_watchdog_stubs.cpp
+    degrade_controller.cpp
+    host_watchdog.cpp
 )
 target_link_libraries(subtitle_live PUBLIC subtitle_headers subtitle_core)
