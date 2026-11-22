@@ -69,3 +69,14 @@ target_link_libraries(subtitle_pure INTERFACE
 if(SUBREC_SUBTITLE_M0_CHECKS)
     add_subdirectory(m0_check)
 endif()
+
+# package A tests: standalone defaults ON; app follows its existing test switch.
+if(SUBREC_SUBTITLE_STANDALONE)
+    option(BUILD_TESTING "Build subtitle tests" ON)
+endif()
+if((SUBREC_SUBTITLE_STANDALONE AND BUILD_TESTING) OR
+   (NOT SUBREC_SUBTITLE_STANDALONE AND SUBREC_BUILD_LIFECYCLE_TESTS))
+    enable_testing()
+    add_subdirectory("${SUBREC_SUBTITLE_INCLUDE_ROOT}/tests/subtitle_tap" "tests/subtitle_tap")
+    add_subdirectory("${SUBREC_SUBTITLE_INCLUDE_ROOT}/tests/subtitle_audio" "tests/subtitle_audio")
+endif()

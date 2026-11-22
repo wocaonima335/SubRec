@@ -22,7 +22,7 @@ public:
     static constexpr int groupDelay48k() noexcept { return kGroupDelay48k; }
 
 private:
-    static constexpr int kGroupDelay48k = 0;   // M0 占位，A 实现时改为实际值（不影响签名）
+    static constexpr int kGroupDelay48k = 30;   // M0 占位，A 实现时改为实际值（不影响签名）
     std::vector<float> m_history;
 };
 
