@@ -272,9 +272,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          & build/ci-tests/subtitle/m0_check/subtitle_m0_link_check.exe
+          & build/ci-tests/subtitle_m0_link_check.exe
           if ($LASTEXITCODE -ne 0) { throw "subtitle_m0_link_check failed ($LASTEXITCODE)" }
-          $asr = 'build/ci-tests/tools/asr_host/subrec-asr.exe'
+          $asr = 'build/ci-tests/subrec-asr.exe'
           & $asr --no-such-option
           if ($LASTEXITCODE -ne 101) { throw "subrec-asr with an unknown option exited $LASTEXITCODE, expected 101 (InvalidArgument)" }
           $ver = (& $asr --version) -join "`n"
