@@ -49,6 +49,18 @@ bool seek64(std::FILE *f, int64_t offset)
 #endif
 }
 
+// ftell 在 Win64 返回 32 位 long（MSVC/MinGW 均是），spool 超 2 GiB 会截断成负数；统一取 64 位。
+int64_t tell64(std::FILE *f)
+{
+#if defined(_WIN32)
+    return _ftelli64(f);
+#elif defined(__unix__) || defined(__APPLE__)
+    return ftello(f);
+#else
+    return ftell(f);
+#endif
+}
+
 std::FILE *openReadShared(const std::string &pathUtf8)
 {
 #if defined(_WIN32)
@@ -96,7 +108,7 @@ subtitle::Status SpoolTailReader::open(const std::string &spoolPathUtf8)
             if (std::fread(fmt, 1, take, f) != take)
                 break;
             if (size > take
-                && !seek64(f, static_cast<int64_t>(ftell(f)) + static_cast<int64_t>(size - take)))
+                && !seek64(f, static_cast<int64_t>(tell64(f)) + static_cast<int64_t>(size - take)))
                 break;
             formatTag = readU16(fmt);
             channels = readU16(fmt + 2);
@@ -104,11 +116,11 @@ subtitle::Status SpoolTailReader::open(const std::string &spoolPathUtf8)
             bits = readU16(fmt + 14);
             haveFmt = true;
         } else if (std::memcmp(ch, "data", 4) == 0) {
-            dataOffset = static_cast<uint64_t>(ftell(f));
+            dataOffset = static_cast<uint64_t>(tell64(f));
             haveData = true;
             break;   // data 是最后一块且持续增长，其后没有（也不会有）别的块
         } else {
-            if (!seek64(f, static_cast<int64_t>(ftell(f)) + static_cast<int64_t>(size) + (size & 1)))
+            if (!seek64(f, static_cast<int64_t>(tell64(f)) + static_cast<int64_t>(size) + (size & 1)))
                 break;
         }
     }

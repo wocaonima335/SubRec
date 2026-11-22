@@ -2,14 +2,18 @@
 
 #include "host_driver.h"
 #include "test_framework.h"
+#include "test_paths.h"
 
 #include "fake_host/fake_host_script.h"
 #include "subtitle/host/asr_protocol.h"
 
 #include <cstdio>
-#include <fstream>
 #include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include <csignal>
+#endif
 
 using namespace subtitle;
 
@@ -18,14 +22,12 @@ namespace {
 const char *kExe = SUBREC_ASR_FAKEHOST_EXE;
 int g_tmpCounter = 0;
 
+// 相对当前工作目录（= 构建目录）写脚本文件；路径保持 UTF-8，经 spawn 的宽字符命令行传给 fakehost
 std::string writeScript(const std::string &content)
 {
     const std::string path = "fakehost-" + std::to_string(++g_tmpCounter) + "-"
                              + std::to_string(HostSession::nowMs()) + ".script";
-    std::ofstream out(path, std::ios::binary);
-    out << content;
-    out.close();
-    CHECK_MSG(out.good(), "write script failed: " + path);
+    CHECK_MSG(testpaths::writeFileUtf8(path, content), "write script failed: " + path);
     return path;
 }
 
@@ -167,7 +169,14 @@ TEST(fakehost_crash)
     CHECK(s.proc.spawn(kExe, {"--script=" + script}));
     auto exit = s.proc.waitForExit(8000);
     CHECK(!exit.timedOut);
-    CHECK_MSG(exit.signaled || exit.code != 0, "crash 必须以异常方式退出");
+#ifdef _WIN32
+    // MinGW/MSVC CRT 的 abort()：未处理 SIGABRT → 以退出码 3 终止（非 NTSTATUS 崩溃码区间）
+    CHECK(!exit.signaled);
+    CHECK(exit.code == 3);
+#else
+    CHECK(exit.signaled);
+    CHECK(exit.code == SIGABRT);
+#endif
 }
 
 TEST(fakehost_eof_exits_zero)

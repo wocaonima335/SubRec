@@ -203,16 +203,44 @@ int runMain(int argc, const char *const *argv)
         std::fprintf(stderr, "subrec-asr-fakehost: --script=<path> required\n");
         return static_cast<int>(subtitle::ErrorCode::InvalidArgument);
     }
-    std::ifstream in(scriptPath, std::ios::binary);
-    if (!in) {
-        std::fprintf(stderr, "subrec-asr-fakehost: cannot read script: %s\n", scriptPath.c_str());
-        return static_cast<int>(subtitle::ErrorCode::InvalidArgument);
+    // 脚本路径是 UTF-8（wmain 已把宽字符 argv 转成 UTF-8）：Windows 的窄字符 ifstream 走 ANSI
+    // 代码页，非 ASCII 路径会打不开；MinGW libstdc++ 没有 wchar_t* 的 fstream 重载，用 _wfopen 读。
+    std::string content;
+#if defined(_WIN32)
+    {
+        const int wlen = MultiByteToWideChar(CP_UTF8, 0, scriptPath.c_str(), -1, nullptr, 0);
+        if (wlen <= 0) {
+            std::fprintf(stderr, "subrec-asr-fakehost: bad script path\n");
+            return static_cast<int>(subtitle::ErrorCode::InvalidArgument);
+        }
+        std::wstring wide(static_cast<size_t>(wlen), L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, scriptPath.c_str(), -1, wide.data(), wlen);
+        std::FILE *in = _wfopen(wide.c_str(), L"rb");
+        if (!in) {
+            std::fprintf(stderr, "subrec-asr-fakehost: cannot read script: %s\n", scriptPath.c_str());
+            return static_cast<int>(subtitle::ErrorCode::InvalidArgument);
+        }
+        char buf[4096];
+        size_t got = 0;
+        while ((got = std::fread(buf, 1, sizeof buf, in)) > 0)
+            content.append(buf, buf + got);
+        std::fclose(in);
     }
-    std::stringstream ss;
-    ss << in.rdbuf();
+#else
+    {
+        std::ifstream in(scriptPath, std::ios::binary);
+        if (!in) {
+            std::fprintf(stderr, "subrec-asr-fakehost: cannot read script: %s\n", scriptPath.c_str());
+            return static_cast<int>(subtitle::ErrorCode::InvalidArgument);
+        }
+        std::stringstream ss;
+        ss << in.rdbuf();
+        content = ss.str();
+    }
+#endif
     std::vector<ScriptStep> steps;
     std::string error;
-    if (!asrhost::fake::parseScript(ss.str(), steps, &error)) {
+    if (!asrhost::fake::parseScript(content, steps, &error)) {
         std::fprintf(stderr, "subrec-asr-fakehost: %s\n", error.c_str());
         return static_cast<int>(subtitle::ErrorCode::InvalidArgument);
     }

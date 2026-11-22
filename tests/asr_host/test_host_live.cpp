@@ -14,6 +14,10 @@
 #include <string>
 #include <vector>
 
+#ifndef _WIN32
+#include <csignal>
+#endif
+
 using namespace subtitle;
 
 namespace {
@@ -435,7 +439,13 @@ TEST(fault_crash_at_seg)
     s.openJob(spool, 0, wav.writtenSamples());
     auto exit = s.proc.waitForExit(8000);
     CHECK(!exit.timedOut);
-    CHECK_MSG(exit.signaled, "crashAtSeg 必须崩溃退出（信号）");
+    CHECK(exit.signaled);   // 崩溃退出（Windows：NTSTATUS 崩溃码区间）
+#ifdef _WIN32
+    // 空指针写 → STATUS_ACCESS_VIOLATION；GetExitCodeProcess 的 32 位码按 int 带回（负值）
+    CHECK(static_cast<unsigned>(exit.code) == 0xC0000005u);
+#else
+    CHECK(exit.code == SIGSEGV);
+#endif
 }
 
 TEST(fault_oom_at_seg)
@@ -469,7 +479,10 @@ TEST(fault_illegal_instr_exit)
     CHECK(!exit.signaled);
     CHECK(exit.code == normalizedExitCode(proto::kExitCpuUnsupported));   // 305（POSIX 截断为 49）
 #else
-    CHECK(exit.code == static_cast<int>(proto::kStatusIllegalInstruction));   // 0xC000001D
+    // injectIllegalInstrExit 用 RaiseException(STATUS_ILLEGAL_INSTRUCTION)：未处理异常 → 进程以
+    // 该 NTSTATUS 退出（0xC000001D；GetExitCodeProcess 的 32 位码按 int 带回，用无符号比较）
+    CHECK(exit.signaled);
+    CHECK(static_cast<unsigned>(exit.code) == proto::kStatusIllegalInstruction);
 #endif
 }
 

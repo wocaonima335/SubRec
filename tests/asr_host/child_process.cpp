@@ -1,12 +1,16 @@
 #include "child_process.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <thread>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX   // MSVC 的 windows.h 会定义 min/max 宏，破坏 std::min(a, b)
+#endif
 #include <windows.h>
 #else
 #include <cerrno>
@@ -47,6 +51,51 @@ std::string toMultiByte(const std::wstring &w)
         s.pop_back();
     return s;
 }
+
+// Windows 命令行是单个字符串，由子进程 CRT 按引号规则重新切分 argv（MSDN「Parsing C++ Command-Line
+// Arguments」）：含空格/制表符/引号的参数必须加引号，参数内部的引号前反斜杠要翻倍，结尾反斜杠也要翻倍。
+// POSIX 的 execve 直接传指针数组，参数不需要也不能转义。
+std::string quoteWindowsArg(const std::string &arg)
+{
+    if (!arg.empty() && arg.find_first_of(" \t\"") == std::string::npos)
+        return arg;
+    std::string out = "\"";
+    size_t backslashes = 0;
+    for (char c : arg) {
+        if (c == '\\') {
+            ++backslashes;
+            continue;
+        }
+        if (c == '"') {
+            out.append(backslashes * 2 + 1, '\\');
+            out += '"';
+            backslashes = 0;
+            continue;
+        }
+        out.append(backslashes, '\\');
+        backslashes = 0;
+        out += c;
+    }
+    out.append(backslashes * 2, '\\');
+    out += '"';
+    return out;
+}
+
+// CreateProcessW(CREATE_UNICODE_ENVIRONMENT) 要求环境块按变量名不区分大小写排序；
+// 名字仅大小写不同的项会被视作同一个（与 Windows 环境语义一致，取后写入的值）。
+struct EnvNameLess {
+    bool operator()(const std::string &a, const std::string &b) const
+    {
+        const size_t n = std::min(a.size(), b.size());
+        for (size_t i = 0; i < n; ++i) {
+            int ca = std::tolower(static_cast<unsigned char>(a[i]));
+            int cb = std::tolower(static_cast<unsigned char>(b[i]));
+            if (ca != cb)
+                return ca < cb;
+        }
+        return a.size() < b.size();
+    }
+};
 #endif
 
 } // namespace
@@ -76,16 +125,21 @@ bool ChildProcess::spawn(const std::string &exe, const std::vector<std::string> 
 {
     SECURITY_ATTRIBUTES sa{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     HANDLE inRead = nullptr, inWrite = nullptr, outRead = nullptr, outWrite = nullptr;
-    if (!CreatePipe(&inRead, &inWrite, &sa, 0) || !CreatePipe(&outRead, &outWrite, &sa, 0))
+    if (!CreatePipe(&inRead, &inWrite, &sa, 0))
         return false;
+    if (!CreatePipe(&outRead, &outWrite, &sa, 0)) {
+        CloseHandle(inRead);
+        CloseHandle(inWrite);
+        return false;
+    }
 
-    std::string cmdline = "\"" + exe + "\"";
+    std::string cmdline = quoteWindowsArg(exe);
     for (const std::string &a : args)
-        cmdline += " " + a;
+        cmdline += " " + quoteWindowsArg(a);
     std::wstring wcmd = toWide(cmdline);
 
-    // 环境块：当前环境 + 覆盖/删除
-    std::map<std::string, std::string> env;
+    // 环境块：当前环境 + 覆盖/删除（按变量名不区分大小写排序，见 EnvNameLess）
+    std::map<std::string, std::string, EnvNameLess> env;
     {
         LPWCH block = GetEnvironmentStringsW();
         for (LPWCH p = block; *p; p += wcslen(p) + 1) {
@@ -150,8 +204,10 @@ bool ChildProcess::readLine(std::string &line, int timeoutMs)
         if (drainPending(line))
             return true;
         DWORD avail = 0;
-        if (!PeekNamedPipe(m_outRead, nullptr, 0, nullptr, &avail, nullptr))
-            return false;   // 管道关闭 = EOF
+        if (!PeekNamedPipe(m_outRead, nullptr, 0, nullptr, &avail, nullptr)) {
+            m_eof = true;   // 管道断开 = EOF（与 POSIX 侧一致，isEof() 置位）
+            return false;
+        }
         if (avail == 0) {
             if (nowMs() >= deadline)
                 return false;
@@ -162,8 +218,10 @@ bool ChildProcess::readLine(std::string &line, int timeoutMs)
         DWORD got = 0;
         if (!ReadFile(m_outRead, chunk, static_cast<DWORD>(std::min<DWORD>(avail, sizeof chunk)), &got,
                       nullptr)
-            || got == 0)
+            || got == 0) {
+            m_eof = true;
             return false;
+        }
         m_buf.append(chunk, chunk + got);
     }
 }
@@ -177,13 +235,15 @@ ChildProcess::Exit ChildProcess::waitForExit(int timeoutMs)
         return res;
     }
     const DWORD wait = WaitForSingleObject(m_process, timeoutMs < 0 ? INFINITE : timeoutMs);
-    if (wait == WAIT_TIMEOUT) {
+    if (wait != WAIT_OBJECT_0) {
         res.timedOut = true;
         return res;
     }
     DWORD code = 0;
     GetExitCodeProcess(m_process, &code);
     m_reaped = true;
+    // GetExitCodeProcess 是 32 位无符号：CRT exit(n) 原样（703 就是 703），崩溃是 NTSTATUS
+    //（0xC0000005 等，按 int 比较为负值，测试里用 static_cast<unsigned> 与 0xC...u 比较）。
     m_final.code = static_cast<int>(code);
     m_final.signaled = code >= 0x80000000;   // NTSTATUS 区间近似为「崩溃」
     res.code = m_final.code;
@@ -203,6 +263,9 @@ void ChildProcess::kill()
     if (m_process && !m_reaped) {
         TerminateProcess(m_process, 1);
         WaitForSingleObject(m_process, 3000);
+        m_reaped = true;   // 记录最终状态：随后 waitForExit 返回 TerminateProcess 的退出码 1
+        m_final.code = 1;
+        m_final.signaled = false;
     }
     closeStdin();
     if (m_outRead) {

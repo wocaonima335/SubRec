@@ -2,6 +2,8 @@
 // tests/asr_host：合成 16 kHz 单声道 s16le WAV spool（与 PcmSpool 的文件格式一致）。
 // 追加写、随时 fflush 后发布 committed；RIFF 长度字段不回填（读者以 committed 为准，不信任头部）。
 
+#include "test_paths.h"
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -14,7 +16,8 @@ public:
     bool create(const std::string &path)
     {
         close();
-        m_file = std::fopen(path.c_str(), "wb");
+        // 路径是 UTF-8：Windows 上窄字符 fopen 走 ANSI 代码页，非 ASCII 路径要经 _wfopen
+        m_file = testpaths::fopenUtf8(path, "wb");
         if (!m_file)
             return false;
         unsigned char hdr[44];
