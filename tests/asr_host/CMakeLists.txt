@@ -1,6 +1,8 @@
 # tests/asr_host（工作包 C）。两种进入方式：
 #   1) 独立：cmake -S tools/asr_host -B build-asr（SUBREC_ASR_BUILD_TESTS 默认 ON）
-#   2) 仓库内：tools/asr_host -DSUBREC_ASR_BUILD_TESTS=ON（默认 OFF，避免与 G 的 tests/ 挂接重复）
+#   2) 仓库内：顶层 -DSUBREC_BUILD_SUBTITLE=ON 且测试开关开启时自动构建（tools/asr_host 缺省跟随
+#      SUBREC_BUILD_LIFECYCLE_TESTS / BUILD_TESTING），本目录末尾按 SubRecTests 规则登记：
+#      ci 标签 + 目标进 SUBREC_TEST_TARGETS（顶层 WIN32 块汇成 subrec_tests 依赖）。
 # 纯 C++17 测试框架（无外部依赖）；崩溃/挂起类用例逐个设 TIMEOUT，ctest 不会卡死。
 
 add_executable(asr_host_tests
@@ -10,12 +12,14 @@ add_executable(asr_host_tests
     child_process.cpp
     wav_builder.h
     host_driver.h
+    test_paths.h
     "${SUBREC_ASR_REPO_ROOT}/tools/asr_host/fake_host/fake_host_script.cpp"
     test_protocol.cpp
     test_options.cpp
     test_fake_engine.cpp
     test_fake_host.cpp
     test_host_live.cpp
+    test_utf8_paths.cpp
 )
 target_include_directories(asr_host_tests PRIVATE
     "${SUBREC_ASR_REPO_ROOT}"
@@ -88,11 +92,21 @@ set(ASR_HOST_TEST_CASES
     host_eof_exits_zero
     host_refine_role_replay
     host_refine_role_rejects_live_commands
+    utf8_path_chinese_spool_and_script
 )
 
 foreach(case IN LISTS ASR_HOST_TEST_CASES)
     add_test(NAME ${case} COMMAND asr_host_tests ${case})
     set_tests_properties(${case} PROPERTIES TIMEOUT 60)
+endforeach()
+
+# 需要真实模型文件的用例（当前没有；接入真实引擎后填用例名列表即可，机制先留好）。
+# 这类用例同时打 device 标签：subrec_configure_tests 不给带 device 的用例追加 ci，
+# 因此 CI 的 ctest -L "^ci$" 不会选中它们，-LE "^(device|...)$" 一并排除（不能改 .github，
+# 只能复用 device 这条既有排除通道；needs_asr_model 供本机 ctest -L needs_asr_model 定向运行）。
+set(ASR_HOST_NEEDS_MODEL_CASES "")
+foreach(case IN LISTS ASR_HOST_NEEDS_MODEL_CASES)
+    set_property(TEST ${case} APPEND PROPERTY LABELS "device;needs_asr_model")
 endforeach()
 
 # 崩溃/挂起/慢速注入类：收紧超时，防止 ctest 卡死
@@ -110,4 +124,12 @@ set_tests_properties(
 set_tests_properties(
     live_partial_stream_and_seq
     live_set_level_disables_partial
+    utf8_path_chinese_spool_and_script
     PROPERTIES TIMEOUT 90)
+
+# 按 SubRecTests 规则登记（与其他 tests/* 一致，两种进入方式都执行）：未带 device 标签的用例
+# 追加 ci 标签、WIN32 上设置 PATH（编译器 bin，MinGW 运行时 DLL）、把 asr_host_tests 追加到全局
+# SUBREC_TEST_TARGETS（顶层 WIN32 块 add_custom_target(subrec_tests DEPENDS ...) 收集，
+# CI 的 build/ci-tests 用 --target subrec_tests 构建时随之带上 subrec-asr / subrec-asr-fakehost）。
+include("${SUBREC_ASR_REPO_ROOT}/cmake/SubRecTests.cmake")
+subrec_configure_tests()

@@ -79,8 +79,13 @@ endif()
 
 # ---- 测试（tests/asr_host，工作包 C）----
 # 独立构建（cmake -S tools/asr_host）默认开启：build-asr 里直接 ctest；
-# 仓库内构建默认关闭（tests/ 的挂接归包 G / SubRecTests 规则），可显式 -DSUBREC_ASR_BUILD_TESTS=ON 打开。
+# 仓库内构建（顶层 -DSUBREC_BUILD_SUBTITLE=ON 时随 subtitle/ 挂入）默认跟随顶层的测试开关
+# （CI build/ci-tests 用 SUBREC_BUILD_LIFECYCLE_TESTS=ON，不 include(CTest)，BUILD_TESTING 未定义）：
+# 开启时 tests/asr_host 按 SubRecTests 规则登记 ci 标签并进入 subrec_tests 依赖
+# （cmake/SubRecTests.cmake 的 subrec_configure_tests 追加 SUBREC_TEST_TARGETS）。
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(SUBREC_ASR_TESTS_DEFAULT ON)
+elseif(SUBREC_BUILD_LIFECYCLE_TESTS OR BUILD_TESTING)
     set(SUBREC_ASR_TESTS_DEFAULT ON)
 else()
     set(SUBREC_ASR_TESTS_DEFAULT OFF)
