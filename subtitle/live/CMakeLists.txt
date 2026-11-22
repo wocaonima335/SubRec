@@ -4,7 +4,9 @@ add_library(subtitle_live STATIC
     local_agreement.h
     sentence_fixer.h
     subtitle_merger.h
-    merger_stubs.cpp
+    local_agreement.cpp
+    sentence_fixer.cpp
+    subtitle_merger.cpp
     # ---- W ----
     degrade_controller.h
     host_watchdog.h

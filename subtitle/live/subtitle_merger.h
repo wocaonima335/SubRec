@@ -63,6 +63,16 @@ public:
     void setRefineTotal(int routedCount);           // refineProgress 的分母
 
 private:                                            // 私有成员归实现方 H，可自由调整
+    friend class SubtitleMerger;
+    friend class SentenceFixer;
+    bool canAccept(const FinalSegment &) const;
+    bool acceptPrepared(const FinalSegment &, std::vector<Cue>);
+    void sortCues();
+    std::vector<int64_t> boundariesMs() const;
+    std::map<SegId, FinalSegment> m_finals;
+    std::map<SegId, SegId> m_mergedInto;
+    std::vector<Segment> m_poison;
+    CueConfig m_cueConfig;
     std::vector<Cue> m_cues;
     std::vector<int64_t> m_hardBoundaries16k;
     std::map<SegId, SentenceState> m_states;
@@ -99,6 +109,9 @@ private:                                            // 私有成员归实现方 
     IClock &m_clock;
     LiveConfig m_live;
     DegradeLevel m_level = DegradeLevel::L0Live;
+    std::optional<ConfirmedPrefix> m_display;
+    int64_t m_displayUntilMs = 0;
+    bool m_finalPending = false;
     uint64_t m_flushedRevision = 0;
     int64_t m_lastFlushMs = 0;
 };
