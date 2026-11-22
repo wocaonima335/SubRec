@@ -76,3 +76,18 @@ if(WIN32 AND NOT MSVC AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_link_options(subrec-asr PRIVATE -municode)
     target_link_options(subrec-asr-fakehost PRIVATE -municode)
 endif()
+
+# ---- 测试（tests/asr_host，工作包 C）----
+# 独立构建（cmake -S tools/asr_host）默认开启：build-asr 里直接 ctest；
+# 仓库内构建默认关闭（tests/ 的挂接归包 G / SubRecTests 规则），可显式 -DSUBREC_ASR_BUILD_TESTS=ON 打开。
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(SUBREC_ASR_TESTS_DEFAULT ON)
+else()
+    set(SUBREC_ASR_TESTS_DEFAULT OFF)
+endif()
+option(SUBREC_ASR_BUILD_TESTS "Build tests/asr_host (ctest from the standalone tools/asr_host build)"
+       ${SUBREC_ASR_TESTS_DEFAULT})
+if(SUBREC_ASR_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory("${SUBREC_ASR_REPO_ROOT}/tests/asr_host" "${CMAKE_CURRENT_BINARY_DIR}/asr_host_tests")
+endif()
