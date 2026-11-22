@@ -10,6 +10,7 @@
 #include <cstdlib>
 #define SETENV(k, v) _putenv(k "=" v)
 #else
+#include <csignal>
 #include <cstdlib>
 extern char **environ;
 static void SETENV(const char *k, const char *v) { setenv(k, v, 0 /*不覆盖*/); }
@@ -63,5 +64,11 @@ int runTestsSelected(int argc, char **argv)
 int main(int argc, char **argv)
 {
     SETENV("SUBREC_ASR_TEST_HOOKS", "1");
+#ifndef _WIN32
+    // 子进程先退出（脚本 exit、崩溃注入）后测试再写它的 stdin 时，POSIX 默认 SIGPIPE 会直接杀掉
+    // 测试进程（退出码 141，ctest 偶发失败且无 FAIL 输出）。忽略后写入返回 EPIPE，由用例断言判定。
+    // Windows 无 SIGPIPE，WriteFile 返回 ERROR_NO_DATA，不受影响。子进程在 fork 后恢复 SIG_DFL。
+    std::signal(SIGPIPE, SIG_IGN);
+#endif
     return runTestsSelected(argc, argv);
 }

@@ -336,6 +336,8 @@ bool ChildProcess::spawn(const std::string &exe, const std::vector<std::string> 
     if (pid < 0)
         return false;
     if (pid == 0) {
+        // 测试进程忽略了 SIGPIPE（test_main），SIG_IGN 会跨 exec 继承；宿主按生产环境的默认处置运行。
+        std::signal(SIGPIPE, SIG_DFL);
         dup2(inPipe[0], STDIN_FILENO);
         dup2(outPipe[1], STDOUT_FILENO);
         close(inPipe[0]);
