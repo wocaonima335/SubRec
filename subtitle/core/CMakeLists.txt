@@ -5,7 +5,10 @@ add_library(subtitle_core STATIC
     hallucination_filter.h
     cue_builder.h
     subtitle_writers.h
-    core_stubs.cpp
+    text_normalizer.cpp
+    hallucination_filter.cpp
+    cue_builder.cpp
+    subtitle_writers.cpp
     # ---- K ----
     glossary.h
     event_tags.h

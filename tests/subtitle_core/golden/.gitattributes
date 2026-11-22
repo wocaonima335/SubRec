@@ -1,0 +1,3 @@
+# Exact-byte fixtures: preserve BOM/CRLF and required terminal blank lines.
+*.srt binary
+*.vtt binary

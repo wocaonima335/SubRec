@@ -79,4 +79,6 @@ if((SUBREC_SUBTITLE_STANDALONE AND BUILD_TESTING) OR
     enable_testing()
     add_subdirectory("${SUBREC_SUBTITLE_INCLUDE_ROOT}/tests/subtitle_tap" "tests/subtitle_tap")
     add_subdirectory("${SUBREC_SUBTITLE_INCLUDE_ROOT}/tests/subtitle_audio" "tests/subtitle_audio")
+    # Package B: synthetic subtitle core tests.
+    add_subdirectory("${SUBREC_SUBTITLE_INCLUDE_ROOT}/tests/subtitle_core" "tests/subtitle_core")
 endif()
