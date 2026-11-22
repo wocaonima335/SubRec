@@ -10,7 +10,7 @@ target_link_libraries(subtitle_d_host_tests PRIVATE subtitle_host subtitle_live 
 target_compile_definitions(subtitle_d_host_tests PRIVATE
     ASR_EXE="$<TARGET_FILE:subrec-asr>" FAKEHOST_EXE="$<TARGET_FILE:subrec-asr-fakehost>")
 add_dependencies(subtitle_d_host_tests subrec-asr subrec-asr-fakehost)
-set(cases version_mismatch overlong_line non_json unknown_type crash_restart_plan quit_kill_hang hooks_enabled hooks_disabled commands_append)
+set(cases version_mismatch overlong_line non_json unknown_type crash_restart_plan exit_classification quit_kill_hang hooks_enabled hooks_disabled commands_append)
 if(WIN32)
     list(APPEND cases job_object_parent_death)
 endif()

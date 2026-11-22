@@ -9,6 +9,21 @@
 #include <windows.h>
 #endif
 using namespace subtitle;
+namespace {
+bool isGenericCrash(int exitCode, bool crashed) {
+    // ipc-protocol.md §6: special codes take precedence over generic crashes.
+    if (exitCode == proto::kExitOutOfMemory ||
+        uint32_t(exitCode) == proto::kStatusIllegalInstruction ||
+        exitCode == proto::kExitCpuUnsupported || exitCode == proto::kExitRuntimeMissing ||
+        exitCode == proto::kExitEngineLoadFailed || exitCode == proto::kExitVersionMismatch)
+        return false;
+    return crashed || exitCode != proto::kExitOk;
+}
+QString exitDetails(int exitCode, bool crashed) {
+    return QString("exitCode=%1, crashed=%2 (QProcess %3)")
+        .arg(exitCode).arg(crashed).arg(crashed ? "CrashExit" : "NormalExit");
+}
+}
 class HostTests : public QObject {
     Q_OBJECT
     QTemporaryDir dir;
@@ -22,6 +37,17 @@ class HostTests : public QObject {
         if (code == 704) QCOMPARE(ready.size(), 0);
         QTRY_COMPARE_WITH_TIMEOUT(exits.size(), 1, 3000); QVERIFY(!c.isRunning());
     }
+    void checkCrashRestart(int exitCode, bool crashed) {
+        ManualClock clock; HostWatchdog watchdog({}, clock); watchdog.onProcessStarted(); watchdog.onBusy(16, 1600, 1584);
+        const auto plan = watchdog.onExit(exitCode, crashed, 16);
+        const auto details = exitDetails(exitCode, crashed) +
+            QString(", plan.allowed=%1, plan.delayMs=%2, plan.poison=%3")
+                .arg(plan.allowed).arg(plan.delayMs).arg(plan.poison);
+        QVERIFY2(isGenericCrash(exitCode, crashed), qPrintable(details));
+        QVERIFY2(plan.allowed, qPrintable(details));
+        QVERIFY2(plan.delayMs == 1000, qPrintable(details));
+        QVERIFY2(!plan.poison, qPrintable(details));
+    }
 private slots:
     void init() { qRegisterSubtitleMetaTypes(); qunsetenv("SUBREC_AUTOTEST_SCENARIO"); qunsetenv("SUBREC_ASR_TEST_HOOKS"); }
     void version_mismatch() { malformed("reply-hello 1\n", 704); }
@@ -34,17 +60,46 @@ private slots:
     }
     void crash_restart_plan() {
         AsrHostClient c(FAKEHOST_EXE); c.setExtraArguments({"--script=" + script("expect hello\nreply-hello\ncrash\n")});
-        QSignalSpy exits(&c, &AsrHostClient::exited); c.start(false); QTRY_COMPARE(exits.size(), 1); QVERIFY(exits[0][1].toBool());
-        ManualClock clock; HostWatchdog watchdog({}, clock); watchdog.onProcessStarted(); watchdog.onBusy(16, 1600, 1584);
-        auto plan = watchdog.onExit(exits[0][0].toInt(), exits[0][1].toBool(), 16);
-        QVERIFY(plan.allowed); QCOMPARE(plan.delayMs, 1000); QVERIFY(!plan.poison);
+        QSignalSpy exits(&c, &AsrHostClient::exited); c.start(false); QTRY_COMPARE(exits.size(), 1);
+        // abort() can be NormalExit/code 3 with MinGW/UCRT, or CrashExit on POSIX.
+        // Both are crashes under the protocol; the signal preserves QProcess status.
+        checkCrashRestart(exits[0][0].toInt(), exits[0][1].toBool());
+    }
+    void exit_classification_data() {
+        QTest::addColumn<int>("exitCode");
+        QTest::addColumn<bool>("crashed");
+        QTest::addColumn<bool>("genericCrash");
+        QTest::newRow("normal-zero") << 0 << false << false;
+        QTest::newRow("crash-zero") << 0 << true << true;
+        QTest::newRow("crash-nonzero") << 3 << true << true;
+        QTest::newRow("normal-abort-code") << 3 << false << true;
+        for (int code : {proto::kExitOutOfMemory, int(proto::kStatusIllegalInstruction),
+                         proto::kExitCpuUnsupported, proto::kExitRuntimeMissing,
+                         proto::kExitEngineLoadFailed, proto::kExitVersionMismatch}) {
+            for (bool crashed : {false, true}) {
+                const auto name = QString("special-%1-crashed-%2").arg(code).arg(crashed).toLatin1();
+                QTest::newRow(name.constData()) << code << crashed << false;
+            }
+        }
+    }
+    void exit_classification() {
+        QFETCH(int, exitCode);
+        QFETCH(bool, crashed);
+        QFETCH(bool, genericCrash);
+        QVERIFY2(isGenericCrash(exitCode, crashed) == genericCrash, qPrintable(exitDetails(exitCode, crashed)));
+        if (genericCrash) checkCrashRestart(exitCode, crashed);
     }
     void quit_kill_hang() {
         AsrHostClient c(FAKEHOST_EXE); c.setExtraArguments({"--script=" + script("expect hello\nreply-hello\nhang\n")});
         QSignalSpy ready(&c, &AsrHostClient::ready), exits(&c, &AsrHostClient::exited);
         c.start(false); QTRY_COMPARE(ready.size(), 1); QElapsedTimer elapsed; elapsed.start(); c.stop(120);
         QTest::qWait(50); QVERIFY(c.isRunning()); QTRY_COMPARE_WITH_TIMEOUT(exits.size(), 1, 1500);
-        QVERIFY(elapsed.elapsed() >= 110); QVERIFY(elapsed.elapsed() < 1500); QVERIFY(exits[0][1].toBool());
+        const auto elapsedMs = elapsed.elapsed();
+        const auto details = exitDetails(exits[0][0].toInt(), exits[0][1].toBool()) +
+            QString(", elapsedMs=%1, stopGraceMs=120").arg(elapsedMs);
+        QVERIFY2(elapsedMs >= 110, qPrintable(details)); QVERIFY2(elapsedMs < 1500, qPrintable(details));
+        // QProcess::kill() reports CrashExit on Windows too, unlike CRT abort().
+        QVERIFY2(exits[0][1].toBool(), qPrintable(details));
     }
     void hooks_enabled() { hooks(true); }
     void hooks_disabled() { hooks(false); }
