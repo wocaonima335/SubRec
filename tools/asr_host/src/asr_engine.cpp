@@ -3,10 +3,12 @@
 // createEngine：M1 第一阶段只有 fake（须 SUBREC_ASR_TEST_HOOKS=1，否则 EngineUnknown，§8）。
 // sherpa-onnx / whisper.cpp 是已知引擎但尚未接入（S0 / M1 sherpa 阶段），返回 NotSupported。
 //
-// createVad：能量阈值 VAD（fake 引擎与测试配套）。帧长 512 样本（32 ms，与 Silero 一致）；
+// createVad：能量阈值 VAD（fake 引擎与测试配套）。帧长 512 样本（32 ms，与 Silero 一致），
+// 帧边界对齐自 0 起的绝对 512 网格（C2 问题 3：重启/拼接后网格不随恢复点重排）；
 // RMS 超过 threshold 判为语音帧，连续 minSpeechMs 开段、段后连续 minSilenceMs 静音端点，
 // speechPadMs 向两侧外扩（sherpa C API 没有 pad 参数，外扩本来就要 SubRec 自己做，§3.5）。
-// 它只在解码线程使用；resume 断点经 reset(from16k) 从静音初始化（§7.4）。
+// 它只在解码线程使用；resume 断点经 reset(from16k) 从静音初始化（§7.4），
+// 恢复点后的首帧不足 512 样本、只用于对齐，段起点钳在 resumeFrom16k 之后。
 
 #include "asr_engine.h"
 #include "engine_fake.h"
@@ -47,25 +49,33 @@ public:
             // 输入应严格连续（解码线程顺序喂入）；容错重置。
             m_nextFrameStart = first16k;
             m_frame.clear();
+            realignFrame();
         }
         for (size_t i = 0; i < n; ++i)
             m_frame.push_back(pcm16k[i]);
-        while (m_frame.size() >= kVadFrameSamples) {
-            const bool speech = frameIsSpeech(m_frame.data(), kVadFrameSamples);
-            m_frame.erase(m_frame.begin(), m_frame.begin() + kVadFrameSamples);
-            advanceFrame(speech, closed);
+        while (m_frame.size() >= frameLen()) {
+            const size_t len = frameLen();
+            const bool speech = frameIsSpeech(m_frame.data(), len);
+            const int64_t frameStart = m_nextFrameStart;
+            m_frame.erase(m_frame.begin(), m_frame.begin() + len);
+            m_nextFrameStart = m_frameEnd;
+            m_frameEnd += static_cast<int64_t>(kVadFrameSamples);
+            advanceFrame(speech, frameStart, closed);
         }
     }
 
     void forceCut(int64_t at16k) override
     {
-        // splice / 外部强切：丢弃当前语音状态（段状态机会在 at16k 封口），其后音频重新判段。
+        // splice / 外部强切：丢弃当前语音状态与未成帧的残留样本（其后音频重新判段，段状态机在
+        // at16k 封口），帧网格重新对齐绝对 512 网格（拼接点未必落在网格上，见 realignFrame）。
         if (m_inSpeech) {
             m_inSpeech = false;
             m_runFrames = 0;
             m_runStart = -1;
         }
         m_nextFrameStart = std::max(m_nextFrameStart, at16k);
+        m_frame.clear();
+        realignFrame();
         m_lastEmitEnd = std::max(m_lastEmitEnd, at16k);
     }
 
@@ -73,7 +83,9 @@ public:
     {
         if (!m_inSpeech)
             return;
-        emitClosed(m_speechBegin, m_nextFrameStart, closed);
+        // 封口穿过已喂入的全部样本：不足一帧的尾部样本也计入最后一段（C2 问题 2，
+        // 「finish 生效前所有已提交样本处理完」）；录制结束是自然端点，forcedCut 由段状态机置位。
+        emitClosed(m_speechBegin, m_nextFrameStart + static_cast<int64_t>(m_frame.size()), closed);
         m_inSpeech = false;
         m_runFrames = 0;
         m_runStart = -1;
@@ -89,6 +101,7 @@ public:
         m_nextFrameStart = from16k;
         m_speechBegin = -1;
         m_frame.clear();
+        realignFrame();
     }
 
     bool inSpeech() const override { return m_inSpeech; }
@@ -104,10 +117,23 @@ private:
         return rms >= static_cast<double>(m_threshold);
     }
 
-    void advanceFrame(bool speech, std::vector<std::pair<int64_t, int64_t>> &closed)
+    // 帧边界对齐绝对 512 网格（C2 问题 3）：恢复点/拼接点未必落在网格上，其后首个帧
+    // 不足 512 样本、只用于对齐——有/无重启时后续帧是同一套边界，padding 下同一段的
+    // 端点不随重启漂移；段起点仍被 minBegin / lastEmitEnd 钳在恢复点之后（不早于 resumeFrom16k）。
+    void realignFrame()
     {
-        const int64_t frameStart = m_nextFrameStart;
-        m_nextFrameStart += static_cast<int64_t>(kVadFrameSamples);
+        const int64_t r = m_nextFrameStart % static_cast<int64_t>(kVadFrameSamples);
+        m_frameEnd = m_nextFrameStart + (r ? static_cast<int64_t>(kVadFrameSamples) - r
+                                           : static_cast<int64_t>(kVadFrameSamples));
+    }
+    size_t frameLen() const
+    {
+        return static_cast<size_t>(std::max<int64_t>(1, m_frameEnd - m_nextFrameStart));
+    }
+
+    void advanceFrame(bool speech, int64_t frameStart,
+                      std::vector<std::pair<int64_t, int64_t>> &closed)
+    {
         if (!m_inSpeech) {
             if (!speech) {
                 m_runFrames = 0;
@@ -131,7 +157,7 @@ private:
                 m_silenceStart = frameStart;
             ++m_silenceFrames;
             if (m_silenceFrames >= m_minSilenceFrames) {
-                // 端点：静音起点 + speechPad（不越过已喂入的音频末尾）。
+                // 端点：静音起点 + speechPad（不越过已处理帧的末尾；此时 m_nextFrameStart 已指向下一帧）。
                 emitClosed(m_speechBegin, std::min(m_silenceStart + m_pad16k, m_nextFrameStart), closed);
                 m_inSpeech = false;
                 m_runFrames = 0;
@@ -163,7 +189,8 @@ private:
     int64_t m_silenceStart = -1;
     int64_t m_minBegin = 0;
     int64_t m_lastEmitEnd = 0;
-    int64_t m_nextFrameStart = 0;
+    int64_t m_nextFrameStart = 0;   // 正在聚集的帧起点（绝对位置）
+    int64_t m_frameEnd = 512;       // 该帧的绝对结束边界（对齐 512 网格；恢复/拼接后首帧可不足 512）
     std::vector<float> m_frame;
 };
 

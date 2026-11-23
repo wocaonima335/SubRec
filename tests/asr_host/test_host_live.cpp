@@ -292,6 +292,294 @@ TEST(live_resume_from_16k)
     }
 }
 
+// ---- C2 问题 1：重开 / 重启后段 ID 与假引擎文本编号接续 ----
+// subtitle_types.h SegId 契约：「每个 Job 内单调递增；重启后从 resume 处继续编号」。
+// 宿主由 open.resumeFrom16k 确定性推出起始编号（firstId = resumeFrom16k），不加协议字段。
+
+TEST(live_resume_continues_seg_ids)
+{
+    std::string spool = newSpoolPath();
+    WavSpoolBuilder wav;
+    CHECK(wav.create(spool));
+    wav.appendSpeechMs(1000);
+    wav.appendSilenceMs(1000);
+    wav.appendSpeechMs(1500);
+    wav.appendSilenceMs(1500);
+    wav.flush();
+    const int64_t total = wav.writtenSamples();
+
+    // 第一轮：喂到 2 s，得到 final1 [0, ~1.15 s)，resume = final1.end16k
+    int64_t resume16k = 0;
+    {
+        HostSession s;
+        s.start();
+        CHECK_MSG(s.loadFake(0, 10000), "load fake");
+        s.openJob(spool, 0, 32000);
+        proto::Message m;
+        CHECK_MSG(s.waitFor("final", m, 8000), "round1 final");
+        const FinalSegment &f1 = finalOf(m);
+        CHECK(f1.id == 0 && f1.text == "第0段");
+        resume16k = f1.end16k;
+        CHECK(resume16k > 0);
+
+        // 同进程重开（setLiveConfig 触发的 reopen 路径）：编号同样从 resume 处接续
+        s.openJob(spool, resume16k, total, 2);
+        s.finishJob(total);
+        std::vector<proto::Message> finals;
+        CHECK_MSG(collectFinalsUntilDone(s, finals, 10000), "reopen done");
+        CHECK(finals.size() == 1);
+        const FinalSegment &fr = finalOf(finals[0]);
+        CHECK(fr.id == resume16k);                                  // SegId 从 resume 处继续编号
+        CHECK(fr.text == "第" + std::to_string(resume16k) + "段");   // 假引擎文本编号接续
+        CHECK(fr.begin16k >= resume16k);
+        s.quit();
+        auto exit = s.proc.waitForExit(5000);
+        CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+    }
+
+    // 新进程重启（宿主崩溃恢复路径）：同样接续
+    {
+        HostSession s2;
+        s2.start();
+        CHECK_MSG(s2.loadFake(0, 10000), "load fake round2");
+        s2.openJob(spool, resume16k, total, 3);
+        s2.finishJob(total);
+        std::vector<proto::Message> finals2;
+        CHECK_MSG(collectFinalsUntilDone(s2, finals2, 10000), "round2 done");
+        CHECK(finals2.size() == 1);
+        const FinalSegment &f2 = finalOf(finals2[0]);
+        CHECK(f2.id == resume16k);
+        CHECK(f2.text == "第" + std::to_string(resume16k) + "段");
+        CHECK(f2.begin16k >= resume16k);
+        s2.quit();
+        auto exit2 = s2.proc.waitForExit(5000);
+        CHECK(!exit2.timedOut && !exit2.signaled && exit2.code == 0);
+    }
+}
+
+// 故障注入保持「每次 open 的本地段号」计数（D 依赖：重启后注入本地第 0 段命中同一段音频，
+// 见 tests/subtitle_service poison_segment 的两轮 crashAtSeg=3 / crashAtSeg=0）
+TEST(fault_injection_counts_per_open)
+{
+    std::string spool = newSpoolPath();
+    WavSpoolBuilder wav;
+    CHECK(wav.create(spool));
+    wav.appendSpeechMs(1000);
+    wav.appendSilenceMs(1000);
+    wav.appendSpeechMs(1000);
+    wav.appendSilenceMs(1000);
+    wav.flush();
+    const int64_t total = wav.writtenSamples();
+
+    int64_t resume16k = 0;
+    {
+        HostSession s;
+        s.start();
+        CHECK_MSG(s.loadFake(0, 10000), "load fake");
+        s.openJob(spool, 0, 32000);
+        proto::Message m;
+        CHECK_MSG(s.waitFor("final", m, 8000), "round1 final");
+        resume16k = finalOf(m).end16k;
+        CHECK(resume16k > 0);
+        s.quit();
+        auto exit = s.proc.waitForExit(5000);
+        CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+    }
+    // 重启后注入 crashAtSeg=0：命中本次 open 的本地第 0 段（绝对编号 = resume16k）→ 崩溃
+    HostSession s2;
+    s2.start("crashAtSeg=0");
+    CHECK_MSG(s2.loadFake(0, 10000), "load fake round2");
+    s2.openJob(spool, resume16k, total, 2);
+    auto exit2 = s2.proc.waitForExit(8000);
+    CHECK(!exit2.timedOut);
+    CHECK(exit2.signaled);   // 崩溃退出（Windows：NTSTATUS 崩溃码区间）
+#ifndef _WIN32
+    CHECK(exit2.code == SIGSEGV);
+#endif
+}
+
+// ---- C2 问题 2：finish 生效前已提交样本必须全部过 VAD；录制结束那一刀不标 forcedCut ----
+
+TEST(live_finish_feeds_all_committed_before_sealing)
+{
+    std::string spool = newSpoolPath();
+    WavSpoolBuilder wav;
+    CHECK(wav.create(spool));
+    wav.appendSpeechMs(1000);    // burst1 [0, 1s)
+    wav.appendSilenceMs(1000);   // 静音到 2 s（burst1 端点在此期间触发）
+    wav.appendSpeechMs(1000);    // burst2 [2s, 3s) 一直说到文件末尾，无尾静音
+    wav.flush();
+    const int64_t total = wav.writtenSamples();
+
+    HostSession s;
+    s.start();
+    CHECK_MSG(s.loadFake(0, 10000), "load fake");
+    s.openJob(spool, 0, 32000);   // 只提交到 2 s
+    proto::Message m;
+    CHECK_MSG(s.waitFor("final", m, 8000), "burst1 final");
+
+    // 直接 finish(total16k)（宿主会把 committed 提到 total）：
+    // 此刻 [2s, 3s) 的样本尚未喂入 VAD，finish 不得先于喂入生效而丢掉 burst2。
+    s.finishJob(total);
+    std::vector<proto::Message> finals;
+    CHECK_MSG(collectFinalsUntilDone(s, finals, 8000), "done after trailing burst");
+    CHECK(finals.size() == 1);                           // 只有 burst2（final1 已在上面收到）
+    const FinalSegment &f1 = finalOf(m);
+    const FinalSegment &f2 = finalOf(finals[0]);
+    CHECK(f1.id == 0 && !f1.forcedCut);
+    CHECK(f2.id == 1);                                   // 同一 open 内递增
+    CHECK(!f2.forcedCut);                                // 录制结束是自然端点，非强切
+    CHECK(f2.begin16k > 26240 && f2.begin16k <= 32000);  // burst2 起点 2 s − pad ± 1 帧
+    CHECK(f2.end16k == total);                           // 封口穿过全部已提交样本
+    s.quit();
+    auto exit = s.proc.waitForExit(5000);
+    CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+}
+
+// ---- C2 问题 3：重启后 VAD 帧网格对齐绝对时间，padding=150 下同一段边界不漂移 ----
+
+TEST(live_restart_boundary_matches_no_restart)
+{
+    std::string spool = newSpoolPath();
+    WavSpoolBuilder wav;
+    CHECK(wav.create(spool));
+    wav.appendSpeechMs(1000);    // burst1 [0, 1s)
+    wav.appendSilenceMs(800);
+    wav.appendSpeechMs(800);     // burst2 [1.8s, 2.6s)
+    wav.appendSilenceMs(800);
+    wav.appendSpeechMs(1000);    // burst3 [3.4s, 4.4s)
+    wav.appendSilenceMs(1000);
+    wav.flush();
+    const int64_t total = wav.writtenSamples();
+
+    int64_t begin3 = 0, end3 = 0, resume16k = 0;
+    // 基准：无重启一路跑完（loadFake 未改 vad，默认 speechPadMs=150）
+    {
+        HostSession s;
+        s.start();
+        CHECK_MSG(s.loadFake(0, 10000), "load fake");
+        s.openJob(spool, 0, total);
+        s.finishJob(total);
+        std::vector<proto::Message> finals;
+        CHECK_MSG(collectFinalsUntilDone(s, finals, 10000), "baseline done");
+        CHECK(finals.size() == 3);
+        resume16k = finalOf(finals[1]).end16k;   // burst2 的端点 = 重启点
+        begin3 = finalOf(finals[2]).begin16k;
+        end3 = finalOf(finals[2]).end16k;
+        CHECK(begin3 > resume16k);
+        s.quit();
+        auto exit = s.proc.waitForExit(5000);
+        CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+    }
+
+    // 重启前半程：跑到 burst2 结束（committed 3.2 s > 端点判定所需），得到同一重启点
+    {
+        HostSession s1;
+        s1.start();
+        CHECK_MSG(s1.loadFake(0, 10000), "load fake round1");
+        s1.openJob(spool, 0, 51200);
+        proto::Message m;
+        CHECK_MSG(s1.waitFor("final", m, 8000), "round1 final1");
+        CHECK_MSG(s1.waitFor("final", m, 8000), "round1 final2");
+        const int64_t r = finalOf(m).end16k;
+        CHECK(r == resume16k);        // 与无重启一路的前半程一致
+        CHECK(r % 512 != 0);          // 重启点不落在 512 帧网格上（否则本用例失效）
+        resume16k = r;
+        s1.quit();
+        auto exit = s1.proc.waitForExit(5000);
+        CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+    }
+
+    // 重启后半程：新进程从 resume 续跑。帧网格须对齐绝对 512 网格，
+    // burst3（起点在恢复点一个 pad 之后）的边界与无重启基准完全一致。
+    {
+        HostSession s2;
+        s2.start();
+        CHECK_MSG(s2.loadFake(0, 10000), "load fake round2");
+        s2.openJob(spool, resume16k, total, 2);
+        s2.finishJob(total);
+        std::vector<proto::Message> finals2;
+        CHECK_MSG(collectFinalsUntilDone(s2, finals2, 10000), "round2 done");
+        CHECK(finals2.size() == 1);
+        const FinalSegment &f3 = finalOf(finals2[0]);
+        CHECK(f3.begin16k >= resume16k);
+        CHECK(f3.begin16k == begin3);   // 同一段有/无重启边界相同（pad=150）
+        CHECK(f3.end16k == end3);
+        s2.quit();
+        auto exit = s2.proc.waitForExit(5000);
+        CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+    }
+}
+
+// ---- C2 问题 4：progress.decodeMsTotal 计入 partial 解码耗时（协议语义「供 RTF EWMA」）----
+
+TEST(live_progress_decode_ms_includes_partials)
+{
+    std::string spool = newSpoolPath();
+    WavSpoolBuilder wav;
+    CHECK(wav.create(spool));
+    wav.appendSpeechMs(2000);
+    wav.appendSilenceMs(1200);
+    wav.flush();
+    const int64_t total = wav.writtenSamples();
+
+    HostSession s;
+    s.start("rtf=0.08");
+    CHECK_MSG(s.loadFake(250, 10000), "load fake");
+    s.openJob(spool, 0, 0);
+
+    // 慢速喂音频，收集 partial（rtf=0.08 使每次解码有可观测的耗时）。partial 间隔须大于
+    // 单次 partial 解码耗时（≤ upto×0.08 ≈ 212 ms < 250 ms），否则 next() 的 partial 分支
+    // 会饿死外层循环（committed 不再被重新读取——既有潜在问题，与本问题无关）。
+    int partialCount = 0;
+    bool haveFinal = false;
+    bool haveProgress = false;
+    proto::Message fin;
+    proto::Message prog;
+    int64_t committed = 0;
+    while (committed < total) {
+        committed = std::min<int64_t>(total, committed + 1600);   // 100 ms
+        s.appendCommitted(committed);
+        const int64_t till = HostSession::nowMs() + 60;
+        while (HostSession::nowMs() < till) {
+            proto::Message m;
+            const int remain = static_cast<int>(std::max<int64_t>(1, till - HostSession::nowMs()));
+            if (!s.readMsg(m, remain))
+                break;
+            const std::string t = proto::typeName(m);
+            if (t == "partial")
+                ++partialCount;
+            else if (t == "final" && !haveFinal) {
+                fin = std::move(m);
+                haveFinal = true;
+            } else if (t == "progress") {
+                prog = std::move(m);
+                haveProgress = true;
+            }
+        }
+    }
+
+    std::vector<proto::Message> others;
+    if (!haveFinal)
+        CHECK_MSG(s.waitFor("final", fin, 8000, &others), "final");
+    if (!haveProgress)
+        CHECK_MSG(s.waitFor("progress", prog, 8000, &others), "progress after final");
+    for (const proto::Message &o : others) {
+        if (std::string(proto::typeName(o)) == "partial")
+            ++partialCount;
+    }
+    CHECK(partialCount >= 3);
+    const FinalSegment &f = finalOf(fin);
+    const proto::Progress &pr = std::get<proto::Progress>(prog);
+    CHECK(pr.done16k >= f.end16k);
+    // partial 的解码耗时也计入总解码开销：本场景 ≥3 次 partial、每次 sleep upto×0.08，
+    // 累计（约数百 ms）远大于 100 ms；只计 final 时 decodeMsTotal == f.decodeMs。
+    CHECK(pr.decodeMsTotal >= f.decodeMs + 100.0);
+    s.quit();
+    auto exit = s.proc.waitForExit(5000);
+    CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+}
+
 // ---- setLevel 关 partial ----
 
 TEST(live_set_level_disables_partial)

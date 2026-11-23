@@ -76,6 +76,11 @@ set(ASR_HOST_TEST_CASES
     live_splice_forces_cut
     live_max_segment_force_cut
     live_resume_from_16k
+    live_resume_continues_seg_ids
+    fault_injection_counts_per_open
+    live_finish_feeds_all_committed_before_sealing
+    live_restart_boundary_matches_no_restart
+    live_progress_decode_ms_includes_partials
     live_set_level_disables_partial
     live_garbage_stdout_keeps_protocol_clean
     fault_crash_at_seg
@@ -123,6 +128,7 @@ set_tests_properties(
 
 set_tests_properties(
     live_partial_stream_and_seq
+    live_progress_decode_ms_includes_partials
     live_set_level_disables_partial
     utf8_path_chinese_spool_and_script
     PROPERTIES TIMEOUT 90)

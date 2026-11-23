@@ -139,6 +139,12 @@ std::atomic<bool> &fakeHangAllActive() noexcept
     return flag;
 }
 
+std::atomic<int64_t> &fakeInjectionSegBase() noexcept
+{
+    static std::atomic<int64_t> base{0};
+    return base;
+}
+
 [[noreturn]] void injectIllegalInstrExit() noexcept
 {
 #if defined(_WIN32)
@@ -281,27 +287,29 @@ subtitle::Status FakeAsrEngine::recognize(const float *pcm16k, size_t n, Recogni
         std::fflush(stdout);
     }
 
-    // 进程级故障注入（段号 n 从 0 开始，与 SegId 一致）。
-    if (m_options.crashAtSeg >= 0 && io.id == m_options.crashAtSeg) {
-        std::fprintf(stderr, "subrec-asr: fake crashAtSeg=%lld\n", static_cast<long long>(io.id));
+    // 进程级故障注入：按「本次 open 的本地段号」计数（= SegId − open 的编号基点，从 0 起，
+    // engine_fake.h 的原语义；D 依赖重启后注入本地第 0 段命中同一段音频，故不随 SegId 续号改变）。
+    const int64_t localSeg = io.id - fakeInjectionSegBase().load(std::memory_order_relaxed);
+    if (m_options.crashAtSeg >= 0 && localSeg == m_options.crashAtSeg) {
+        std::fprintf(stderr, "subrec-asr: fake crashAtSeg=%lld\n", static_cast<long long>(localSeg));
         std::fflush(stderr);
         *(volatile int *)0 = 0;
     }
-    if (m_options.oomAtSeg >= 0 && io.id == m_options.oomAtSeg) {
-        std::fprintf(stderr, "subrec-asr: fake oomAtSeg=%lld\n", static_cast<long long>(io.id));
+    if (m_options.oomAtSeg >= 0 && localSeg == m_options.oomAtSeg) {
+        std::fprintf(stderr, "subrec-asr: fake oomAtSeg=%lld\n", static_cast<long long>(localSeg));
         std::fflush(stderr);
         // 不能用 std::exit：它的 _IO_cleanup 要锁全部 stdio 流，而 IO 线程正阻塞在 fgets(stdin)
         // 上持有 stdin 锁（glibc 死锁）。_Exit 立即终止，退出码同样为 137。
         std::_Exit(subtitle::proto::kExitOutOfMemory);
     }
-    if (m_options.hangAtSeg >= 0 && io.id == m_options.hangAtSeg) {
-        std::fprintf(stderr, "subrec-asr: fake hangAtSeg=%lld\n", static_cast<long long>(io.id));
+    if (m_options.hangAtSeg >= 0 && localSeg == m_options.hangAtSeg) {
+        std::fprintf(stderr, "subrec-asr: fake hangAtSeg=%lld\n", static_cast<long long>(localSeg));
         std::fflush(stderr);
         for (;;)
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    if (m_options.hangAll >= 0 && io.id >= m_options.hangAll) {
-        std::fprintf(stderr, "subrec-asr: fake hangAll at seg=%lld\n", static_cast<long long>(io.id));
+    if (m_options.hangAll >= 0 && localSeg >= m_options.hangAll) {
+        std::fprintf(stderr, "subrec-asr: fake hangAll at seg=%lld\n", static_cast<long long>(localSeg));
         std::fflush(stderr);
         fakeHangAllActive().store(true, std::memory_order_relaxed);
         for (;;)
