@@ -248,13 +248,16 @@ jobs:
       - name: Build tests
         run: cmake --build build/ci-tests --target subrec_tests --parallel
 
+      - name: Build subtitle recording integration (test configuration only)
+        run: cmake --build build/ci-tests --target appSubRec subtitle_pipeline_tests --parallel
+
       - name: Run device-independent tests
         timeout-minutes: 10
         # Release FFmpeg omits AAC decoding, lavfi and file fixture components.
         # PowerShell parser tests remain available to PC2's full test build.
         run: >
           ctest --test-dir build/ci-tests -L "^ci$"
-          -LE "^(device|needs_ffmpeg_test_components|needs_powershell)$"
+          -LE "^(device|needs_ffmpeg_test_components|needs_powershell|needs_asr_model)$"
           --output-on-failure --timeout 180 --no-tests=error
 
       # AI subtitle (M0 skeleton, docs/subtitle/work-packages.md): every subtitle library including the
@@ -280,6 +283,14 @@ jobs:
           $ver = (& $asr --version) -join "`n"
           if ($LASTEXITCODE -ne 0 -or $ver -notmatch '^subrec-asr \S+ protocol=2$') { throw "subrec-asr --version: '$ver' ($LASTEXITCODE)" }
           Write-Host $ver
+
+      - name: Compile subtitle UI hooks (test configuration only)
+        shell: pwsh
+        run: |
+          cmake -S . -B build/ci-tests -DSUBREC_BUILD_NEW_UI=ON
+          if ($LASTEXITCODE -ne 0) { throw 'subtitle UI test configuration failed' }
+          cmake --build build/ci-tests --target appSubRec --parallel
+          if ($LASTEXITCODE -ne 0) { throw 'subtitle UI integration build failed' }
 
       # Release configuration of the packaged build: same options as build/ci plus the new UI.
       - name: Configure new UI integration
