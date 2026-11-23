@@ -287,9 +287,17 @@ jobs:
       - name: Compile subtitle UI hooks (test configuration only)
         shell: pwsh
         run: |
-          cmake -S . -B build/ci-tests -DSUBREC_BUILD_NEW_UI=ON
+          # Start with NEW_UI enabled so shell_module AUTOMOC sees all Q_OBJECT sources.
+          cmake -S . -B build/ci-subtitle-ui -G Ninja `
+            -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} `
+            "-DSUBREC_VERSION=${{ steps.ver.outputs.version }}" `
+            -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+            -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT" `
+            -DSUBREC_BUILD_LIFECYCLE_TESTS=ON `
+            -DSUBREC_BUILD_SUBTITLE=ON `
+            -DSUBREC_BUILD_NEW_UI=ON
           if ($LASTEXITCODE -ne 0) { throw 'subtitle UI test configuration failed' }
-          cmake --build build/ci-tests --target appSubRec --parallel
+          cmake --build build/ci-subtitle-ui --target appSubRec --parallel
           if ($LASTEXITCODE -ne 0) { throw 'subtitle UI integration build failed' }
 
       # Release configuration of the packaged build: same options as build/ci plus the new UI.
