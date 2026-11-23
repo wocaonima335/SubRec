@@ -16,7 +16,20 @@ Window {
 
     readonly property string state: FloatingBarView.barState
 
-    width: 264
+    // F (design-live-v2 §12.1): the current sentence next to the captions icon. Only
+    // SUBREC_HAS_SUBTITLE builds expose FloatingBarView.subtitleLine (main.cpp pushes it);
+    // tests/ui and the default new-UI build do not define it. Go through a var so qmllint
+    // has no type information to resolve the member against in either build (both lint
+    // clean); an absent property reads as undefined and becomes an empty line.
+    readonly property var subtitleLineView: FloatingBarView
+    readonly property string subtitleLine: subtitleLineView.subtitleLine !== undefined
+        ? subtitleLineView.subtitleLine : ""
+    // The capsule grows by exactly the line's width; with no line every x below keeps its
+    // frozen 264-wide value (inset 0).
+    readonly property real subtitleLineInset: subtitleLineText.visible
+        ? subtitleLineText.width + Theme.space8 : 0
+
+    width: 264 + subtitleLineInset
     height: FloatingBarView.hintVisible ? 136 : 40
     visible: false
     color: "transparent"
@@ -75,10 +88,10 @@ Window {
                               : qsTr("停止并保存（F9）")
     }
 
-    // ---- the 264×40 capsule ----
+    // ---- the capsule (264 wide without a subtitle line, grows with it) ----
     Rectangle {
         id: capsule
-        width: 264
+        width: 264 + root.subtitleLineInset
         height: 40
         radius: 20
         color: Theme.bgSurface
@@ -207,8 +220,24 @@ Window {
                  : Theme.infoFg
         }
 
+        // F: current sentence beside the icon; hidden and zero-width when there is none
+        // (main.cpp clears it while paused, at L2+, or when the switch is off).
+        Text {
+            id: subtitleLineText
+            x: 146
+            y: 12
+            width: visible ? Math.min(implicitWidth, 192) : 0
+            height: 16
+            verticalAlignment: Text.AlignVCenter
+            visible: root.subtitleLine.length > 0
+            text: root.subtitleLine
+            font: Theme.captionFont
+            color: Theme.textPrimary
+            elide: Text.ElideRight
+        }
+
         Rectangle {
-            x: 148
+            x: 148 + root.subtitleLineInset
             y: Theme.space8
             width: 1
             height: 24
@@ -217,7 +246,7 @@ Window {
 
         // Pause/resume (FB-1/4 disabled, FB-2 pause, FB-3 resume; hidden in FB-5/6).
         Item {
-            x: 156
+            x: 156 + root.subtitleLineInset
             y: 4
             width: 32
             height: 32
@@ -260,7 +289,7 @@ Window {
 
         // Stop (FB-1/2/3/4) or close (FB-6); hidden in FB-5.
         Item {
-            x: 192
+            x: 192 + root.subtitleLineInset
             y: 4
             width: 32
             height: 32
@@ -313,7 +342,7 @@ Window {
 
         // Open main window.
         Item {
-            x: 228
+            x: 228 + root.subtitleLineInset
             y: 4
             width: 32
             height: 32
@@ -369,14 +398,14 @@ Window {
         id: hintBubble
         visible: FloatingBarView.hintVisible
         y: 48
-        width: 264
+        width: 264 + root.subtitleLineInset
         height: 88
         radius: Theme.radiusMd
         color: Theme.tooltipBg
 
         // Pointer triangle aimed at the open-main-window button.
         Canvas {
-            x: 232
+            x: 232 + root.subtitleLineInset
             y: -6
             width: 12
             height: 6
@@ -397,7 +426,7 @@ Window {
         Text {
             x: Theme.space12
             y: Theme.space12
-            width: 240
+            width: hintBubble.width - Theme.space12 * 2
             height: 32
             text: qsTr("字录在后台继续录制。点右边的按钮打开主窗口；托盘图标在任务栏右下角。")
             font: Theme.captionFont
@@ -406,7 +435,7 @@ Window {
         }
 
         AppButton {
-            x: 196
+            x: hintBubble.width - 68
             y: 52
             width: 56
             height: 24
