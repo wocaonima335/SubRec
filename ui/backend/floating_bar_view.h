@@ -43,6 +43,9 @@ class FloatingBarView : public QObject {
     Q_PROPERTY(QString captureError READ captureError NOTIFY barStateChanged) // FB-6 tooltip
     // "" (hidden) | "live" | "lagging" — the small captions icon.
     Q_PROPERTY(QString subtitleIndicator READ subtitleIndicator NOTIFY barStateChanged)
+#if defined(SUBREC_HAS_SUBTITLE)
+    Q_PROPERTY(QString subtitleLine READ subtitleLine NOTIFY barStateChanged)
+#endif
     Q_PROPERTY(bool hintVisible READ hintVisible NOTIFY hintVisibleChanged)      // FB-H
 
 public:
@@ -66,6 +69,11 @@ public:
     void setLiveTexts(const QString &elapsedText, const QString &captureError,
                       const QString &subtitleIndicator);
 
+#if defined(SUBREC_HAS_SUBTITLE)
+    void setLiveTexts(const QString &elapsedText, const QString &captureError,
+                      const QString &subtitleIndicator, const QString &subtitleLine);
+    QString subtitleLine() const { return subtitleLine_; }
+#endif
     bool shown() const;
     QString barState() const;
     QString elapsedText() const;
@@ -98,6 +106,9 @@ private:
     QString elapsedText_;
     QString captureError_;
     QString subtitleIndicator_;
+#if defined(SUBREC_HAS_SUBTITLE)
+    QString subtitleLine_;
+#endif
     int barWidthFallback() const;
 };
 

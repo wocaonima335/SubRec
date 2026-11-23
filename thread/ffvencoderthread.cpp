@@ -83,9 +83,21 @@ void FFVEncoderThread::onPauseChanged(bool pausedFlag, int64_t ts_us)
     }
 }
 
+#if defined(SUBREC_HAS_SUBTITLE)
+void FFVEncoderThread::publishHealth()
+{
+    const auto counters = ticks.counters(); // owner thread only
+    m_healthDrops.store(counters.slotCollisions + counters.laggedTicks, std::memory_order_relaxed);
+    m_healthFrames.store(counters.frames, std::memory_order_relaxed);
+}
+
+#endif
 void FFVEncoderThread::run()
 {
     ticks.configure(kRecordFrameRate);
+#if defined(SUBREC_HAS_SUBTITLE)
+    publishHealth();
+#endif
     missingStamps.store(0);
     AVFrame *lastFrame = nullptr;
     uint64_t stampDiagnostics = 0;
@@ -106,6 +118,9 @@ void FFVEncoderThread::run()
         if (received.result == MediaQueueResult::Again) {
             if (captureStalled.load() && !paused.load() && !first_after_resume.load() && mediaClock)
                 ticks.requestHoldover(mediaClock->nowMediaUs(), 1);
+#if defined(SUBREC_HAS_SUBTITLE)
+            publishHealth();
+#endif
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
             continue;
         }
@@ -164,6 +179,9 @@ void FFVEncoderThread::run()
         const int64_t prevCaptureUs = ticks.lastCaptureUs();
         const auto staleBefore = ticks.counters().staleStamp;
         const auto decision = ticks.decidePaced(mediaUs, resumed);
+#if defined(SUBREC_HAS_SUBTITLE)
+        publishHealth();
+#endif
         if (decision.kind == TickDecision::Kind::SlotCollision || decision.kind == TickDecision::Kind::Lagged) {
             // Diagnostics only (no behaviour change). Rate limit: first 50 events,
             // then every 100th, so a pathological run cannot flood the log.

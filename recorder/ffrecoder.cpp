@@ -7,6 +7,9 @@
 #include <QStandardPaths>
 
 #include <cstdarg>
+#if defined(SUBREC_HAS_SUBTITLE)
+#include <QThread>
+#endif
 
 extern "C" {
 #include <libavutil/log.h>
@@ -266,6 +269,26 @@ FFRecorder::~FFRecorder() {
   delete d;
 }
 
+#if defined(SUBREC_HAS_SUBTITLE)
+subtitle::RecorderHealth FFRecorder::subtitleHealth() const
+{
+  subtitle::RecorderHealth health;
+  if (QThread::currentThread() != thread() || !m_scheduler) return health;
+  const auto state = m_scheduler->state();
+  if (state != CaptureSchedulerState::Running && state != CaptureSchedulerState::Paused)
+    return health;
+  if (d->vEncoderThread) {
+    health.videoTickDrops = d->vEncoderThread->healthDrops();
+    health.videoFrames = d->vEncoderThread->healthFrames();
+  }
+#ifdef _WIN32
+  if (d->systemAudioSink)
+    health.wasapiDroppedSamples = d->systemAudioSink->diagnostics().downstreamDroppedSamples;
+#endif
+  return health;
+}
+
+#endif
 CaptureScheduler &FFRecorder::captureScheduler() { return *m_scheduler; }
 
 const CaptureScheduler &FFRecorder::captureScheduler() const {

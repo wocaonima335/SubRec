@@ -5,6 +5,10 @@
 
 #include <condition_variable>
 #include <mutex>
+#if defined(SUBREC_HAS_SUBTITLE)
+#include <memory>
+namespace subtitle { class AudioTap; }
+#endif
 
 extern "C"
 {
@@ -32,6 +36,10 @@ public:
               RecorderSyncQueue *syncQueue_,
               FFRecorder *recorder_ = nullptr);
 
+#if defined(SUBREC_HAS_SUBTITLE)
+    // Set before start, clear only after the audio worker has joined.
+    void setAudioTap(std::shared_ptr<subtitle::AudioTap> tap);
+#endif
     void requestDrainStop();
     void requestAbort();
     void close();
@@ -49,6 +57,9 @@ private:
     void drainReadyAudioFrames();
 
 private:
+#if defined(SUBREC_HAS_SUBTITLE)
+    std::shared_ptr<subtitle::AudioTap> m_audioTap;
+#endif
     FFAEncoder *aEncoder = nullptr;
     FFAFrameQueue *frmQueue = nullptr;
     FFMuxer *muxer = nullptr;

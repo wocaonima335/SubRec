@@ -122,6 +122,14 @@ endif()
 if(SUBREC_BUILD_SUBTITLE)
     add_subdirectory(subtitle)
     add_subdirectory(tools/asr_host)
+    # G/I5: one ABI across production modules and their consumers; isolated test
+    # doubles that compile sources directly remain OFF unless explicitly opted in.
+    foreach(module IN ITEMS capture demuxer qml queue decoder resampler filter muxer
+                            event thread recorder encoder opengl shell ui)
+        if(TARGET ${module}_module)
+            target_compile_definitions(${module}_module PUBLIC SUBREC_HAS_SUBTITLE=1)
+        endif()
+    endforeach()
 endif()
 
 if(SUBREC_BUILD_LIFECYCLE_TESTS)
@@ -193,6 +201,11 @@ set_target_properties(appSubRec PROPERTIES
 )
 
 target_include_directories(appSubRec PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+if(SUBREC_BUILD_SUBTITLE)
+    target_compile_definitions(appSubRec PRIVATE SUBREC_HAS_SUBTITLE=1)
+    target_link_libraries(appSubRec PRIVATE subtitle_service subtitle_models)
+endif()
 
 if(SUBREC_BUILD_NEW_UI)
     target_compile_definitions(appSubRec PRIVATE SUBREC_HAS_NEW_UI=1)

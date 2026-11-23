@@ -9,6 +9,14 @@
 #include <QDebug>
 #include <QMetaObject>
 #include <algorithm>
+#if defined(SUBREC_HAS_SUBTITLE)
+#include "subtitle/tap/audio_tap.h"
+
+void FFAEncoderThread::setAudioTap(std::shared_ptr<subtitle::AudioTap> tap)
+{
+    m_audioTap = std::move(tap);
+}
+#endif
 
 FFAEncoderThread::FFAEncoderThread() {}
 
@@ -75,6 +83,11 @@ void FFAEncoderThread::onPauseChanged(bool pauseFlag, int64_t ts_us)
             return;
         }
         paused.store(true, std::memory_order_release);
+#if defined(SUBREC_HAS_SUBTITLE)
+        // The existing control-thread callback is the only splice writer;
+        // AudioTap carries this atomic request to the consumer even with no input.
+        if (m_audioTap) m_audioTap->markSplice();
+#endif
         pause_cv.notify_all();
         pause_start_us = now;
         qDebug() << "[AEncThread] paused at" << pause_start_us << "us";
@@ -82,6 +95,9 @@ void FFAEncoderThread::onPauseChanged(bool pauseFlag, int64_t ts_us)
         if (!paused.load(std::memory_order_relaxed)) {
             return;
         }
+#if defined(SUBREC_HAS_SUBTITLE)
+        if (m_audioTap) m_audioTap->markSplice();
+#endif
         paused.store(false, std::memory_order_release);
         pause_cv.notify_all();
         qDebug() << "[AEncThread] resumed at" << now << "us";
@@ -90,6 +106,13 @@ void FFAEncoderThread::onPauseChanged(bool pauseFlag, int64_t ts_us)
 
 void FFAEncoderThread::run()
 {
+#if defined(SUBREC_HAS_SUBTITLE)
+    // Covers EOF, abort, invalid input and codec/sync errors.
+    struct FinishTap {
+        std::shared_ptr<subtitle::AudioTap> tap;
+        ~FinishTap() { if (tap) tap->finish(); }
+    } finishTap{m_audioTap};
+#endif
     while (!m_stop) {
         auto received = frmQueue->receive();
         if (received.result == MediaQueueResult::Eof) {
@@ -144,6 +167,13 @@ void FFAEncoderThread::run()
         }
         last_apts = apts;
         next_apts = apts + step;
+#if defined(SUBREC_HAS_SUBTITLE)
+        if (m_audioTap) {
+            AVFrame tapFrame = *frame; // borrowed planes, no ref/allocation
+            tapFrame.pts = av_rescale_q(apts, audioTimeBase, AVRational{1, 48000});
+            m_audioTap->push(tapFrame);
+        }
+#endif
         const int encoded = aEncoder->encode(frame, streamIndex, apts, audioTimeBase);
         if (encoded < 0) {
             AVFrameTraits::release(frame);
@@ -203,6 +233,9 @@ void FFAEncoderThread::drainReadyAudioFrames()
         AVFrame *readyFrame = ready.item;
         last_apts = readyFrame->pts;
         next_apts = readyFrame->pts + readyFrame->nb_samples;
+#if defined(SUBREC_HAS_SUBTITLE)
+        if (m_audioTap) m_audioTap->push(*readyFrame);
+#endif
         const int encoded = aEncoder->encode(readyFrame, streamIndex, readyFrame->pts, audioTimeBase);
         if (encoded < 0) {
             AVFrameTraits::release(readyFrame);

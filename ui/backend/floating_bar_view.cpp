@@ -82,6 +82,15 @@ void FloatingBarView::setLiveTexts(const QString &elapsedText, const QString &ca
     emit barStateChanged();
 }
 
+#if defined(SUBREC_HAS_SUBTITLE)
+void FloatingBarView::setLiveTexts(const QString &elapsedText, const QString &captureError,
+                                   const QString &subtitleIndicator, const QString &subtitleLine)
+{
+    subtitleLine_ = subtitleLine;
+    setLiveTexts(elapsedText, captureError, subtitleIndicator);
+}
+
+#endif
 bool FloatingBarView::shown() const { return policy_ && policy_->shouldShow(); }
 QString FloatingBarView::barState() const
 {

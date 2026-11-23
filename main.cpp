@@ -67,6 +67,13 @@ Q_IMPORT_QML_PLUGIN(SubRec_UiPlugin)
 #include <algorithm>
 #include <chrono>
 #include <memory>
+#if defined(SUBREC_HAS_SUBTITLE)
+#include "subtitle/service/subtitle_service.h"
+#include "subtitle/models/model_manager.h"
+#include "capture/autotest_subtitle.h"
+#include <QSettings>
+static QPointer<SubtitleService> g_subtitleService;
+#endif
 
 extern "C" {
 #include <libavutil/time.h>
@@ -355,6 +362,12 @@ void runAutoScenario(QObject *root)
     return;
   }
 
+#if defined(SUBREC_HAS_SUBTITLE)
+  if (scenario == QLatin1String("record_seconds_subtitle_live")) {
+    runSubtitleAutoTest(root, g_subtitleService, startRecording, stopRecording);
+    return;
+  }
+#endif
   auto schedule = [](int delayMs, auto callback) {
     QTimer::singleShot(delayMs, callback);
   };
@@ -1023,6 +1036,12 @@ int main(int argc, char *argv[])
 
   init();
 
+#if defined(SUBREC_HAS_SUBTITLE)
+  SubtitleService subtitleService;
+  ModelManager subtitleModels;
+  g_subtitleService = &subtitleService;
+  FFRecorder::getInstance().captureScheduler().setRecordingAudioHook(&subtitleService);
+#endif
   // Shell objects (GUI thread). Declared before the QML engine so they outlive it.
   subrec::shell::CaptureExclusion exclusion;
   subrec::shell::PowerRequest power;
@@ -1072,6 +1091,12 @@ int main(int argc, char *argv[])
   subrec::ui::RecordingLibrary recordingLibrary(nullptr);
   subrec::ui::SubtitleView subtitleView(nullptr);
   subrec::ui::ModelCatalog modelCatalog(nullptr);
+#if defined(SUBREC_HAS_SUBTITLE)
+  modelCatalog.attach(&subtitleModels);
+  subtitleView.attach(&subtitleService, [&subtitleService] { subtitleService.reloadSettings(); });
+  QObject::connect(&subtitleService, &SubtitleService::jobProgress,
+                   &recordingLibrary, &subrec::ui::RecordingLibrary::setSubtitleJob);
+#endif
   subrec::ui::DesktopActions desktopActions(nullptr);
   subrec::ui::AppInfo appInfo(nullptr);
   recorderView.attach(&FFRecorder::getInstance(), &openSourceByControl);
@@ -1156,11 +1181,25 @@ int main(int argc, char *argv[])
     floatingBarPolicy.setSnapshot(snapshot);
     taskbarOverlay.setKind(subrec::shell::trayIconFor(snapshot.state));
     taskbarOverlay.setDescription(overlayStateText(snapshot.state));
+#if defined(SUBREC_HAS_SUBTITLE)
+    const QString indicator = subtitleView.state() == QLatin1String("live") ? QStringLiteral("live")
+        : subtitleView.state() == QLatin1String("lagging") ? QStringLiteral("lagging") : QString();
+    // F owns the setting UI and QML consumer. This backend defaults to no line.
+    const bool showLine = QSettings("SubRec", "SubRec").value("asr/showFloatingLine", false).toBool()
+        && snapshot.state == subrec::shell::RecState::Running
+        && subtitleService.degradeLevel() < 2
+        && subrec::shell::CaptureExclusion::supported()
+        && shellSettings.excludeMode() != subrec::shell::ExcludeMode::Never
+        && FFRecorder::getInstance().captureScheduler().subtitleFloatingLineSafe();
+    floatingBarView.setLiveTexts(recorderView.elapsedText(), recorderView.captureError(),
+                                indicator, showLine ? subtitleService.currentLine() : QString());
+#else
     floatingBarView.setLiveTexts(
         recorderView.elapsedText(), recorderView.captureError(),
         subtitleView.state() == QLatin1String("live") ? QStringLiteral("live")
         : subtitleView.state() == QLatin1String("lagging") ? QStringLiteral("lagging")
                                                            : QString());
+#endif
   };
   QObject::connect(&shellState, &subrec::shell::ShellStateSource::changed, pushShellState);
   // WhenHidden (C5) depends on the window: hiding/minimizing while paused changes nothing
@@ -1170,6 +1209,10 @@ int main(int argc, char *argv[])
   QObject::connect(&recorderView, &subrec::ui::RecorderView::captureTimeTextChanged,
                    pushShellState);
   QObject::connect(&subtitleView, &subrec::ui::SubtitleView::serviceChanged, pushShellState);
+#if defined(SUBREC_HAS_SUBTITLE)
+  QObject::connect(&subtitleService, &SubtitleService::currentLineChanged,
+                   &floatingBarView, pushShellState);
+#endif
   if (hotkeys) {
     // §3.9: the three hotkey actions map straight onto the WindowController entries.
     QObject::connect(hotkeys.get(), &subrec::shell::GlobalHotkeys::triggered,
@@ -1201,6 +1244,10 @@ int main(int argc, char *argv[])
     qDebug() << "[App] aboutToQuit";
     PreviewBridge::instance().setPreviewItem(nullptr);
     FFRecorder::getInstance().captureScheduler().stop();
+#if defined(SUBREC_HAS_SUBTITLE)
+    FFRecorder::getInstance().captureScheduler().setRecordingAudioHook(nullptr);
+    if (g_subtitleService) g_subtitleService->shutdown(3000);
+#endif
   });
 
   QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGLRhi);
@@ -1339,6 +1386,11 @@ int main(int argc, char *argv[])
     windowController.attachMainWindow(nullptr); // window dies with the engine
   }
   g_shell = nullptr;
+#if defined(SUBREC_HAS_SUBTITLE)
+  FFRecorder::getInstance().captureScheduler().setRecordingAudioHook(nullptr);
+  subtitleService.shutdown(3000);
+  g_subtitleService = nullptr;
+#endif
 
   if (autoTestMode)
   {

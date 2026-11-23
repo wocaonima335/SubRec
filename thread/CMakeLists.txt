@@ -37,3 +37,7 @@ target_include_directories(thread_module PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/..  # 添加项目根目录，使得可以找到queue/ffapacketqueue.h
 )
 
+
+if(SUBREC_BUILD_SUBTITLE)
+    target_link_libraries(thread_module PRIVATE subtitle_tap)
+endif()

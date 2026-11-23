@@ -81,7 +81,13 @@ bool CaptureSession::start(const CaptureConfig &config,
     qDebug() << "[CaptureSession] calling FFRecorder::startRecord";
     m_videoClosed = m_audioClosed = m_muxerClosed = false;
     m_startFailed = false;
+#if defined(SUBREC_HAS_SUBTITLE)
+    m_subtitleMuxerFinalized = false;
+#endif
     m_cleanupNeeded = true;
+#if defined(SUBREC_HAS_SUBTITLE)
+    if (auto *worker = m_recorder.getAEncoderThread()) worker->setAudioTap(m_audioTap);
+#endif
     m_recorder.startRecord(m_config);
     qDebug() << "[CaptureSession] FFRecorder::startRecord returned";
 
@@ -261,6 +267,10 @@ void CaptureSession::abortPipeline()
                    << "audio=" << audioJoined << "video=" << videoJoined << "muxer=" << muxerJoined;
         capture_stop::failedCleanupExit();
     }
+#if defined(SUBREC_HAS_SUBTITLE)
+    if (auto *worker = m_recorder.getAEncoderThread()) worker->setAudioTap({});
+    m_audioTap.reset();
+#endif
     qInfo() << "[CaptureSession] failed startup cleanup complete; audio devices closed";
     m_cleanupNeeded = false;
     m_started.store(false, std::memory_order_release);
@@ -286,6 +296,12 @@ bool CaptureSession::cleanup()
     qDebug() << "[CaptureSession] closing audio source";
     if (!m_audioClosed) m_audioClosed = closeAudioSource();
     qDebug() << "[CaptureSession] audio source closed";
+#if defined(SUBREC_HAS_SUBTITLE)
+    if (m_audioClosed) {
+        if (auto *worker = m_recorder.getAEncoderThread()) worker->setAudioTap({});
+        m_audioTap.reset();
+    }
+#endif
     qDebug() << "[CaptureSession] finalizing muxer";
     if (!m_muxerClosed && !finalizeMuxer())
         qWarning() << "[CaptureSession] muxer finalization failed";
@@ -369,6 +385,10 @@ bool CaptureSession::finalizeMuxer()
     muxerThread->close();
     m_muxerClosed = true; // Joined/closed even if writing failed; release remains safe.
     const int muxError = muxerThread->lastError();
+#if defined(SUBREC_HAS_SUBTITLE)
+    m_subtitleMuxerFinalized = muxError == 0
+        && muxerThread->finalizeState() == FinalizeState::Finalized;
+#endif
     if (muxError != 0) {
         m_recorder.setCaptureError(
             QStringLiteral("Muxer write failed; recording stopped."),

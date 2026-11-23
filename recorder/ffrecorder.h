@@ -3,6 +3,9 @@
 
 #include "ffrecorder_p.h"
 #include "capture/capture_error_state.h"
+#if defined(SUBREC_HAS_SUBTITLE)
+#include "subtitle/subtitle_types.h"
+#endif
 
 #include <QObject>
 #include <QVariantList>
@@ -63,6 +66,10 @@ public:
   void startRecord(const CaptureConfig &config);
   void stopRecord();
   void applyPauseState(bool paused, int64_t tsUs);
+#if defined(SUBREC_HAS_SUBTITLE)
+  // Control thread only: capture-source ownership is stable while Running/Paused.
+  subtitle::RecorderHealth subtitleHealth() const;
+#endif
   CaptureScheduler &captureScheduler();
   const CaptureScheduler &captureScheduler() const;
 

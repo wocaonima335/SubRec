@@ -34,6 +34,10 @@ public:
               FFVFrameQueue *frmQueue_,
               RecorderSyncQueue *syncQueue_,
               FFRecorder *recorder_);
+#if defined(SUBREC_HAS_SUBTITLE)
+    uint64_t healthDrops() const { return m_healthDrops.load(std::memory_order_relaxed); }
+    uint64_t healthFrames() const { return m_healthFrames.load(std::memory_order_relaxed); }
+#endif
     void requestDrainStop();
     void requestAbort();
     void wakeAllThread();
@@ -69,6 +73,10 @@ private:
     AVRational frameRate{};
     MediaClock *mediaClock = nullptr;
     VideoTickScheduler ticks;
+#if defined(SUBREC_HAS_SUBTITLE)
+    void publishHealth();
+    std::atomic<uint64_t> m_healthDrops{0}, m_healthFrames{0};
+#endif
     std::atomic<bool> captureStalled{false};
     std::atomic<uint64_t> missingStamps{0};
     std::atomic<int64_t> minimumCaptureUs{AV_NOPTS_VALUE};

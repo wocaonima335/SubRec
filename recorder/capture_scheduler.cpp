@@ -19,6 +19,49 @@ extern "C" {
 #include <QThread>
 
 #include <algorithm>
+#if defined(SUBREC_HAS_SUBTITLE)
+#include "subtitle/tap/audio_tap.h"
+
+void CaptureScheduler::setRecordingAudioHook(subtitle::RecordingAudioHook *hook)
+{
+    if (!onControlThread("setRecordingAudioHook")) return;
+    // Do not replace a hook while a producer or a retained session can use it.
+    if (m_session || m_subtitleRecording) return;
+    m_audioHook = hook;
+}
+
+bool CaptureScheduler::subtitleFloatingLineSafe() const
+{
+    if (!onControlThread("subtitleFloatingLineSafe")) return false;
+    if (m_state != CaptureSchedulerState::Running || !m_session) return false;
+    const auto &config = m_session->config();
+    // No public active-backend query exists after a fallback. Be conservative.
+    return config.videoInput.backend == CaptureBackend::DesktopDuplication
+        && !config.videoFallbackInput;
+}
+
+uint64_t CaptureScheduler::subtitleDroppedBlocks() const
+{
+    return m_recordingTap ? m_recordingTap->stats().droppedBlocks : m_subtitleDroppedBlocks;
+}
+
+void CaptureScheduler::endSubtitleRecording(bool finalized)
+{
+    if (!m_subtitleRecording) return;
+    m_subtitleRecording = false;
+    // A failed opener may still be unwinding. Abort is safe from any thread;
+    // it prevents its remaining pushes from entering a finished subtitle job.
+    if (!finalized && m_recordingTap) m_recordingTap->abort();
+    m_audioHook->endRecording(finalized);
+    if (m_recordingTap) {
+        const auto stats = m_recordingTap->stats();
+        m_subtitleDroppedBlocks = stats.droppedBlocks;
+        qInfo() << "[SubtitleTap] dropped=" << stats.droppedBlocks
+                << "maxPushNs=" << stats.maxPushNs << "splices=" << stats.splices;
+    }
+    m_recordingTap.reset();
+}
+#endif
 
 QString captureSchedulerStateName(CaptureSchedulerState state)
 {
@@ -112,12 +155,18 @@ bool CaptureScheduler::start()
     // A failed previous opener may still be returning after posting its result.
     // Never join it while holding the state mutex, and never reuse its session.
     if (previous && !previous->release()) {
+#if defined(SUBREC_HAS_SUBTITLE)
+        endSubtitleRecording(false);
+#endif
         std::lock_guard<std::mutex> lock(m_mutex);
         m_session = std::move(previous);
         failLocked(QStringLiteral("Previous capture worker is still stopping; retry Stop before recording again."));
         return false;
     }
 
+#if defined(SUBREC_HAS_SUBTITLE)
+    endSubtitleRecording(false); // any failed previous job, outside m_mutex
+#endif
     CaptureConfig config;
     const CaptureStartResult configResult =
         m_testConfigHook ? m_testConfigHook(&config) : buildCurrentConfig(&config);
@@ -126,7 +175,18 @@ bool CaptureScheduler::start()
         return false;
     }
 
+#if defined(SUBREC_HAS_SUBTITLE)
+    m_subtitleDroppedBlocks = 0;
+    if (m_audioHook && config.audioEnabled) {
+        const auto path = QDir(config.outputPath).filePath(config.outputFileName);
+        m_recordingTap = m_audioHook->beginRecording(std::filesystem::u8path(path.toUtf8().toStdString()));
+        m_subtitleRecording = true;
+    }
+#endif
     auto next = std::make_unique<CaptureSession>(m_recorder);
+#if defined(SUBREC_HAS_SUBTITLE)
+    next->setAudioTap(m_recordingTap);
+#endif
     next->testOpenerOverride = m_testOpenerHook;
     if (!next->create()) {
         CaptureError error;
@@ -183,11 +243,17 @@ void CaptureScheduler::stop()
     // stop is intentionally synchronous for aboutToQuit; requestStop is not.
     stopping->requestStop();
     if (!stopping->release()) {
+#if defined(SUBREC_HAS_SUBTITLE)
+        endSubtitleRecording(false);
+#endif
         std::lock_guard<std::mutex> lock(m_mutex);
         m_session = std::move(stopping); // Keep all borrowed contexts owned; no detach/UAF.
         failLocked(QStringLiteral("Capture worker did not stop before the deadline; resources retained. Retry Stop."));
         return;
     }
+#if defined(SUBREC_HAS_SUBTITLE)
+    endSubtitleRecording(stopping->mp4Finalized() && m_recorder.captureError().isEmpty());
+#endif
     stopping.reset();
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -711,6 +777,9 @@ void CaptureScheduler::onSessionStarted(std::uint64_t sessionId, const CaptureSt
     failLocked(error.userMessage.isEmpty() ? QStringLiteral("Capture session failed.") : error.userMessage);
     const QString message = m_lastError;
     lock.unlock();
+#if defined(SUBREC_HAS_SUBTITLE)
+    endSubtitleRecording(false);
+#endif
     m_recorder.setCaptureError(message, error.remediation);
 }
 

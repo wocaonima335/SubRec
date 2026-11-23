@@ -6,6 +6,11 @@
 #include <atomic>
 #include <functional>
 #include <thread>
+#if defined(SUBREC_HAS_SUBTITLE)
+#include <memory>
+#include <utility>
+namespace subtitle { class AudioTap; }
+#endif
 
 class CaptureLifecycleTest;
 
@@ -19,6 +24,10 @@ public:
     CaptureSession(const CaptureSession &) = delete;
     CaptureSession &operator=(const CaptureSession &) = delete;
 
+#if defined(SUBREC_HAS_SUBTITLE)
+    void setAudioTap(std::shared_ptr<subtitle::AudioTap> tap) { m_audioTap = std::move(tap); }
+    bool mp4Finalized() const { return !m_startFailed && m_subtitleMuxerFinalized; }
+#endif
     bool create();
     bool start(const CaptureConfig &config,
                std::function<void(const CaptureStartResult &)> onStarted);
@@ -45,6 +54,10 @@ private:
     bool finalizeMuxer();
 
 private:
+#if defined(SUBREC_HAS_SUBTITLE)
+    std::shared_ptr<subtitle::AudioTap> m_audioTap;
+    bool m_subtitleMuxerFinalized = false;
+#endif
     FFRecorder &m_recorder;
     CaptureConfig m_config;
     bool m_created = false;

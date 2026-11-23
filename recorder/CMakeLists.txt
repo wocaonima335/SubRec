@@ -29,3 +29,7 @@ target_include_directories(recorder_module PRIVATE
     ${FFMPEG_INCLUDE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/..  # 添加项目根目录，使得可以找到queue/ffapacketqueue.h
 )
+
+if(SUBREC_BUILD_SUBTITLE)
+    target_link_libraries(recorder_module PRIVATE subtitle_tap)
+endif()

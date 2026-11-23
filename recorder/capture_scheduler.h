@@ -13,6 +13,10 @@
 #include <mutex>
 
 class FFRecorder;
+#if defined(SUBREC_HAS_SUBTITLE)
+#include "subtitle/tap/recording_hook.h"
+#endif
+
 
 enum class CaptureSchedulerState
 {
@@ -34,6 +38,12 @@ public:
     explicit CaptureScheduler(FFRecorder &recorder);
     ~CaptureScheduler();
 
+#if defined(SUBREC_HAS_SUBTITLE)
+    // Borrowed hook; control thread only. Detach before destroying the service.
+    void setRecordingAudioHook(subtitle::RecordingAudioHook *hook);
+    uint64_t subtitleDroppedBlocks() const;
+    bool subtitleFloatingLineSafe() const;
+#endif
     void initialize();
     bool start();
     void stop();
@@ -92,6 +102,13 @@ private:
     void failLocked(const QString &message);
 
 private:
+#if defined(SUBREC_HAS_SUBTITLE)
+    void endSubtitleRecording(bool finalized);
+    subtitle::RecordingAudioHook *m_audioHook = nullptr;
+    std::shared_ptr<subtitle::AudioTap> m_recordingTap;
+    bool m_subtitleRecording = false;
+    uint64_t m_subtitleDroppedBlocks = 0;
+#endif
     FFRecorder &m_recorder;
     mutable std::mutex m_mutex;
     std::unique_ptr<CaptureSession> m_session;
