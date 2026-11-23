@@ -383,18 +383,9 @@ void HostRuntime::decodeLoopLive(JobInfo job)
             finishTotal = m_sh.finishTotal;
         }
 
-        if (finishing && !finishApplied) {
-            m_vad->finish(closed);
-            for (const auto &seg : closed) {
-                ssm.onSpeechStart(seg.first);
-                ssm.onSpeechEnd(seg.second);
-            }
-            closed.clear();
-            ssm.onFinish(finishTotal);
-            finishApplied = true;
-        }
-
         // ---- 尾随读取新增音频并喂 VAD（不越过最近的拼接点）----
+        // 先喂后 finish：finish 生效前，已提交（committed16k / total16k 以内）样本必须全部
+        // 过 VAD，否则 finish 抢跑会把末尾语音整段丢掉（C2 问题 2）。
         int64_t committed = m_reader->committed();
         if (finishing)
             committed = std::min(committed, finishTotal);
@@ -425,6 +416,18 @@ void HostRuntime::decodeLoopLive(JobInfo job)
             pendingSplices.pop_front();
             m_vad->forceCut(at);
             ssm.onSplice(at);
+        }
+
+        // ---- finish：音频已喂到 committed / total16k，现在封口（自然端点，不标 forcedCut）----
+        if (finishing && !finishApplied) {
+            m_vad->finish(closed);
+            for (const auto &seg : closed) {
+                ssm.onSpeechStart(seg.first);
+                ssm.onSpeechEnd(seg.second);
+            }
+            closed.clear();
+            ssm.onFinish(finishTotal);
+            finishApplied = true;
         }
 
         // ---- 出 partial / final ----

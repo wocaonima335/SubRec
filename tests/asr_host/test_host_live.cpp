@@ -398,6 +398,44 @@ TEST(fault_injection_counts_per_open)
 #endif
 }
 
+// ---- C2 问题 2：finish 生效前已提交样本必须全部过 VAD；录制结束那一刀不标 forcedCut ----
+
+TEST(live_finish_feeds_all_committed_before_sealing)
+{
+    std::string spool = newSpoolPath();
+    WavSpoolBuilder wav;
+    CHECK(wav.create(spool));
+    wav.appendSpeechMs(1000);    // burst1 [0, 1s)
+    wav.appendSilenceMs(1000);   // 静音到 2 s（burst1 端点在此期间触发）
+    wav.appendSpeechMs(1000);    // burst2 [2s, 3s) 一直说到文件末尾，无尾静音
+    wav.flush();
+    const int64_t total = wav.writtenSamples();
+
+    HostSession s;
+    s.start();
+    CHECK_MSG(s.loadFake(0, 10000), "load fake");
+    s.openJob(spool, 0, 32000);   // 只提交到 2 s
+    proto::Message m;
+    CHECK_MSG(s.waitFor("final", m, 8000), "burst1 final");
+
+    // 直接 finish(total16k)（宿主会把 committed 提到 total）：
+    // 此刻 [2s, 3s) 的样本尚未喂入 VAD，finish 不得先于喂入生效而丢掉 burst2。
+    s.finishJob(total);
+    std::vector<proto::Message> finals;
+    CHECK_MSG(collectFinalsUntilDone(s, finals, 8000), "done after trailing burst");
+    CHECK(finals.size() == 1);                           // 只有 burst2（final1 已在上面收到）
+    const FinalSegment &f1 = finalOf(m);
+    const FinalSegment &f2 = finalOf(finals[0]);
+    CHECK(f1.id == 0 && !f1.forcedCut);
+    CHECK(f2.id == 1);                                   // 同一 open 内递增
+    CHECK(!f2.forcedCut);                                // 录制结束是自然端点，非强切
+    CHECK(f2.begin16k > 26240 && f2.begin16k <= 32000);  // burst2 起点 2 s − pad ± 1 帧
+    CHECK(f2.end16k == total);                           // 封口穿过全部已提交样本
+    s.quit();
+    auto exit = s.proc.waitForExit(5000);
+    CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+}
+
 // ---- setLevel 关 partial ----
 
 TEST(live_set_level_disables_partial)

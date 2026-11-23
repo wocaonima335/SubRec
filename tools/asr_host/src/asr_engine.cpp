@@ -73,7 +73,9 @@ public:
     {
         if (!m_inSpeech)
             return;
-        emitClosed(m_speechBegin, m_nextFrameStart, closed);
+        // 封口穿过已喂入的全部样本：不足一帧的尾部样本也计入最后一段（C2 问题 2，
+        // 「finish 生效前所有已提交样本处理完」）；录制结束是自然端点，forcedCut 由段状态机置位。
+        emitClosed(m_speechBegin, m_nextFrameStart + static_cast<int64_t>(m_frame.size()), closed);
         m_inSpeech = false;
         m_runFrames = 0;
         m_runStart = -1;

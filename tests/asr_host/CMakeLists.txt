@@ -78,6 +78,7 @@ set(ASR_HOST_TEST_CASES
     live_resume_from_16k
     live_resume_continues_seg_ids
     fault_injection_counts_per_open
+    live_finish_feeds_all_committed_before_sealing
     live_set_level_disables_partial
     live_garbage_stdout_keeps_protocol_clean
     fault_crash_at_seg
