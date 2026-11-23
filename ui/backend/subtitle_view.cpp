@@ -25,6 +25,7 @@ QVariant objectProperty(const QPointer<QObject> &object, const char *name,
 SubtitleView::SubtitleView(QObject *parent)
     : QObject(parent)
 {
+    connect(this, &SubtitleView::uiStateChanged, this, &SubtitleView::pushSelectionLock);
 }
 
 SubtitleView::~SubtitleView()
@@ -55,7 +56,8 @@ void SubtitleView::attach(QObject *service, std::function<void()> reloadSettings
     if (service_) {
         const auto slot = metaObject()->method(metaObject()->indexOfSlot("onServiceChanged()"));
         for (const char *name : {"available", "state", "progress", "lagSeconds", "lastSrtPath",
-                                 "lastError", "modelDir", "currentJobVideoPath"}) {
+                                 "lastError", "modelDir", "currentJobVideoPath", "degradeLevel",
+                                 "degradeReason"}) {
             const int index = service_->metaObject()->indexOfProperty(name);
             if (index < 0)
                 continue;
@@ -63,9 +65,21 @@ void SubtitleView::attach(QObject *service, std::function<void()> reloadSettings
             if (property.hasNotifySignal())
                 connect(service_, property.notifySignal(), this, slot, Qt::UniqueConnection);
         }
+        // The three current-line halves share the service's currentLineChanged (frozen
+        // NOTIFY); the three connects collapse into one via UniqueConnection.
+        const auto lineSlot = metaObject()->method(metaObject()->indexOfSlot("onCurrentLineChanged()"));
+        for (const char *name : {"currentLine", "currentConfirmed", "currentTentative"}) {
+            const int index = service_->metaObject()->indexOfProperty(name);
+            if (index < 0)
+                continue;
+            const auto property = service_->metaObject()->property(index);
+            if (property.hasNotifySignal())
+                connect(service_, property.notifySignal(), this, lineSlot, Qt::UniqueConnection);
+        }
         connect(service_, &QObject::destroyed, this, [this] { attach(nullptr, {}); });
     }
     onServiceChanged();
+    onCurrentLineChanged();
 }
 
 void SubtitleView::onServiceChanged()
@@ -80,6 +94,17 @@ void SubtitleView::onServiceChanged()
         emit subtitleDone(lastSrtPath());
     if (edge && current == QStringLiteral("failed"))
         emit subtitleFailed(lastError());
+}
+
+void SubtitleView::onCurrentLineChanged()
+{
+    emit currentLineChanged();
+}
+
+void SubtitleView::pushSelectionLock()
+{
+    if (catalog_)
+        catalog_->setSelectionLocked(settingsLocked());
 }
 
 void SubtitleView::setModelCatalog(ModelCatalog *catalog)
@@ -129,6 +154,26 @@ QString SubtitleView::lastSrtPath() const
 QString SubtitleView::lastError() const
 {
     return objectProperty(service_, "lastError").toString();
+}
+QString SubtitleView::currentLine() const
+{
+    return objectProperty(service_, "currentLine").toString();
+}
+QString SubtitleView::currentConfirmed() const
+{
+    return objectProperty(service_, "currentConfirmed").toString();
+}
+QString SubtitleView::currentTentative() const
+{
+    return objectProperty(service_, "currentTentative").toString();
+}
+int SubtitleView::degradeLevel() const
+{
+    return objectProperty(service_, "degradeLevel", 0).toInt();
+}
+QString SubtitleView::degradeReason() const
+{
+    return objectProperty(service_, "degradeReason").toString();
 }
 
 QString SubtitleView::mode() const
@@ -244,6 +289,30 @@ void SubtitleView::setKeepSpool(bool value)
     openUiSettings()->setValue(QStringLiteral("asr/keepSpool"), value);
     if (reloadSettings_)
         reloadSettings_();
+    emit settingsChanged();
+}
+// Display-only switches: no settingsLocked() gate and no reloadSettings() (the service
+// never reads them; main.cpp reads the property when pushing the floating-bar texts).
+bool SubtitleView::showControlBarLine() const
+{
+    return openUiSettings()->value(QStringLiteral("asr/showControlBarLine"), true).toBool();
+}
+void SubtitleView::setShowControlBarLine(bool show)
+{
+    if (show == showControlBarLine())
+        return;
+    openUiSettings()->setValue(QStringLiteral("asr/showControlBarLine"), show);
+    emit settingsChanged();
+}
+bool SubtitleView::showFloatingLine() const
+{
+    return openUiSettings()->value(QStringLiteral("asr/showFloatingLine"), false).toBool();
+}
+void SubtitleView::setShowFloatingLine(bool show)
+{
+    if (show == showFloatingLine())
+        return;
+    openUiSettings()->setValue(QStringLiteral("asr/showFloatingLine"), show);
     emit settingsChanged();
 }
 QString SubtitleView::modelDir() const

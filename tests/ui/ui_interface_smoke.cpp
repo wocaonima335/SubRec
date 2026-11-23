@@ -167,6 +167,8 @@ void checkContracts()
     checkMembers(SubtitleView::staticMetaObject,
                  {"serviceAttached", "available", "state", "progress", "lagSeconds", "lastSrtPath", "lastError", "mode",
                   "enabled", "modelId", "maxCharsPerLine", "threads", "srtBom", "keepSpool",
+                  "currentLine", "currentConfirmed", "currentTentative", "degradeLevel", "degradeReason",
+                  "showControlBarLine", "showFloatingLine",
                   "modelDir", "uiState", "settingsLocked", "currentJobVideoPath"},
                  {"openLastSrtFolder", "openModelDir", "modelDownloadPromptRequested",
                   "subtitleDone", "subtitleFailed"});

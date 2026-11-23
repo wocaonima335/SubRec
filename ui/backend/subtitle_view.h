@@ -43,6 +43,15 @@ class SubtitleView : public QObject {
     Q_PROPERTY(qreal lagSeconds READ lagSeconds NOTIFY serviceChanged)
     Q_PROPERTY(QString lastSrtPath READ lastSrtPath NOTIFY serviceChanged)
     Q_PROPERTY(QString lastError READ lastError NOTIFY serviceChanged) // Chinese, user-facing
+    // design-live-v2.md §10.3 D v2 additions. currentConfirmed/currentTentative are the
+    // solid/light halves of the current sentence (§12.2); the service already throttles
+    // them to 4 Hz (§9.3), no extra throttling here. degradeLevel 0..4 (§6.2), reason is
+    // Chinese. Empty / 0 while no service is attached.
+    Q_PROPERTY(QString currentLine READ currentLine NOTIFY currentLineChanged)
+    Q_PROPERTY(QString currentConfirmed READ currentConfirmed NOTIFY currentLineChanged)
+    Q_PROPERTY(QString currentTentative READ currentTentative NOTIFY currentLineChanged)
+    Q_PROPERTY(int degradeLevel READ degradeLevel NOTIFY serviceChanged)
+    Q_PROPERTY(QString degradeReason READ degradeReason NOTIFY serviceChanged)
 
     // ---- asr/* settings (P3-4 table; defaults from AI_SUBTITLE_DESIGN §5.8) ----
     // "off" (first run) | "live" | "after". Locked while capturing or finishing.
@@ -54,6 +63,11 @@ class SubtitleView : public QObject {
     Q_PROPERTY(int threads READ threads WRITE setThreads NOTIFY settingsChanged)       // 1..4, 1
     Q_PROPERTY(bool srtBom READ srtBom WRITE setSrtBom NOTIFY settingsChanged)         // true
     Q_PROPERTY(bool keepSpool READ keepSpool WRITE setKeepSpool NOTIFY settingsChanged) // false
+    // Live-display switches (design-live-v2.md §12.3 "录制中显示"). Not locked while
+    // recording: they only toggle what the UI shows, and the running capture picks the
+    // change up on the next line update.
+    Q_PROPERTY(bool showControlBarLine READ showControlBarLine WRITE setShowControlBarLine NOTIFY settingsChanged) // true
+    Q_PROPERTY(bool showFloatingLine READ showFloatingLine WRITE setShowFloatingLine NOTIFY settingsChanged)      // false
     Q_PROPERTY(QString modelDir READ modelDir NOTIFY settingsChanged)                  // read-only path
 
     // ---- derived ----
@@ -88,6 +102,11 @@ public:
     qreal lagSeconds() const;
     QString lastSrtPath() const;
     QString lastError() const;
+    QString currentLine() const;
+    QString currentConfirmed() const;
+    QString currentTentative() const;
+    int degradeLevel() const;
+    QString degradeReason() const;
     QString mode() const;
     void setMode(const QString &mode);
     bool enabled() const;
@@ -102,6 +121,10 @@ public:
     void setSrtBom(bool bom);
     bool keepSpool() const;
     void setKeepSpool(bool keep);
+    bool showControlBarLine() const;
+    void setShowControlBarLine(bool show);
+    bool showFloatingLine() const;
+    void setShowFloatingLine(bool show);
     QString modelDir() const;
     QString uiState() const;
     bool settingsLocked() const;
@@ -112,6 +135,7 @@ public:
 
 signals:
     void serviceChanged();
+    void currentLineChanged();
     void settingsChanged();
     void uiStateChanged();
     // §3.2.4 rule 1: enabling with the selected model not installed -> AppWindow opens D2.
@@ -122,6 +146,10 @@ signals:
 
 private slots:
     void onServiceChanged();
+    void onCurrentLineChanged();
+    // settingsLocked() rides uiStateChanged: keep the catalog's "selected model in use"
+    // (delete disabled) in step with recording / finishing.
+    void pushSelectionLock();
 private:
     QPointer<QObject> service_;
     QPointer<ModelCatalog> catalog_;
