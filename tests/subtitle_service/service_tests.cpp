@@ -206,8 +206,23 @@ private slots:
         SubtitleService replayService; auto replayTap = replayService.beginRecording(pathOf(settingsDir.filePath("throttle2.mp4"))); QVERIFY(replayTap);
         QList<qint64> updates; elapsed.restart();
         connect(&replayService, &SubtitleService::currentLineChanged, &replayService, [&] { updates << elapsed.elapsed(); QCOMPARE(replayService.currentLine(), replayService.currentConfirmed() + replayService.currentTentative()); });
-        QTest::qWait(1250); QVERIFY(updates.size() >= 3); QVERIFY(updates.size() <= 5);
-        for (int n = 1; n < updates.size(); ++n) QVERIFY(updates[n] - updates[n-1] >= 240);
+        // LocalAgreement freezes "word 1", so "word 59" displays as "word 19"
+        // with tentative "9". Earlier partials can match too: require the display
+        // to stay unchanged for more than one refresh tick before settling.
+        QTRY_VERIFY_WITH_TIMEOUT(replayService.currentLine() == QStringLiteral("word 19")
+                                 && replayService.currentTentative() == QStringLiteral("9")
+                                 && !updates.isEmpty() && elapsed.elapsed() - updates.last() >= 300, 5000);
+        QTest::qWait(250);
+        QStringList timestamps;
+        for (const auto update : updates) timestamps << QString::number(update);
+        const auto diagnostics = QString("currentLine update timestamps (ms): [%1]").arg(timestamps.join(", ")).toUtf8();
+        QVERIFY2(updates.size() >= 3, diagnostics.constData());
+        const qint64 window = updates.last() - updates.first();
+        // 4 Hz means 250 ms between updates; allow 20 ms scheduling jitter per gap.
+        // N updates span N - 1 gaps, starting at the first observed update.
+        QVERIFY2(updates.size() <= window / 230 + 1, diagnostics.constData());
+        for (int n = 1; n < updates.size(); ++n)
+            QVERIFY2(updates[n] - updates[n-1] >= 230, diagnostics.constData());
         replayService.endRecording(false); replayService.shutdown(100);
     }
     QByteArray partialBurst() {
