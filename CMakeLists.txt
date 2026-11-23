@@ -122,6 +122,10 @@ endif()
 if(SUBREC_BUILD_SUBTITLE)
     add_subdirectory(subtitle)
     add_subdirectory(tools/asr_host)
+    if(SUBREC_BUILD_LIFECYCLE_TESTS)
+        enable_testing()
+        add_subdirectory(tests/subtitle_pipeline)
+    endif()
     # G/I5: one ABI across production modules and their consumers; isolated test
     # doubles that compile sources directly remain OFF unless explicitly opted in.
     foreach(module IN ITEMS capture demuxer qml queue decoder resampler filter muxer

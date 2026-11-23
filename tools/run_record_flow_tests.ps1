@@ -1,7 +1,8 @@
 ﻿param(
     [string]$BuildDir = "build/windows-mingw-release",
     [string]$ExeName = "appSubRec.exe",
-    [string]$ExpectedEncoder = ""
+    [string]$ExpectedEncoder = "",
+    [switch]$SubtitleLive
 )
 
 $ErrorActionPreference = "Stop"
@@ -81,6 +82,21 @@ $scenarios = @(
 )
 
 $results = @()
+
+# Opt-in PC3/device scenario: an ON build, installed host/model and live settings
+# are required. It is never added to the normal flow suite or CI by default.
+if ($SubtitleLive) {
+    $scenarios += [pscustomobject]@{
+        Name = "subtitle-live"
+        Scenario = "record_seconds_subtitle_live"
+        QuitMs = 75000
+        TimeoutMs = 90000
+        Required = @(
+            @{ Pattern = '\[AutoTest\] record_seconds_subtitle_live result= PASS'; MinCount = 1; Label = "subtitle result" }
+            @{ Pattern = '\[SubtitleTap\] dropped= 0'; MinCount = 1; Label = "no tap drops" }
+        )
+    }
+}
 
 foreach ($item in $scenarios) {
     if (Test-Path $logPath) {
