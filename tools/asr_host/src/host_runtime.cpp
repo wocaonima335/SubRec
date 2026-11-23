@@ -321,8 +321,17 @@ void HostRuntime::stopDecodeThread()
 
 void HostRuntime::decodeLoopLive(JobInfo job)
 {
+    // 段 ID 接续（subtitle_types.h SegId 契约「重启后从 resume 处继续编号」）：不加协议字段，
+    // 由 open.resumeFrom16k 确定性推出起始编号 firstId = resumeFrom16k。依据：
+    // - 单调 / 不回退：同一次 open 内 id 在 [firstId, firstId+c) 连续分配，每个已终结段占
+    //   [b,e) ≥ 1 个不重叠样本，故下一次 open 的 resumeFrom16k（= 已接受 final 的 end16k）
+    //   严格大于本次 open 用过的全部 id；跨多次重启归纳成立。
+    // - 同段不冲突：重启后 VAD 从静音初始化，段起点 ≥ resumeFrom16k（minBegin 钳制），
+    //   新 id ≥ resumeFrom16k > 历史全部 id；与重启前同一段的编号相比只增不减。
+    // - 故障注入（crashAtSeg 等）保持按本地段号计数，见 fakeInjectionSegBase。
     SegmentStateMachine ssm;
-    ssm.configure(m_live, job.resumeFrom16k, 0);
+    ssm.configure(m_live, job.resumeFrom16k, job.resumeFrom16k);
+    fakeInjectionSegBase().store(job.resumeFrom16k, std::memory_order_relaxed);
     m_vad->reset(job.resumeFrom16k);
 
     int64_t fedUpto = job.resumeFrom16k;
@@ -506,6 +515,7 @@ void HostRuntime::decodeLoopLive(JobInfo job)
 
 void HostRuntime::decodeLoopRefine(subtitle::proto::Refine rf)
 {
+    fakeInjectionSegBase().store(0, std::memory_order_relaxed);   // refine 段号来自请求，本就是调用方编号
     std::vector<float> pcm;
     for (const subtitle::proto::RefineSegment &seg : rf.segments) {
         bool stopNow = false;

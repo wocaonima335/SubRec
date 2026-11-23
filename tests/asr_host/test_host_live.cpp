@@ -292,6 +292,112 @@ TEST(live_resume_from_16k)
     }
 }
 
+// ---- C2 问题 1：重开 / 重启后段 ID 与假引擎文本编号接续 ----
+// subtitle_types.h SegId 契约：「每个 Job 内单调递增；重启后从 resume 处继续编号」。
+// 宿主由 open.resumeFrom16k 确定性推出起始编号（firstId = resumeFrom16k），不加协议字段。
+
+TEST(live_resume_continues_seg_ids)
+{
+    std::string spool = newSpoolPath();
+    WavSpoolBuilder wav;
+    CHECK(wav.create(spool));
+    wav.appendSpeechMs(1000);
+    wav.appendSilenceMs(1000);
+    wav.appendSpeechMs(1500);
+    wav.appendSilenceMs(1500);
+    wav.flush();
+    const int64_t total = wav.writtenSamples();
+
+    // 第一轮：喂到 2 s，得到 final1 [0, ~1.15 s)，resume = final1.end16k
+    int64_t resume16k = 0;
+    {
+        HostSession s;
+        s.start();
+        CHECK_MSG(s.loadFake(0, 10000), "load fake");
+        s.openJob(spool, 0, 32000);
+        proto::Message m;
+        CHECK_MSG(s.waitFor("final", m, 8000), "round1 final");
+        const FinalSegment &f1 = finalOf(m);
+        CHECK(f1.id == 0 && f1.text == "第0段");
+        resume16k = f1.end16k;
+        CHECK(resume16k > 0);
+
+        // 同进程重开（setLiveConfig 触发的 reopen 路径）：编号同样从 resume 处接续
+        s.openJob(spool, resume16k, total, 2);
+        s.finishJob(total);
+        std::vector<proto::Message> finals;
+        CHECK_MSG(collectFinalsUntilDone(s, finals, 10000), "reopen done");
+        CHECK(finals.size() == 1);
+        const FinalSegment &fr = finalOf(finals[0]);
+        CHECK(fr.id == resume16k);                                  // SegId 从 resume 处继续编号
+        CHECK(fr.text == "第" + std::to_string(resume16k) + "段");   // 假引擎文本编号接续
+        CHECK(fr.begin16k >= resume16k);
+        s.quit();
+        auto exit = s.proc.waitForExit(5000);
+        CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+    }
+
+    // 新进程重启（宿主崩溃恢复路径）：同样接续
+    {
+        HostSession s2;
+        s2.start();
+        CHECK_MSG(s2.loadFake(0, 10000), "load fake round2");
+        s2.openJob(spool, resume16k, total, 3);
+        s2.finishJob(total);
+        std::vector<proto::Message> finals2;
+        CHECK_MSG(collectFinalsUntilDone(s2, finals2, 10000), "round2 done");
+        CHECK(finals2.size() == 1);
+        const FinalSegment &f2 = finalOf(finals2[0]);
+        CHECK(f2.id == resume16k);
+        CHECK(f2.text == "第" + std::to_string(resume16k) + "段");
+        CHECK(f2.begin16k >= resume16k);
+        s2.quit();
+        auto exit2 = s2.proc.waitForExit(5000);
+        CHECK(!exit2.timedOut && !exit2.signaled && exit2.code == 0);
+    }
+}
+
+// 故障注入保持「每次 open 的本地段号」计数（D 依赖：重启后注入本地第 0 段命中同一段音频，
+// 见 tests/subtitle_service poison_segment 的两轮 crashAtSeg=3 / crashAtSeg=0）
+TEST(fault_injection_counts_per_open)
+{
+    std::string spool = newSpoolPath();
+    WavSpoolBuilder wav;
+    CHECK(wav.create(spool));
+    wav.appendSpeechMs(1000);
+    wav.appendSilenceMs(1000);
+    wav.appendSpeechMs(1000);
+    wav.appendSilenceMs(1000);
+    wav.flush();
+    const int64_t total = wav.writtenSamples();
+
+    int64_t resume16k = 0;
+    {
+        HostSession s;
+        s.start();
+        CHECK_MSG(s.loadFake(0, 10000), "load fake");
+        s.openJob(spool, 0, 32000);
+        proto::Message m;
+        CHECK_MSG(s.waitFor("final", m, 8000), "round1 final");
+        resume16k = finalOf(m).end16k;
+        CHECK(resume16k > 0);
+        s.quit();
+        auto exit = s.proc.waitForExit(5000);
+        CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+    }
+    // 重启后注入 crashAtSeg=0：命中本次 open 的本地第 0 段（绝对编号 = resume16k）→ 崩溃
+    HostSession s2;
+    s2.start("crashAtSeg=0");
+    CHECK_MSG(s2.loadFake(0, 10000), "load fake round2");
+    s2.openJob(spool, resume16k, total, 2);
+    auto exit2 = s2.proc.waitForExit(8000);
+    CHECK(!exit2.timedOut);
+    CHECK(exit2.signaled);   // 崩溃退出（Windows：NTSTATUS 崩溃码区间）
+#ifndef _WIN32
+    CHECK(exit2.code == SIGSEGV);
+#endif
+}
+
 // ---- setLevel 关 partial ----
 
 TEST(live_set_level_disables_partial)
