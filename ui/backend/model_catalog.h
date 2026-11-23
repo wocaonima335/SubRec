@@ -90,6 +90,11 @@ public:
     // Call after changing asr/modelId so selection roles update immediately.
     void refreshSelection();
 
+    // True while recording or finishing (SubtitleView.settingsLocked): the selected model
+    // reports InUseRole true, so the QML delete button grays out. The manager's own in-use
+    // state is OR-ed on top.
+    void setSelectionLocked(bool locked);
+
     ModelListModel *models() const;
     bool selectedModelReady() const;
     bool anyDownloading() const;
@@ -116,6 +121,7 @@ private slots:
 private:
     ModelListModel *models_ = nullptr; // child, never null
     QPointer<QObject> manager_;
+    bool selectionLocked_ = false;
 };
 
 } // namespace subrec::ui

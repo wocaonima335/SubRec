@@ -178,6 +178,12 @@ void ModelCatalog::acceptLicenseAndDownload(const QString &modelId)
     if (!version.isEmpty())
         settings->setValue(QStringLiteral("asr/licenseVersion/") + modelId, version);
     refreshCatalog();
+    // Manager contract (subtitle/models/model_manager.h): record the acceptance first,
+    // then the download. A manager without the acceptLicense slot (old stubs) still gets
+    // the download, matching the pre-F behaviour.
+    if (!QMetaObject::invokeMethod(manager_, "acceptLicense", Q_ARG(QString, modelId),
+                                   Q_ARG(QString, version)))
+        qWarning() << "[ModelCatalog] manager has no acceptLicense(modelId, licenseVersion)";
     if (!QMetaObject::invokeMethod(manager_, "requestDownload", Q_ARG(QString, modelId)))
         emit downloadFailed(modelId, QStringLiteral("模型管理器未提供下载接口"));
 }
@@ -209,6 +215,14 @@ void ModelCatalog::refreshSelection()
     refreshCatalog();
 }
 
+void ModelCatalog::setSelectionLocked(bool locked)
+{
+    if (selectionLocked_ == locked)
+        return;
+    selectionLocked_ = locked;
+    refreshCatalog();
+}
+
 void ModelCatalog::refreshCatalog()
 {
     const auto settings = openUiSettings();
@@ -235,6 +249,10 @@ void ModelCatalog::refreshCatalog()
             info[QStringLiteral("licenseAccepted")] = false;
         info[QStringLiteral("selected")] = settings->value(QStringLiteral("asr/modelId"),
             QStringLiteral("sensevoice-small")).toString() == id;
+        // In use: the manager's own report, or the selected model while recording /
+        // finishing (delete disabled; the recording or the catch-up still needs it).
+        info[QStringLiteral("inUse")] = info.value(QStringLiteral("inUse")).toBool()
+            || (selectionLocked_ && info.value(QStringLiteral("selected")).toBool());
         emit models_->dataChanged(models_->index(row), models_->index(row));
         const QString status = info.value(QStringLiteral("status")).toString();
         if (oldStatus != status && manager_) {
