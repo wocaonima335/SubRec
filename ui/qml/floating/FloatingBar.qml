@@ -224,6 +224,7 @@ Window {
         // (main.cpp clears it while paused, at L2+, or when the switch is off).
         Text {
             id: subtitleLineText
+            objectName: "subtitleLineText"
             x: 146
             y: 12
             width: visible ? Math.min(implicitWidth, 192) : 0

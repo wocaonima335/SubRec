@@ -246,7 +246,7 @@ private slots:
         window.resize(1000, 800);
         auto *bar = qobject_cast<QQuickItem *>(object.get());
         bar->setParentItem(window.contentItem());
-        bar->setWidth(656); // wide layout, no UI 1114 reflow involved
+        bar->setWidth(800); // wide layout (>= 720): side by side, no UI 1114 reflow involved
         bar->setHeight(bar->implicitHeight());
         auto *row = bar->findChild<QQuickItem *>(QStringLiteral("subtitleLineRow"));
         auto *confirmed = bar->findChild<QQuickItem *>(QStringLiteral("subtitleLineConfirmed"));
@@ -255,10 +255,30 @@ private slots:
         QTRY_VERIFY(row->isVisible());
         QCOMPARE(confirmed->property("text").toString(), QStringLiteral("已确认的字"));
         QCOMPARE(tentative->property("text").toString(), QStringLiteral("未确认的字"));
-        // The row sits under the timer block and clear of the buttons; heights unchanged.
-        QVERIFY(row->mapRectToItem(bar, QRectF(0, 0, row->width(), row->height())).bottom()
-                <= bar->height() + 0.5);
+        // The row sits under the timer block and clear of the buttons; it lies inside the
+        // card, and the card heights (104 wide / 148 compact, UI 1114 #1) do not depend on it.
+        const auto rowInsideCard = [&] {
+            const QRectF rect = row->mapRectToItem(bar, QRectF(0, 0, row->width(), row->height()));
+            return QRectF(0, 0, bar->width(), bar->height()).adjusted(-0.5, -0.5, 0.5, 0.5)
+                    .contains(rect);
+        };
+        QVERIFY(!bar->property("compact").toBool());
+        QVERIFY(rowInsideCard());
         QCOMPARE(bar->implicitHeight(), 104.0);
+
+        // Compact (< 720) but still side by side: the save line moves under the buttons and
+        // the card is 148 high; the row sits just above the save line, still inside the card.
+        bar->setWidth(656);
+        bar->setHeight(bar->implicitHeight());
+        QVERIFY(bar->property("compact").toBool());
+        QVERIFY(!bar->property("stacked").toBool());
+        QTRY_VERIFY(row->isVisible());
+        QVERIFY(rowInsideCard());
+        QCOMPARE(bar->implicitHeight(), 148.0);
+
+        bar->setWidth(800); // back to the wide layout for the switch / degrade / pause checks
+        bar->setHeight(bar->implicitHeight());
+        QTRY_VERIFY(row->isVisible());
 
         view.setShowControlBarLine(false);
         QTRY_VERIFY(!row->isVisible());
@@ -306,11 +326,15 @@ private slots:
         auto *window = qobject_cast<QQuickWindow *>(object.get());
         QVERIFY(window != nullptr);
         QCOMPARE(window->width(), 264.0);
-        auto *line = window->findChild<QQuickItem *>(QStringLiteral("subtitleLineText"));
+        // Items declared inside a Window are QObject children of the window itself
+        // (contentItem() is only their visual parent); look under contentItem() as well.
+        const auto lineName = QStringLiteral("subtitleLineText");
+        auto *line = window->findChild<QQuickItem *>(lineName);
+        if (!line)
+            line = window->contentItem()->findChild<QQuickItem *>(lineName);
         QVERIFY(line != nullptr);
         QVERIFY(!line->isVisible());
         QCOMPARE(line->width(), 0.0);
-        QVERIFY(!window->property("subtitleLine").toString().isEmpty() == false);
         QCOMPARE(window->property("subtitleLine").toString(), QString());
         QCOMPARE(warnings.count(), 0);
         FloatingBarView::setInstance(nullptr);
