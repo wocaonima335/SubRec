@@ -511,6 +511,75 @@ TEST(live_restart_boundary_matches_no_restart)
     }
 }
 
+// ---- C2 问题 4：progress.decodeMsTotal 计入 partial 解码耗时（协议语义「供 RTF EWMA」）----
+
+TEST(live_progress_decode_ms_includes_partials)
+{
+    std::string spool = newSpoolPath();
+    WavSpoolBuilder wav;
+    CHECK(wav.create(spool));
+    wav.appendSpeechMs(2000);
+    wav.appendSilenceMs(1200);
+    wav.flush();
+    const int64_t total = wav.writtenSamples();
+
+    HostSession s;
+    s.start("rtf=0.08");
+    CHECK_MSG(s.loadFake(250, 10000), "load fake");
+    s.openJob(spool, 0, 0);
+
+    // 慢速喂音频，收集 partial（rtf=0.08 使每次解码有可观测的耗时）。partial 间隔须大于
+    // 单次 partial 解码耗时（≤ upto×0.08 ≈ 212 ms < 250 ms），否则 next() 的 partial 分支
+    // 会饿死外层循环（committed 不再被重新读取——既有潜在问题，与本问题无关）。
+    int partialCount = 0;
+    bool haveFinal = false;
+    bool haveProgress = false;
+    proto::Message fin;
+    proto::Message prog;
+    int64_t committed = 0;
+    while (committed < total) {
+        committed = std::min<int64_t>(total, committed + 1600);   // 100 ms
+        s.appendCommitted(committed);
+        const int64_t till = HostSession::nowMs() + 60;
+        while (HostSession::nowMs() < till) {
+            proto::Message m;
+            const int remain = static_cast<int>(std::max<int64_t>(1, till - HostSession::nowMs()));
+            if (!s.readMsg(m, remain))
+                break;
+            const std::string t = proto::typeName(m);
+            if (t == "partial")
+                ++partialCount;
+            else if (t == "final" && !haveFinal) {
+                fin = std::move(m);
+                haveFinal = true;
+            } else if (t == "progress") {
+                prog = std::move(m);
+                haveProgress = true;
+            }
+        }
+    }
+
+    std::vector<proto::Message> others;
+    if (!haveFinal)
+        CHECK_MSG(s.waitFor("final", fin, 8000, &others), "final");
+    if (!haveProgress)
+        CHECK_MSG(s.waitFor("progress", prog, 8000, &others), "progress after final");
+    for (const proto::Message &o : others) {
+        if (std::string(proto::typeName(o)) == "partial")
+            ++partialCount;
+    }
+    CHECK(partialCount >= 3);
+    const FinalSegment &f = finalOf(fin);
+    const proto::Progress &pr = std::get<proto::Progress>(prog);
+    CHECK(pr.done16k >= f.end16k);
+    // partial 的解码耗时也计入总解码开销：本场景 ≥3 次 partial、每次 sleep upto×0.08，
+    // 累计（约数百 ms）远大于 100 ms；只计 final 时 decodeMsTotal == f.decodeMs。
+    CHECK(pr.decodeMsTotal >= f.decodeMs + 100.0);
+    s.quit();
+    auto exit = s.proc.waitForExit(5000);
+    CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+}
+
 // ---- setLevel 关 partial ----
 
 TEST(live_set_level_disables_partial)

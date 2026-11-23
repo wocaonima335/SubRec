@@ -461,6 +461,10 @@ void HostRuntime::decodeLoopLive(JobInfo job)
                     aborted = true;
                     break;
                 }
+                // partial 也是解码开销：decodeMsTotal 是总解码耗时（供 RTF EWMA，协议 §4 progress），
+                // 只计 final 会低估 RTF（C2 问题 4）。
+                m_decodeMsTotal.store(m_decodeMsTotal.load(std::memory_order_relaxed) + tmp.decodeMs,
+                                      std::memory_order_relaxed);
                 subtitle::PartialSegment p;
                 p.job = job.id;
                 p.id = act.id;
