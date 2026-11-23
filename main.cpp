@@ -1185,7 +1185,7 @@ int main(int argc, char *argv[])
     const QString indicator = subtitleView.state() == QLatin1String("live") ? QStringLiteral("live")
         : subtitleView.state() == QLatin1String("lagging") ? QStringLiteral("lagging") : QString();
     // F owns the setting UI and QML consumer. This backend defaults to no line.
-    const bool showLine = QSettings("SubRec", "SubRec").value("asr/showFloatingLine", false).toBool()
+    const bool showLine = subtitleView.showFloatingLine()
         && snapshot.state == subrec::shell::RecState::Running
         && subtitleService.degradeLevel() < 2
         && subrec::shell::CaptureExclusion::supported()
