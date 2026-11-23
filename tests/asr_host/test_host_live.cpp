@@ -436,6 +436,81 @@ TEST(live_finish_feeds_all_committed_before_sealing)
     CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
 }
 
+// ---- C2 问题 3：重启后 VAD 帧网格对齐绝对时间，padding=150 下同一段边界不漂移 ----
+
+TEST(live_restart_boundary_matches_no_restart)
+{
+    std::string spool = newSpoolPath();
+    WavSpoolBuilder wav;
+    CHECK(wav.create(spool));
+    wav.appendSpeechMs(1000);    // burst1 [0, 1s)
+    wav.appendSilenceMs(800);
+    wav.appendSpeechMs(800);     // burst2 [1.8s, 2.6s)
+    wav.appendSilenceMs(800);
+    wav.appendSpeechMs(1000);    // burst3 [3.4s, 4.4s)
+    wav.appendSilenceMs(1000);
+    wav.flush();
+    const int64_t total = wav.writtenSamples();
+
+    int64_t begin3 = 0, end3 = 0, resume16k = 0;
+    // 基准：无重启一路跑完（loadFake 未改 vad，默认 speechPadMs=150）
+    {
+        HostSession s;
+        s.start();
+        CHECK_MSG(s.loadFake(0, 10000), "load fake");
+        s.openJob(spool, 0, total);
+        s.finishJob(total);
+        std::vector<proto::Message> finals;
+        CHECK_MSG(collectFinalsUntilDone(s, finals, 10000), "baseline done");
+        CHECK(finals.size() == 3);
+        resume16k = finalOf(finals[1]).end16k;   // burst2 的端点 = 重启点
+        begin3 = finalOf(finals[2]).begin16k;
+        end3 = finalOf(finals[2]).end16k;
+        CHECK(begin3 > resume16k);
+        s.quit();
+        auto exit = s.proc.waitForExit(5000);
+        CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+    }
+
+    // 重启前半程：跑到 burst2 结束（committed 3.2 s > 端点判定所需），得到同一重启点
+    {
+        HostSession s1;
+        s1.start();
+        CHECK_MSG(s1.loadFake(0, 10000), "load fake round1");
+        s1.openJob(spool, 0, 51200);
+        proto::Message m;
+        CHECK_MSG(s1.waitFor("final", m, 8000), "round1 final1");
+        CHECK_MSG(s1.waitFor("final", m, 8000), "round1 final2");
+        const int64_t r = finalOf(m).end16k;
+        CHECK(r == resume16k);        // 与无重启一路的前半程一致
+        CHECK(r % 512 != 0);          // 重启点不落在 512 帧网格上（否则本用例失效）
+        resume16k = r;
+        s1.quit();
+        auto exit = s1.proc.waitForExit(5000);
+        CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+    }
+
+    // 重启后半程：新进程从 resume 续跑。帧网格须对齐绝对 512 网格，
+    // burst3（起点在恢复点一个 pad 之后）的边界与无重启基准完全一致。
+    {
+        HostSession s2;
+        s2.start();
+        CHECK_MSG(s2.loadFake(0, 10000), "load fake round2");
+        s2.openJob(spool, resume16k, total, 2);
+        s2.finishJob(total);
+        std::vector<proto::Message> finals2;
+        CHECK_MSG(collectFinalsUntilDone(s2, finals2, 10000), "round2 done");
+        CHECK(finals2.size() == 1);
+        const FinalSegment &f3 = finalOf(finals2[0]);
+        CHECK(f3.begin16k >= resume16k);
+        CHECK(f3.begin16k == begin3);   // 同一段有/无重启边界相同（pad=150）
+        CHECK(f3.end16k == end3);
+        s2.quit();
+        auto exit = s2.proc.waitForExit(5000);
+        CHECK(!exit.timedOut && !exit.signaled && exit.code == 0);
+    }
+}
+
 // ---- setLevel 关 partial ----
 
 TEST(live_set_level_disables_partial)
