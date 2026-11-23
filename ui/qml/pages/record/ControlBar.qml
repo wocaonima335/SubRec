@@ -75,11 +75,57 @@ Card {
         mode: SubtitleView.mode
         progressPercent: Math.round(SubtitleView.progress * 100)
         lagSeconds: SubtitleView.lagSeconds
+        degradeLevel: SubtitleView.degradeLevel
+        degradeReason: SubtitleView.degradeReason
         onClicked: {
             if (SubtitleView.uiState === "done")
                 SubtitleView.openLastSrtFolder()
             else
                 Navigation.open("settings/subtitle")
+        }
+    }
+
+    // F (design-live-v2 §12.2): the current sentence, one line under the status/timer
+    // block — confirmed part solid, tentative tail light, newest words kept when it
+    // overflows (elide left). Hidden while paused, at L2+ (§6.2), via the
+    // asr/showControlBarLine switch, and in the stacked card (no free band left). The
+    // 104/148 card heights and every UI 1114 anchor stay untouched.
+    Item {
+        id: subtitleLineRow
+        objectName: "subtitleLineRow"
+        visible: root.state === "running" && !root.stacked
+            && SubtitleView.showControlBarLine && SubtitleView.degradeLevel < 2
+            && SubtitleView.currentConfirmed.length + SubtitleView.currentTentative.length > 0
+        x: Theme.space16
+        y: Math.min(timer.y + timer.height + Theme.space4,
+                    root.compact ? saveArea.y - height - Theme.space4
+                                 : root.height - height - Theme.space8)
+        width: Math.max(0, Math.min(buttonRow.x - Theme.space16, root.width - Theme.space16)
+                        - Theme.space16)
+        height: 16
+
+        Text {
+            id: lineConfirmed
+            objectName: "subtitleLineConfirmed"
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.max(0, Math.min(implicitWidth,
+                                        subtitleLineRow.width - lineTentative.implicitWidth))
+            text: SubtitleView.currentConfirmed
+            font: Theme.captionFont
+            color: Theme.textPrimary
+            elide: Text.ElideLeft
+        }
+        Text {
+            id: lineTentative
+            objectName: "subtitleLineTentative"
+            anchors.left: lineConfirmed.right
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.min(implicitWidth, subtitleLineRow.width)
+            text: SubtitleView.currentTentative
+            font: Theme.captionFont
+            color: Theme.textTertiary
+            elide: Text.ElideLeft
         }
     }
 
