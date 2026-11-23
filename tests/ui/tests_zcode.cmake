@@ -39,3 +39,15 @@ subrec_ui_qtest_args(ui_controls_args ui_controls_tests)
 add_test(NAME ui_controls_tests COMMAND ui_controls_tests ${ui_controls_args})
 set_tests_properties(ui_controls_tests PROPERTIES TIMEOUT 30 LABELS "ui"
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
+
+# F live-subtitle UI (work package F): forwarded line/degrade properties, badge degrade
+# texts, the 录制中显示 switches, floating-bar line fallback, license order + in-use lock.
+# Same shape as ui_controls_tests (Qt6::Svg: ControlBar's AppIcon loads module SVGs).
+qt_add_executable(subtitle_live_ui_tests subtitle_live_ui_tests.cpp)
+target_compile_features(subtitle_live_ui_tests PRIVATE cxx_std_17)
+target_link_libraries(subtitle_live_ui_tests PRIVATE ui_module ui_moduleplugin ui_test_shell_batch2
+    Qt6::Test Qt6::Gui Qt6::Quick Qt6::Svg)
+subrec_ui_qtest_args(subtitle_live_ui_args subtitle_live_ui_tests)
+add_test(NAME subtitle_live_ui_tests COMMAND subtitle_live_ui_tests ${subtitle_live_ui_args})
+set_tests_properties(subtitle_live_ui_tests PROPERTIES TIMEOUT 30 LABELS "ui"
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QSG_RHI_BACKEND=software")
