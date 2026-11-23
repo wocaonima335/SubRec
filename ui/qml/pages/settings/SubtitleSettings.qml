@@ -74,6 +74,72 @@ ColumnLayout {
         }
     }
 
+    // F (design-live-v2 §12.3): live-display switches. The control-bar one is always
+    // available (the main window is capture-excluded while recording). The floating-bar
+    // one only when CaptureExclusion is supported, ExcludeMode != Never and the capture
+    // backend is 桌面复制 (§12.4 rule 2); otherwise grayed out with the reason.
+    FormRow {
+        id: liveDisplayRow
+        title: "录制中显示"
+        rowHeight: 104
+        control: ColumnLayout {
+            id: liveDisplayControl
+            spacing: Theme.space8
+            enabled: SubtitleView.enabled
+
+            readonly property bool floatingLineAvailable: ShellView.excludeSupported
+                && ShellView.excludeFromCapture !== "never"
+                && RecorderView.screenCaptureBackend === "ddagrab"
+            readonly property string floatingLineReason: !ShellView.excludeSupported
+                ? "需要 Windows 10 2004 或更高版本；此系统上悬浮条会被录进画面。"
+                : ShellView.excludeFromCapture === "never"
+                ? "「录制时从画面中排除窗口」设为「从不」，字幕会被录进画面。"
+                : "仅「桌面复制」采集方式下保证不被录进画面。"
+
+            RowLayout {
+                spacing: Theme.space8
+                AppSwitch {
+                    backendChecked: SubtitleView.showControlBarLine
+                    onToggledTo: function (value) {
+                        SubtitleView.showControlBarLine = value;
+                    }
+                }
+                Text {
+                    text: "控制栏显示当前句"
+                    font: Theme.bodyFont
+                    color: liveDisplayControl.enabled ? Theme.textPrimary : Theme.textTertiary
+                }
+            }
+            RowLayout {
+                spacing: Theme.space8
+                AppSwitch {
+                    backendChecked: SubtitleView.showFloatingLine
+                    enabled: liveDisplayControl.floatingLineAvailable
+                    disabledReason: liveDisplayControl.floatingLineReason
+                    onToggledTo: function (value) {
+                        SubtitleView.showFloatingLine = value;
+                    }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: "悬浮条显示当前句"
+                    font: Theme.bodyFont
+                    color: liveDisplayControl.enabled && liveDisplayControl.floatingLineAvailable
+                           ? Theme.textPrimary : Theme.textTertiary
+                    elide: Text.ElideRight
+                }
+            }
+            Text {
+                visible: !liveDisplayControl.floatingLineAvailable
+                Layout.fillWidth: true
+                text: liveDisplayControl.floatingLineReason
+                font: Theme.captionFont
+                color: Theme.warningFg
+                wrapMode: Text.WordWrap
+            }
+        }
+    }
+
     FormGroupTitle {
         text: "识别模型"
     }
