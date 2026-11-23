@@ -13,6 +13,10 @@ add_library(subtitle_core STATIC
     glossary.h
     event_tags.h
     itn_extra.h
-    rules_extra_stubs.cpp
+    glossary.cpp
+    event_tags.cpp
+    itn_extra.cpp
+    pinyin_table.inc
+    rules_utf8.inc
 )
 target_link_libraries(subtitle_core PUBLIC subtitle_headers)
