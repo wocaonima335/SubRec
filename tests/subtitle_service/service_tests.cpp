@@ -203,11 +203,26 @@ private slots:
         auto script = replay("expect hello\nreply-hello\nexpect load\nsend {\"type\":\"loaded\",\"backend\":\"cpu\",\"loadMs\":0}\nexpect open\n" + partialBurst());
         // A test-only relay supplies the script to C's unchanged fakehost.
         qputenv("SUBREC_TEST_ASR_EXE", QCoreApplication::applicationFilePath().toUtf8()); qputenv("SUBREC_D_REPLAY_SCRIPT", script.toUtf8());
-        SubtitleService replayService; auto replayTap = replayService.beginRecording(pathOf(settingsDir.filePath("throttle2.mp4"))); QVERIFY(replayTap);
+        SubtitleService replayService; QElapsedTimer beginElapsed; beginElapsed.start();
+        auto replayTap = replayService.beginRecording(pathOf(settingsDir.filePath("throttle2.mp4")));
+        std::fprintf(stderr, "[throttle-diag] beginRecording took %lld ms\n", static_cast<long long>(beginElapsed.elapsed())); std::fflush(stderr);
+        QVERIFY(replayTap);
         QList<qint64> updates; elapsed.restart();
-        connect(&replayService, &SubtitleService::currentLineChanged, &replayService, [&] { updates << elapsed.elapsed(); QCOMPARE(replayService.currentLine(), replayService.currentConfirmed() + replayService.currentTentative()); });
-        QTest::qWait(1250); QVERIFY(updates.size() >= 3); QVERIFY(updates.size() <= 5);
-        for (int n = 1; n < updates.size(); ++n) QVERIFY(updates[n] - updates[n-1] >= 240);
+        connect(&replayService, &SubtitleService::currentLineChanged, &replayService, [&] {
+            updates << elapsed.elapsed();
+            std::fprintf(stderr, "[throttle-diag] currentLineChanged at %lld ms: currentLine=\"%s\"\n", static_cast<long long>(updates.last()), replayService.currentLine().toUtf8().constData()); std::fflush(stderr);
+            QCOMPARE(replayService.currentLine(), replayService.currentConfirmed() + replayService.currentTentative());
+        });
+        QTest::qWait(1250);
+        QStringList updateTimes;
+        for (qint64 update : updates) updateTimes << QString::number(update);
+        const QString countMessage = QString("count=%1 updates(ms)=[%2]").arg(updates.size()).arg(updateTimes.join(", "));
+        std::fprintf(stderr, "[throttle-diag] after qWait(1250): %s\n", qPrintable(countMessage)); std::fflush(stderr);
+        for (int n = 1; n < updates.size(); ++n) {
+            std::fprintf(stderr, "[throttle-diag] updates[%d]-updates[%d]=%lld ms\n", n, n-1, static_cast<long long>(updates[n] - updates[n-1])); std::fflush(stderr);
+        }
+        QVERIFY2(updates.size() >= 3, qPrintable(countMessage)); QVERIFY2(updates.size() <= 5, qPrintable(countMessage));
+        for (int n = 1; n < updates.size(); ++n) QVERIFY2(updates[n] - updates[n-1] >= 240, qPrintable(QString("gap=%1 ms; %2").arg(updates[n] - updates[n-1]).arg(countMessage)));
         replayService.endRecording(false); replayService.shutdown(100);
     }
     QByteArray partialBurst() {
