@@ -61,6 +61,7 @@ set(ASR_HOST_TEST_CASES
     engine_refine_empty
     engine_rtf_and_refine_rtf_sleep
     engine_seed_determinism
+    engine_sherpa_factory_build_mode
     fakehost_script_parse_errors
     fakehost_handshake_and_loaded
     fakehost_reply_hello_custom_protocol
@@ -100,18 +101,33 @@ set(ASR_HOST_TEST_CASES
     utf8_path_chinese_spool_and_script
 )
 
-foreach(case IN LISTS ASR_HOST_TEST_CASES)
+set(ASR_HOST_NEEDS_MODEL_CASES "")
+if(SUBREC_ASR_WITH_SHERPA)
+    target_sources(asr_host_tests PRIVATE test_sherpa_engine.cpp test_sherpa_model.cpp)
+    list(APPEND ASR_HOST_TEST_CASES
+        sherpa_missing_model_files
+        sherpa_model_resolution
+        sherpa_missing_vad_model
+        sherpa_invalid_config
+        sherpa_config_mapping
+        sherpa_result_timestamps
+        sherpa_unloaded_engine)
+    list(APPEND ASR_HOST_NEEDS_MODEL_CASES
+        sherpa_growing_wav_keywords_rtf sherpa_vad_stream_boundaries)
+endif()
+
+foreach(case IN LISTS ASR_HOST_TEST_CASES ASR_HOST_NEEDS_MODEL_CASES)
     add_test(NAME ${case} COMMAND asr_host_tests ${case})
     set_tests_properties(${case} PROPERTIES TIMEOUT 60)
 endforeach()
 
-# 需要真实模型文件的用例（当前没有；接入真实引擎后填用例名列表即可，机制先留好）。
+# 需要真实模型文件的用例（仅启用 sherpa 时登记）。
 # 这类用例同时打 device 标签：subrec_configure_tests 不给带 device 的用例追加 ci，
 # 因此 CI 的 ctest -L "^ci$" 不会选中它们，-LE "^(device|...)$" 一并排除（不能改 .github，
 # 只能复用 device 这条既有排除通道；needs_asr_model 供本机 ctest -L needs_asr_model 定向运行）。
-set(ASR_HOST_NEEDS_MODEL_CASES "")
 foreach(case IN LISTS ASR_HOST_NEEDS_MODEL_CASES)
     set_property(TEST ${case} APPEND PROPERTY LABELS "device;needs_asr_model")
+    set_tests_properties(${case} PROPERTIES TIMEOUT 600)
 endforeach()
 
 # 崩溃/挂起/慢速注入类：收紧超时，防止 ctest 卡死
@@ -139,3 +155,21 @@ set_tests_properties(
 # CI 的 build/ci-tests 用 --target subrec_tests 构建时随之带上 subrec-asr / subrec-asr-fakehost）。
 include("${SUBREC_ASR_REPO_ROOT}/cmake/SubRecTests.cmake")
 subrec_configure_tests()
+
+if(SUBREC_ASR_WITH_SHERPA AND WIN32)
+    # No DLL copies/install changes: use the supplied shared-MT distribution
+    # for the test executable and its child host processes.
+    foreach(case IN LISTS ASR_HOST_TEST_CASES ASR_HOST_NEEDS_MODEL_CASES)
+        get_property(environment TEST ${case} PROPERTY ENVIRONMENT)
+        set(sherpa_environment "")
+        foreach(entry IN LISTS environment)
+            if(entry MATCHES "^PATH=")
+                string(REGEX REPLACE "^PATH=" "" old_path "${entry}")
+                set(entry "PATH=${SHERPA_ONNX_ROOT}/bin;${SHERPA_ONNX_LIBRARY_DIR};${old_path}")
+                string(REPLACE ";" "\\;" entry "${entry}")
+            endif()
+            list(APPEND sherpa_environment "${entry}")
+        endforeach()
+        set_tests_properties(${case} PROPERTIES ENVIRONMENT "${sherpa_environment}")
+    endforeach()
+endif()

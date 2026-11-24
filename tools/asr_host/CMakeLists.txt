@@ -1,7 +1,7 @@
 # subrec-asr：AI 字幕识别宿主子进程（工作包 C，ZCode 终端）。design-live-v2.md §9.1、§10.3 C、§11.1；D12（MSVC）。
 #
 # 源码目录 tools/asr_host/；安装目录名仍是 asr/（运行时 {app}\asr\subrec-asr.exe），二者不要混淆。
-# 不依赖 Qt、FFmpeg。本阶段不链接 sherpa-onnx、不下载任何模型。两种用法：
+# 不依赖 Qt、FFmpeg。默认不链接 sherpa-onnx；显式开启时只用本地依赖，不下载任何模型。两种用法：
 #   1) 独立（发布宿主按 D12 用 MSVC）：cmake -S tools/asr_host -B build-asr && cmake --build build-asr
 #   2) 仓库内：顶层 -DSUBREC_BUILD_SUBTITLE=ON 时随 subtitle/ 一起 add_subdirectory(tools/asr_host)，
 #      用主程序工具链（MinGW）编译，只作编译检查；appSubRec 不依赖它，也不复制到输出目录（I5 由包 G 做）。
@@ -32,6 +32,7 @@ get_filename_component(SUBREC_ASR_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." 
 set(SUBREC_ASR_VERSION "0.0.0-m0" CACHE STRING "subrec-asr version string reported in hello")
 
 find_package(Threads REQUIRED)
+option(SUBREC_ASR_WITH_SHERPA "Build the SenseVoice and Silero engines using the sherpa-onnx C API" OFF)
 
 add_library(subrec_asr_core STATIC
     src/asr_engine.h
@@ -56,6 +57,32 @@ target_include_directories(subrec_asr_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src")
 target_compile_definitions(subrec_asr_core PUBLIC SUBREC_ASR_VERSION="${SUBREC_ASR_VERSION}")
 target_link_libraries(subrec_asr_core PUBLIC Threads::Threads)
+if(SUBREC_ASR_WITH_SHERPA)
+    set(SHERPA_ONNX_ROOT "$ENV{SHERPA_ONNX_ROOT}" CACHE PATH "Local sherpa-onnx C API distribution")
+    find_path(SHERPA_ONNX_INCLUDE_DIR NAMES sherpa-onnx/c-api/c-api.h
+        HINTS "${SHERPA_ONNX_ROOT}" PATH_SUFFIXES include)
+    find_library(SHERPA_ONNX_C_API_LIBRARY NAMES sherpa-onnx-c-api
+        HINTS "${SHERPA_ONNX_ROOT}" PATH_SUFFIXES lib)
+    if(NOT SHERPA_ONNX_INCLUDE_DIR OR NOT SHERPA_ONNX_C_API_LIBRARY)
+        message(FATAL_ERROR "SUBREC_ASR_WITH_SHERPA=ON requires the local sherpa-onnx C API header and library. Set SHERPA_ONNX_ROOT to a distribution containing include/sherpa-onnx/c-api/c-api.h and lib/sherpa-onnx-c-api.")
+    endif()
+    target_sources(subrec_asr_core PRIVATE src/engine_sherpa.h src/engine_sherpa.cpp)
+    target_compile_definitions(subrec_asr_core PUBLIC SUBREC_ASR_HAS_SHERPA=1)
+    target_include_directories(subrec_asr_core PUBLIC "${SHERPA_ONNX_INCLUDE_DIR}")
+    target_link_libraries(subrec_asr_core PUBLIC "${SHERPA_ONNX_C_API_LIBRARY}")
+    get_filename_component(SHERPA_ONNX_LIBRARY_DIR "${SHERPA_ONNX_C_API_LIBRARY}" DIRECTORY)
+    # Build-tree executables (including tests) can find the local shared libraries.
+    list(APPEND CMAKE_BUILD_RPATH "${SHERPA_ONNX_LIBRARY_DIR}")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        find_library(SHERPA_ONNX_RUNTIME_LIBRARY NAMES onnxruntime
+            HINTS "${SHERPA_ONNX_ROOT}" PATH_SUFFIXES lib)
+        if(SHERPA_ONNX_RUNTIME_LIBRARY)
+            target_link_libraries(subrec_asr_core PUBLIC "${SHERPA_ONNX_RUNTIME_LIBRARY}")
+            get_filename_component(SHERPA_ONNX_RUNTIME_DIR "${SHERPA_ONNX_RUNTIME_LIBRARY}" DIRECTORY)
+            list(APPEND CMAKE_BUILD_RPATH "${SHERPA_ONNX_RUNTIME_DIR}")
+        endif()
+    endif()
+endif()
 if(WIN32)
     target_link_libraries(subrec_asr_core PUBLIC psapi)   # GetProcessMemoryInfo
 endif()

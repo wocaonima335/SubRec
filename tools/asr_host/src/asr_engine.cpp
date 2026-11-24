@@ -12,6 +12,9 @@
 
 #include "asr_engine.h"
 #include "engine_fake.h"
+#if defined(SUBREC_ASR_HAS_SHERPA)
+#include "engine_sherpa.h"
+#endif
 
 #include "subtitle/subtitle_error.h"
 #include "subtitle/subtitle_types.h"
@@ -211,6 +214,13 @@ std::unique_ptr<IAsrEngine> createEngine(const std::string &engineId, const std:
             return nullptr;
         return std::make_unique<FakeAsrEngine>(o);
     }
+#if defined(SUBREC_ASR_HAS_SHERPA)
+    if (engineId == "sherpa-onnx") {
+        if (err)
+            *err = {};
+        return std::make_unique<SherpaAsrEngine>();
+    }
+#endif
     if (engineId == "sherpa-onnx" || engineId == "whisper.cpp") {
         if (err)
             *err = subtitle::Status::error(subtitle::ErrorCode::NotSupported,
@@ -224,6 +234,10 @@ std::unique_ptr<IAsrEngine> createEngine(const std::string &engineId, const std:
 
 std::unique_ptr<IVad> createVad(const subtitle::EngineRequest &req, subtitle::Status *err)
 {
+#if defined(SUBREC_ASR_HAS_SHERPA)
+    if (req.engineId == "sherpa-onnx")
+        return createSherpaVad(req, err);
+#endif
     (void)err;
     return std::make_unique<EnergyVad>(req.vad);
 }

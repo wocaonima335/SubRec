@@ -205,3 +205,19 @@ TEST(engine_seed_determinism)
     const FinalSegment pb = recognizeN(b, 0, 0, 16000, RecognizeKind::Partial);
     CHECK(pa.text == pb.text);
 }
+
+TEST(engine_sherpa_factory_build_mode)
+{
+    Status st;
+    auto engine = createEngine("sherpa-onnx", "", &st);
+#if defined(SUBREC_ASR_HAS_SHERPA)
+    CHECK(engine && st.ok());
+    CHECK(engine->engineId() == "sherpa-onnx");
+#else
+    CHECK(!engine);
+    CHECK(st.code == ErrorCode::NotSupported);
+    CHECK(st.message == "engine not built in this phase: sherpa-onnx");
+#endif
+    auto whisper = createEngine("whisper.cpp", "", &st);
+    CHECK(!whisper && st.code == ErrorCode::NotSupported);
+}
