@@ -12,6 +12,7 @@ add_dependencies(subtitle_d_service_tests subrec-asr subrec-asr-fakehost)
 set(cases realtime_finalize rtf_l1 rtf_l2 crash_recovery hang_recovery poison_segment oom_l1_l3
     illegal_instruction protocol_exit_191 end_false shutdown_incomplete current_split live_config restore_live
     fifo_preemption service_end_false service_shutdown service_throttle)
+list(APPEND cases service_health_l3 service_engine_request_provider)
 if(SUBREC_TAP_HAS_FFMPEG)
     list(APPEND cases tap_realtime tap_rtf_l1 tap_rtf_l2 tap_crash tap_hang tap_poison tap_oom tap_illegal)
 endif()

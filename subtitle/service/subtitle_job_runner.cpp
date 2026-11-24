@@ -314,6 +314,12 @@ struct RunnerState : QObject {
             }
             cpuAt = s.nowMs;
 #endif
+            // Deterministic health tests use the same gated injection as the
+            // existing test clock scale; production keeps the measured CPU.
+            if (const auto value = capture::test::hookEnvironment("SUBREC_TEST_ASR_HOST_CPU_CORES")) {
+                bool ok = false; const auto cores = QString::fromLatin1(value).toDouble(&ok);
+                if (ok && std::isfinite(cores) && cores >= 0) s.hostCpuCores = cores;
+            }
             if (auto changed = j.degrade.tick(s)) level(j, changed->first, changed->second);
         }
         display(j); report(j);

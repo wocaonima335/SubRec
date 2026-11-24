@@ -172,6 +172,7 @@ struct ServiceState : QObject {
     QString mode = "off", state = "off", lastSrt, error, video, confirmed, tentative, pendingConfirmed, pendingTentative, reason;
     double progress = 0, lag = 0; int level = 0;
     EngineRequest request; LiveConfig live;
+    SubtitleService::EngineRequestProvider engineRequestProvider;
 };
 ServiceState *stateOf(const SubtitleService *q) { for (auto c : q->children()) if (auto s = dynamic_cast<ServiceState *>(c)) return s; Q_UNREACHABLE(); }
 }
@@ -200,12 +201,23 @@ void SubtitleService::reloadSettings() {
 std::shared_ptr<AudioTap> SubtitleService::beginRecording(const std::filesystem::path &path) noexcept {
     try {
         auto s = stateOf(this); if (s->closing || s->mode == "off" || !s->available || s->recording) return {};
+        auto request = s->request;
+        if (s->engineRequestProvider) {
+            if (auto provided = s->engineRequestProvider(QString::fromStdString(s->request.modelId))) {
+                request = std::move(*provided);
+                // ModelManager resolves the installed model; these existing user
+                // settings remain owned by Service. Keep other provider fields.
+                request.language = s->request.language;
+                request.threads = s->request.threads;
+                request.vad.speechPadMs = s->request.vad.speechPadMs;
+            }
+        }
         auto tap = std::make_shared<AudioTap>(); const auto id = ++s->current;
         s->video = QString::fromStdString(path.u8string()); s->videos[id] = s->video;
         s->recording = true; s->state = "live"; s->level = s->mode == "after" ? 3 : 0;
         s->progress = s->lag = 0; s->error.clear(); s->lastSrt.clear(); s->reason.clear();
         s->pendingConfirmed.clear(); s->pendingTentative.clear();
-        auto w = s->worker; auto video = s->video; auto request = s->request; auto live = s->live; const bool realtime = s->mode == "live";
+        auto w = s->worker; auto video = s->video; auto live = s->live; const bool realtime = s->mode == "live";
         QMetaObject::invokeMethod(s->runner, [w, id, video, tap, request, live, realtime] { w->begin(id, video, tap, request, live, realtime); }, Qt::QueuedConnection);
         emit changed(); return tap;
     } catch (...) { return {}; }
@@ -217,6 +229,15 @@ void SubtitleService::endRecording(bool finalized) noexcept {
         auto w = s->worker; auto id = s->current;
         QMetaObject::invokeMethod(s->runner, [w, id, finalized] { w->end(id, finalized); }, Qt::QueuedConnection); emit changed();
     } catch (...) {}
+}
+void SubtitleService::onRecorderHealth(const subtitle::RecorderHealth &health) {
+    auto s = stateOf(this); if (s->closing) return;
+    auto runner = s->runner;
+    QMetaObject::invokeMethod(runner, [runner, health] { runner->onHealthSample(health); }, Qt::QueuedConnection);
+}
+void SubtitleService::setEngineRequestProvider(EngineRequestProvider provider) {
+    auto s = stateOf(this); if (s->closing) return;
+    s->engineRequestProvider = std::move(provider);
 }
 bool SubtitleService::available() const { return stateOf(this)->available; }
 QString SubtitleService::state() const { return stateOf(this)->state; }

@@ -1039,6 +1039,15 @@ int main(int argc, char *argv[])
 #if defined(SUBREC_HAS_SUBTITLE)
   SubtitleService subtitleService;
   ModelManager subtitleModels;
+  subtitleService.setEngineRequestProvider([&subtitleModels](const QString &id) {
+    return subtitleModels.engineRequestFor(id);
+  });
+  QTimer subtitleHealthTimer(&subtitleService);
+  subtitleHealthTimer.setInterval(1000);
+  QObject::connect(&subtitleHealthTimer, &QTimer::timeout, &subtitleService, [&subtitleService] {
+    subtitleService.onRecorderHealth(FFRecorder::getInstance().subtitleHealth());
+  });
+  subtitleHealthTimer.start();
   g_subtitleService = &subtitleService;
   FFRecorder::getInstance().captureScheduler().setRecordingAudioHook(&subtitleService);
 #endif

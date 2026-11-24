@@ -1,6 +1,7 @@
 #include "subtitle/service/subtitle_job_runner.h"
 #include "subtitle/service/subtitle_service.h"
 #include "subtitle/host/asr_host_client_factory.h"
+#include "subtitle/host/asr_protocol.h"
 #include "subtitle/audio/pcm_spool.h"
 #include "subtitle/core/subtitle_writers.h"
 #include "subtitle/tap/audio_tap.h"
@@ -8,10 +9,14 @@
 #include <QTemporaryDir>
 #include <QSettings>
 #include <QFile>
+#include <QSaveFile>
+#include <QThread>
+#include <QTimer>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <functional>
+#include <iostream>
 #if SUBREC_TAP_HAS_FFMPEG
 extern "C" {
 #include <libavutil/frame.h>
@@ -22,6 +27,34 @@ using namespace subtitle;
 namespace {
 std::filesystem::path pathOf(QString s) { return std::filesystem::u8path(s.toUtf8().toStdString()); }
 QByteArray read(QString p) { QFile f(p); if (!f.open(QIODevice::ReadOnly)) return {}; return f.readAll(); }
+struct ScopedEnvironment {
+    QByteArray name, previous;
+    bool wasSet;
+    ScopedEnvironment(const char *key, QByteArray value)
+        : name(key), previous(qgetenv(key)), wasSet(qEnvironmentVariableIsSet(key)) { qputenv(key, value); }
+    ~ScopedEnvironment() { if (wasSet) qputenv(name.constData(), previous); else qunsetenv(name.constData()); }
+};
+// A self-executable fake host, like the relay below, records the actual wire
+// request atomically so tests never observe a partially written JSON document.
+int captureRequests(const QString &path) {
+    auto send = [](const proto::Message &message) { std::cout << proto::encode(message) << '\n' << std::flush; };
+    std::string line;
+    while (std::getline(std::cin, line)) {
+        Status error;
+        auto message = proto::decode(line, &error);
+        if (!message) return 3;
+        if (std::holds_alternative<proto::Hello>(*message)) {
+            proto::Hello hello; hello.version = "request-capture"; hello.backends = {"cpu"}; send(hello);
+        } else if (std::holds_alternative<proto::Load>(*message)) {
+            QSaveFile file(path);
+            if (!file.open(QIODevice::WriteOnly) || file.write(line.data(), qint64(line.size())) != qint64(line.size()) || !file.commit()) return 4;
+            proto::Loaded loaded; loaded.backend = "cpu"; send(loaded);
+        } else if (auto finish = std::get_if<proto::Finish>(&*message)) {
+            proto::Done done; done.jobId = finish->jobId; send(done);
+        } else if (std::holds_alternative<proto::Quit>(*message)) return 0;
+    }
+    return 0;
+}
 struct Factory : AsrHostClientFactory {
     int launches = 0;
     std::function<QString(int)> options = [](int) { return QString("rtf=0.1"); };
@@ -197,6 +230,101 @@ private slots:
         QTest::qWait(100); QElapsedTimer timer; timer.start(); service.shutdown(20); QVERIFY(timer.elapsed() < 50);
         QTRY_VERIFY(service.lastError().contains(QStringLiteral("未完成")));
     }
+    void service_health_l3() {
+        serviceSettings();
+        // init() already scales the real 10 s health window to 200 ms. CPU
+        // attribution is independent of frame drops and must also exceed 0.2.
+        ScopedEnvironment cpu("SUBREC_TEST_ASR_HOST_CPU_CORES", "0.5");
+        QList<int> levels;
+        RecorderHealth health;
+        int samples = 0;
+        bool unhealthy = false;
+        SubtitleService service;
+        connect(&service, &SubtitleService::changed, &service, [&] { levels << service.degradeLevel(); });
+        auto tap = service.beginRecording(pathOf(settingsDir.filePath("health.mp4"))); QVERIFY(tap);
+        service.onRecorderHealth(health);
+        QTimer sampler(&service);
+        sampler.setInterval(20);
+        connect(&sampler, &QTimer::timeout, &service, [&] {
+            health.videoFrames += 100;
+            if (unhealthy) ++health.videoTickDrops; // 1%, above the unchanged 0.2% criterion.
+            service.onRecorderHealth(health);
+            ++samples;
+        });
+        sampler.start();
+        // Observe healthy frames for several full windows, not just one tick.
+        QTRY_VERIFY_WITH_TIMEOUT(samples >= 30, 5000);
+        QCOMPARE(service.degradeLevel(), 0);
+        for (int level : levels) QCOMPARE(level, 0);
+        unhealthy = true;
+        QTRY_COMPARE_WITH_TIMEOUT(service.degradeLevel(), 3, 5000);
+        QCOMPARE(service.degradeReason(), QStringLiteral("优先保证录制流畅"));
+        QCOMPARE(service.lagSeconds(), qreal(0)); // No audio backlog can trigger this transition.
+        for (int level : levels) QVERIFY(level == 0 || level == 3);
+        unhealthy = false;
+        const int recoveredAt = samples;
+        QTRY_VERIFY_WITH_TIMEOUT(samples >= recoveredAt + 30, 5000);
+        QCOMPARE(service.degradeLevel(), 3); // L3 requires explicit restoration.
+        sampler.stop(); service.endRecording(false);
+        QTRY_COMPARE_WITH_TIMEOUT(service.state(), QString("idle"), 5000);
+        service.shutdown(100);
+    }
+    void service_engine_request_provider() {
+        // Exercise both the live resource limits and the unmodified after-mode
+        // request, for provider success, no provider, and provider nullopt.
+        for (const QString mode : {QString("live"), QString("after")}) {
+            for (int variant = 0; variant < 3; ++variant) {
+                serviceSettings();
+                const auto stem = QString("provider-%1-%2").arg(mode).arg(variant);
+                const auto capturePath = settingsDir.filePath(stem + ".load.json");
+                const auto fallbackDir = settingsDir.filePath("settings-model");
+                const auto providedDir = settingsDir.filePath("provider-model");
+                {
+                    QSettings cfg(settingsPath, QSettings::IniFormat);
+                    cfg.setValue("asr/mode", mode);
+                    cfg.setValue("asr/engineId", "sherpa-onnx");
+                    cfg.setValue("asr/modelId", "settings-id");
+                    cfg.setValue("asr/modelDir", fallbackDir);
+                    cfg.setValue("asr/language", "en");
+                    cfg.setValue("asr/threads", 3);
+                    cfg.setValue("asr/speechPadMs", 321);
+                    cfg.sync();
+                }
+                ScopedEnvironment capture("SUBREC_D_CAPTURE_REQUEST", capturePath.toUtf8());
+                ScopedEnvironment executable("SUBREC_TEST_ASR_EXE", QCoreApplication::applicationFilePath().toUtf8());
+                int calls = 0; QString requestedId;
+                EngineRequest provided;
+                provided.engineId = "fake"; provided.modelId = "provider-id"; provided.modelDir = pathOf(providedDir);
+                provided.language = "ja"; provided.threads = 4; provided.backend = Backend::Vulkan;
+                provided.vad.threshold = 0.75f; provided.vad.speechPadMs = 17; provided.initialPrompt = "provider prompt";
+                SubtitleService service;
+                if (variant != 1) service.setEngineRequestProvider([&](const QString &id) -> std::optional<EngineRequest> {
+                    ++calls; requestedId = id;
+                    if (variant == 2) return std::nullopt;
+                    return provided;
+                });
+                auto tap = service.beginRecording(pathOf(settingsDir.filePath(stem + ".mp4"))); QVERIFY(tap);
+                if (mode == "after") service.endRecording(true);
+                QTRY_VERIFY_WITH_TIMEOUT(!read(capturePath).isEmpty(), 10000);
+                const auto request = QJsonDocument::fromJson(read(capturePath)).object()["request"].toObject();
+                QVERIFY(!request.isEmpty());
+                QCOMPARE(calls, variant == 1 ? 0 : 1);
+                if (variant != 1) QCOMPARE(requestedId, QString("settings-id"));
+                QCOMPARE(request["engineId"].toString(), variant == 0 ? QString("fake") : QString("sherpa-onnx"));
+                QCOMPARE(request["modelId"].toString(), variant == 0 ? QString("provider-id") : QString("settings-id"));
+                QCOMPARE(pathOf(request["modelDir"].toString()), pathOf(variant == 0 ? providedDir : fallbackDir));
+                QCOMPARE(request["language"].toString(), QString("en"));
+                QCOMPARE(request["threads"].toInt(), mode == "live" ? (QThread::idealThreadCount() > 4 ? 2 : 1) : 3);
+                QCOMPARE(request["backend"].toString(), mode == "live" ? QString("cpu") : variant == 0 ? QString("vulkan") : QString("auto"));
+                QCOMPARE(request["vad"].toObject()["speechPadMs"].toInt(), 321);
+                QCOMPARE(request["vad"].toObject()["threshold"].toDouble(), variant == 0 ? 0.75 : 0.5);
+                QCOMPARE(request["initialPrompt"].toString(), variant == 0 ? QString("provider prompt") : QString{});
+                if (mode == "live") service.endRecording(false);
+                QTRY_COMPARE_WITH_TIMEOUT(service.state(), mode == "live" ? QString("idle") : QString("done"), 10000);
+                service.shutdown(100);
+            }
+        }
+    }
     void service_throttle() {
         // Drive the actual queued Service mirror with 50 Hz scripted partials.
         serviceSettings(); QElapsedTimer elapsed;
@@ -288,6 +416,8 @@ private slots:
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     if (app.arguments().filter("--role=").size()) {
+        const auto capturePath = QString::fromUtf8(qgetenv("SUBREC_D_CAPTURE_REQUEST"));
+        if (!capturePath.isEmpty()) return captureRequests(capturePath);
         // Test-only relay: forwards stdin/stdout to C's unchanged scripted host.
         QProcess child;
         child.setProcessChannelMode(QProcess::ForwardedChannels);

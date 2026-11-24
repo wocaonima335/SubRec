@@ -12,12 +12,15 @@
 // - 本类不被 appSubRec 链接，直到集成工作包 G（I4）。
 
 #include "subtitle/tap/recording_hook.h"
+#include "subtitle/subtitle_types.h"
 
 #include <QObject>
 #include <QString>
 
 #include <filesystem>
 #include <memory>
+#include <functional>
+#include <optional>
 
 namespace subtitle {
 class AudioTap;
@@ -73,6 +76,11 @@ public:
     Q_INVOKABLE void cancelRefine();                         // M2
     void reloadSettings();
     void shutdown(int timeoutMs);
+
+    // ---- M1 收尾追加（只追加，不改上方签名）----
+    void onRecorderHealth(const subtitle::RecorderHealth &health);   // GUI 线程约 1 Hz；排队转给 Runner::onHealthSample；不健康 → 立即 L3
+    using EngineRequestProvider = std::function<std::optional<subtitle::EngineRequest>(const QString &modelId)>;
+    void setEngineRequestProvider(EngineRequestProvider provider);   // beginRecording 用 provider(asr/modelId)；未设置/nullopt 回退设置
 
 signals:
     void changed();
