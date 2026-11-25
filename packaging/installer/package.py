@@ -2,6 +2,7 @@
 """Portable, dependency-free preparation and verification for Windows packaging."""
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -11,6 +12,7 @@ import zipfile
 HERE = Path(__file__).resolve().parent
 VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?")
 MARKER = "INCOMPLETE-DO-NOT-DISTRIBUTE.txt"
+ASR_MANIFEST = HERE.parent / "asr/manifest.json"
 
 
 def version(ref_type, ref_name, sha):
@@ -38,7 +40,37 @@ def sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def validate_asr(payload):
+    """ASR is optional until the separately approved MSVC CI job supplies it."""
+    directory = payload / "asr"
+    if not directory.exists() and not directory.is_symlink():
+        return
+    if not directory.is_dir() or directory.is_symlink():
+        raise ValueError("Payload asr must be a directory, not a file or symlink")
+    pins = json.loads(ASR_MANIFEST.read_text(encoding="utf-8"))
+    required = ["asr/subrec-asr.exe", *["asr/" + name for name in pins["runtime"]["ship"]],
+                *["licenses/asr/" + name for name in pins["licenses"]], "licenses/asr/NOTICE.txt"]
+    for name in required:
+        path = payload / name
+        if not path.is_file() or path.is_symlink() or path.stat().st_size == 0:
+            raise ValueError(f"Missing/empty ASR payload file (or symlink): {name}")
+    for name, pin in pins["licenses"].items():
+        path = payload / "licenses/asr" / name
+        if path.stat().st_size != pin["size_bytes"] or sha256(path) != pin["sha256"]:
+            raise ValueError(f"ASR license size/SHA256 mismatch: {name}")
+    allowed = {"subrec-asr.exe", *pins["runtime"]["ship"], "silero_vad.onnx"}
+    for path in directory.iterdir():
+        if path.name not in allowed or not path.is_file() or path.is_symlink():
+            raise ValueError(f"Unexpected ASR payload entry: {path.name}")
+    vad = directory / "silero_vad.onnx"
+    if vad.exists():
+        pin = pins["assets"]["vad-v6.2.3"]
+        if vad.stat().st_size != pin["size_bytes"] or sha256(vad) != pin["sha256"]:
+            raise ValueError("ASR VAD must be the reserved v6.2.3 silero_vad.onnx (size/SHA256 mismatch)")
+
+
 def prepare(payload, compiler, stem, is_tag):
+    validate_asr(payload)
     for name in ("ChineseSimplified.isl", "ChineseSimplified.LICENSE.txt"):
         if not (HERE / name).is_file():
             raise ValueError(f"Missing {name}: obtain upstream material; see packaging/installer/README.md")

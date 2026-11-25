@@ -1,0 +1,135 @@
+{
+  "schema_version": 1,
+  "scope": "M1 Windows phase 1; standalone packaging, not wired into default CMake or CI (decision 8 excluded).",
+  "host": {
+    "name": "subrec-asr.exe",
+    "toolchain": "MSVC x64 Release, static CRT /MT (D12)",
+    "SUBREC_ASR_WITH_SHERPA_default": "OFF",
+    "api": "C API only; use include/sherpa-onnx/c-api/c-api.h from the Windows full package; no fallback needed"
+  },
+  "vad_selection": {
+    "installer_default": null,
+    "reserved": "vad-v6.2.3",
+    "status": "RESERVED ONLY. The file that actually ships is not selected until S0 A/B is approved (decision 10). Assembly defaults to no VAD; explicit --vad v6.2.3 requires file SHA256 verification. Do not track v6.3/master."
+  },
+  "sensevoice": {
+    "shipped": false,
+    "fetched_by_these_scripts": false,
+    "policy": "SenseVoice-Small int8 is downloaded by ModelManager only after FunASR Model License 1.1 acceptance."
+  },
+  "assets": {
+    "sherpa-windows": {
+      "version": "2.0.2",
+      "variant": "Windows x64 shared-MT Release no-tts FULL package",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.2/sherpa-onnx-v2.0.2-win-x64-shared-MT-Release-no-tts.tar.bz2",
+      "cache_path": "sherpa-onnx-v2.0.2-win-x64-shared-MT-Release-no-tts.tar.bz2",
+      "size_bytes": 26896305,
+      "sha256": "6a71d5ef016e544026d6505486d9fa42177ad989238adc6e4bd2eebfb6947416",
+      "sha256_provenance": "Verified file SHA256 matches GitHub API digest; official checksum.txt does not list Windows tar.bz2.",
+      "license": "Apache-2.0 (sherpa-onnx), MIT (bundled onnxruntime)",
+      "role": "build inputs; ship only the runtime allowlist",
+      "unpacked_directory": "sherpa-onnx-v2.0.2-win-x64-shared-MT-Release-no-tts"
+    },
+    "vad-v4-sherpa": {
+      "version": "sherpa v4-series re-export",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+      "cache_path": "vad/silero_vad_v4_sherpa.onnx",
+      "size_bytes": 643854,
+      "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+      "license": "MIT",
+      "role": "S0 A/B only; NOT the installer default; assembly does not accept this candidate"
+    },
+    "vad-v6.2.3": {
+      "version": "6.2.3",
+      "url": "https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/src/silero_vad/data/silero_vad.onnx",
+      "cache_path": "vad/silero_vad_v6.2.3.onnx",
+      "size_bytes": 2327524,
+      "sha256": "1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3",
+      "git_blob_sha": "80c5592ef1f4c9ede3e357bbd02eb863358a6a9d",
+      "git_blob_provenance": "Matches contents API; this is NOT the file SHA256.",
+      "license": "MIT",
+      "role": "RESERVED for installer after S0 A/B approval (decision 10); not finalized",
+      "payload_name": "asr/silero_vad.onnx"
+    }
+  },
+  "verification_context": {
+    "local_cache": "/workspace/projects/pkgC-verify-win/",
+    "downloads": "Previously fetched outside the repo; do not commit archives, DLLs, ONNX files or unpacked packages.",
+    "windows_header": {
+      "path": "include/sherpa-onnx/c-api/c-api.h",
+      "also_present": "include/sherpa-onnx/c-api/cxx-api.h",
+      "comparison": "Identical to /workspace/projects/pkgC-verify/include/sherpa-onnx/c-api/c-api.h from Linux v2.0.2 except CRLF vs LF.",
+      "windows_git_hash_object": "481263cc9390a91cdfdac3384a879d5e70fc01fc",
+      "linux_tag_git_hash_object": "724e6787d30493ce319150236b7bcfc68adc1d12",
+      "hash_note": "Existing verification results, not file SHA256 values; difference is line endings."
+    }
+  },
+  "runtime": {
+    "destination": "asr/ next to subrec-asr.exe",
+    "source": "lib/ of the verified full Windows package",
+    "ship": [
+      "sherpa-onnx-c-api.dll",
+      "onnxruntime.dll",
+      "onnxruntime_providers_shared.dll"
+    ],
+    "lib_files": {
+      "sherpa-onnx-c-api.dll": 4193280,
+      "sherpa-onnx-c-api.lib": 61560,
+      "onnxruntime.dll": 17799168,
+      "onnxruntime.lib": 2124,
+      "onnxruntime_providers_shared.dll": 104960,
+      "sherpa-onnx-cxx-api.dll": 271360,
+      "sherpa-onnx-cxx-api.lib": 236648
+    },
+    "bin_contents": "onnxruntime.dll, onnxruntime_providers_shared.dll and many sherpa-onnx-*.exe CLI tools",
+    "onnxruntime_version": {
+      "ProductVersion": "1.28.2",
+      "FileVersion": "1.28.2"
+    },
+    "pe_imports": {
+      "sherpa-onnx-c-api.dll": [
+        "onnxruntime.dll",
+        "KERNEL32.dll"
+      ],
+      "onnxruntime.dll_note": "Does not import onnxruntime_providers_shared.dll at load time.",
+      "sherpa-onnx-cxx-api.dll": [
+        "sherpa-onnx-c-api.dll"
+      ]
+    },
+    "providers_shared_reason": "Present in the official package and small; include defensively even though it is not an onnxruntime load-time import.",
+    "do_not_ship": [
+      "sherpa-onnx-cxx-api.dll",
+      "sherpa-onnx-*.exe",
+      "*.lib",
+      "include/"
+    ],
+    "verification_limit": "Only archive SHA256 and individual DLL sizes are pinned here. Assembly expects an unmodified extraction of the verified archive; size checks do not authenticate individual DLL contents or the built host."
+  },
+  "licenses": {
+    "sherpa-onnx.LICENSE": {
+      "component_version": "2.0.2",
+      "license": "Apache-2.0",
+      "url": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v2.0.2/LICENSE",
+      "size_bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "onnxruntime.LICENSE": {
+      "component_version": "1.28.2",
+      "license": "MIT",
+      "copyright": "Copyright (c) Microsoft Corporation",
+      "url": "https://cdn.jsdelivr.net/gh/microsoft/onnxruntime@v1.28.2/LICENSE",
+      "size_bytes": 1073,
+      "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+      "provenance": "github.com/microsoft/onnxruntime and raw.githubusercontent.com returned 404 from the fetching network; jsDelivr served the v1.28.2 file. No new network verification in phase 1."
+    },
+    "silero-vad.LICENSE": {
+      "component_version": "6.2.3",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2020-present Silero Team",
+      "url": "https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/LICENSE",
+      "size_bytes": 1075,
+      "sha256": "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b"
+    }
+  },
+  "license_copy_policy": "Original bytes from /workspace/projects/pkgC-verify-win/licenses-src/ copied into packaging/licenses/asr/ and installed into payload licenses/asr/ with a SubRec bundle NOTICE.txt, including the reserved Silero license even when VAD is absent."
+}

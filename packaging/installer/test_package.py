@@ -6,6 +6,7 @@ No Windows application, installer or network request is executed here.
 import importlib.util
 from pathlib import Path
 import tempfile
+import shutil
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -121,6 +122,72 @@ class PackagingTests(unittest.TestCase):
         self.bundle()
         with self.assertRaisesRegex(ValueError, "Incomplete source/license"):
             package.verify(self.output, self.stem)
+
+    def add_asr(self):
+        (self.payload / "asr").mkdir()
+        for name in ("subrec-asr.exe", "sherpa-onnx-c-api.dll", "onnxruntime.dll",
+                     "onnxruntime_providers_shared.dll"):
+            (self.payload / "asr" / name).write_bytes(b"TEST ASR FIXTURE ONLY")
+        shutil.copytree(Path(__file__).resolve().parents[1] / "licenses/asr",
+                        self.payload / "licenses/asr")
+        with (self.here / "cleanup-directories.txt").open("a") as stream:
+            stream.write("asr\n")
+
+    def test_asr_absent_remains_valid_for_tag(self):
+        self.assertFalse((self.payload / "asr").exists())
+        self.assertEqual(self.prepare(is_tag=True), self.stem)
+
+    def test_complete_asr_without_vad_valid_for_tag(self):
+        self.add_asr()
+        self.assertEqual(self.prepare(is_tag=True), self.stem)
+        self.assertFalse((self.payload / "asr/silero_vad.onnx").exists())
+        generated = (self.here / "installdelete.generated.iss").read_text(encoding="utf-8-sig")
+        self.assertIn('Name: "{app}\\asr"', generated)
+
+    def test_asr_missing_required_files_fails(self):
+        self.add_asr()
+        required = list((self.payload / "asr").iterdir()) + list((self.payload / "licenses/asr").iterdir())
+        for path in required:
+            original = path.read_bytes()
+            path.unlink()
+            try:
+                with self.subTest(name=path.name), self.assertRaisesRegex(ValueError, "ASR payload file"):
+                    self.prepare()
+            finally:
+                path.write_bytes(original)
+
+    def test_asr_license_tampering_fails(self):
+        self.add_asr()
+        (self.payload / "licenses/asr/onnxruntime.LICENSE").write_text("not the upstream license")
+        with self.assertRaisesRegex(ValueError, "ASR license size/SHA256 mismatch"):
+            self.prepare()
+
+    def test_asr_wrong_vad_and_unapproved_files_fail(self):
+        self.add_asr()
+        vad = self.payload / "asr/silero_vad.onnx"
+        vad.write_bytes(b"unapproved VAD")
+        with self.assertRaisesRegex(ValueError, "reserved v6.2.3"):
+            self.prepare()
+        vad.unlink()
+        for name in ("silero_vad_v6.2.3.onnx", "silero_vad_v4_sherpa.onnx", "model.int8.onnx",
+                     "sherpa-onnx-cxx-api.dll", "sherpa-onnx-offline.exe"):
+            path = self.payload / "asr" / name
+            path.write_bytes(b"UNAPPROVED FIXTURE")
+            try:
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, "Unexpected ASR payload entry"):
+                    self.prepare()
+            finally:
+                path.unlink()
+
+    def test_empty_asr_or_file_instead_of_directory_fails(self):
+        path = self.payload / "asr"
+        path.write_text("not a directory")
+        with self.assertRaisesRegex(ValueError, "must be a directory"):
+            self.prepare()
+        path.unlink()
+        path.mkdir()
+        with self.assertRaisesRegex(ValueError, "ASR payload file"):
+            self.prepare()
 
 
 if __name__ == "__main__":

@@ -14,3 +14,4 @@ networkinformation
 platforminputcontexts
 translations
 qmltooling
+asr

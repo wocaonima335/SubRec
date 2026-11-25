@@ -74,6 +74,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 ; Generated from the payload and the retained list of earlier deployment dirs.
 #include "installdelete.generated.iss"
 Type: files; Name: "{app}\*.dll"
+; I8: explicit file cleanup plus the retained whole-directory cleanup are intended.
+Type: files; Name: "{app}\asr\*.dll"
+Type: files; Name: "{app}\asr\*.exe"
+Type: files; Name: "{app}\asr\silero_vad.onnx"
 
 [Files]
 ; sources/ and licenses/ are mandatory, exactly as in the portable payload.

@@ -29,5 +29,53 @@ Installer runtime and translation / 安装器运行代码与翻译 (licenses/inn
     licenses/inno-setup/THIRD_PARTY_SOURCES.md. Original license material is bundled there.
     安装/卸载器含 Inno 运行代码；原许可与中文翻译材料见上述目录，来源核实状态见同目录说明。
 
+
+ASR optional bundle / 可选 ASR 组件（M1 phase 1, 2026-11-25）
+    SUBREC_ASR_WITH_SHERPA defaults OFF; no MSVC CI job is added in phase 1.
+    Only an explicitly assembled asr/ payload ships the C API host and runtime.
+    sherpa-onnx v2.0.2 (Apache-2.0), Windows x64 shared-MT Release no-tts FULL:
+        Source: https://github.com/k2-fsa/sherpa-onnx/tree/v2.0.2
+        Package: https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.2/sherpa-onnx-v2.0.2-win-x64-shared-MT-Release-no-tts.tar.bz2
+        Size: 26,896,305 B; SHA256: 6a71d5ef016e544026d6505486d9fa42177ad989238adc6e4bd2eebfb6947416
+        Verified file digest matches GitHub API; official checksum.txt omits Windows tar.bz2.
+    onnxruntime 1.28.2 (MIT; Copyright (c) Microsoft Corporation):
+        Source: https://github.com/microsoft/onnxruntime/tree/v1.28.2
+        DLL ProductVersion/FileVersion: 1.28.2. Distributed inside the package above;
+        the archive SHA256 covers it; no separate DLL SHA256 is claimed.
+    Runtime allowlist: asr/subrec-asr.exe, sherpa-onnx-c-api.dll, onnxruntime.dll,
+        onnxruntime_providers_shared.dll. Include providers_shared defensively:
+        present in the official package, small, not an onnxruntime load-time import.
+        Exclude C++ API DLL, all sherpa CLI tools, headers and import libraries.
+    Silero VAD v6.2.3 (MIT; Copyright (c) 2020-present Silero Team):
+        Source: https://github.com/snakers4/silero-vad/tree/v6.2.3
+        Model: https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/src/silero_vad/data/silero_vad.onnx
+        Size: 2,327,524 B; file SHA256: 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
+        Git blob SHA: 80c5592ef1f4c9ede3e357bbd02eb863358a6a9d (NOT file SHA256).
+        RESERVED ONLY: the file that actually ships is not selected until S0 A/B
+        is approved (decision 10). Default assembly copies no VAD. Explicit
+        --vad v6.2.3 verifies SHA256 before copying as asr/silero_vad.onnx.
+        Do not track v6.3/master. This phase does not finalize the installer VAD.
+    sherpa v4-series Silero (MIT) is S0 A/B ONLY, NOT the installer default:
+        https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+        Size: 643,854 B; SHA256: 9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6
+    SenseVoice-Small int8 is NOT shipped. ModelManager downloads it only after
+        FunASR Model License 1.1 acceptance:
+        https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE
+    Original license texts (licenses/asr/; unchanged, plus a SubRec bundle NOTICE):
+        sherpa-onnx.LICENSE (Apache-2.0, 2.0.2): https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v2.0.2/LICENSE
+        11,358 B; SHA256: cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30
+        onnxruntime.LICENSE (MIT, 1.28.2): https://cdn.jsdelivr.net/gh/microsoft/onnxruntime@v1.28.2/LICENSE
+        1,073 B; SHA256: 2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c
+        silero-vad.LICENSE (MIT, 6.2.3): https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/LICENSE
+        1,075 B; SHA256: 2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b
+    Provenance: previously fetched originals in pkgC-verify-win/licenses-src/;
+        copied byte-for-byte into packaging/licenses/asr/ after offline verification.
+        For onnxruntime, github.com/microsoft/onnxruntime and raw.githubusercontent.com
+        returned 404 from the fetching network; jsDelivr served the v1.28.2 text.
+        This phase does not claim new online verification. The assemble script copies
+        all three LICENSE files and NOTICE.txt, including Silero's license without VAD.
+    清单与实现：packaging/asr/manifest.json；asr/ 缺席时现有打包流程保持兼容。
+    VAD 仅预留 v6.2.3，实际随包文件等 S0 A/B 批准；SenseVoice 不随包。
+
 This build / 本构建
 -------------------

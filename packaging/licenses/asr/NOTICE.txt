@@ -1,0 +1,22 @@
+SubRec optional Windows ASR bundle / M1 phase 1
+
+This is a SubRec packaging notice, not an upstream NOTICE or a replacement license.
+sherpa-onnx v2.0.2: Apache-2.0; see sherpa-onnx.LICENSE.
+Bundled onnxruntime 1.28.2: MIT, Copyright (c) Microsoft Corporation;
+see onnxruntime.LICENSE. The version is the DLL ProductVersion / FileVersion.
+Silero VAD v6.2.3: MIT, Copyright (c) 2020-present Silero Team;
+see silero-vad.LICENSE. This original license is included even when VAD is absent.
+The three LICENSE texts are unmodified copies of the recorded upstream files.
+Source URLs, file sizes, hashes and provenance: SOURCES.txt,
+THIRD_PARTY_LICENSES.md and the repository's packaging/asr/manifest.json.
+
+The Windows runtime uses the C API: sherpa-onnx-c-api.dll, onnxruntime.dll and
+onnxruntime_providers_shared.dll next to subrec-asr.exe in asr/.
+The providers DLL is included defensively from the official package despite not
+being a load-time import of onnxruntime. C++ API DLL and sherpa CLI tools are excluded.
+
+VAD v6.2.3 is RESERVED ONLY, not finalized. The file that actually ships is not
+selected until S0 A/B is approved (decision 10). Assembly defaults to no VAD.
+sherpa's v4-series Silero file is for S0 A/B only, not the installer default.
+SenseVoice-Small is NOT shipped. ModelManager downloads it only after acceptance
+of FunASR Model License 1.1. No SenseVoice asset is fetched by the packaging scripts.
