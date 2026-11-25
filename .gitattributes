@@ -1,0 +1,3 @@
+# Byte-identical checkout for files whose size/SHA256 is pinned in packaging/asr/manifest.json.
+# Without this, Windows core.autocrlf converts LF to CRLF and package.py validate_asr fails.
+packaging/licenses/asr/** -text
