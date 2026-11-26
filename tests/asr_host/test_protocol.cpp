@@ -6,6 +6,9 @@
 #include "subtitle/host/asr_protocol.h"
 
 #include <cmath>
+#include <filesystem>
+#include <iomanip>
+#include <sstream>
 #include <string>
 
 using namespace subtitle;
@@ -139,7 +142,7 @@ TEST(proto_roundtrip_load_engine_request)
     Load ld;
     ld.request.engineId = "sherpa-onnx";
     ld.request.modelId = "sense-voice-small";
-    ld.request.modelDir = "C:\\模型\\dir";
+    ld.request.modelDir = std::filesystem::u8path("C:\\模型\\dir");
     ld.request.language = "zh";
     ld.request.threads = 2;
     ld.request.backend = Backend::Vulkan;
@@ -166,7 +169,15 @@ TEST(proto_roundtrip_load_engine_request)
     CHECK(r != nullptr);
     const EngineRequest &q = r->request;
     CHECK(q.engineId == "sherpa-onnx" && q.modelId == "sense-voice-small");
-    CHECK(q.modelDir.u8string() == "C:\\模型\\dir");
+    CHECK_MSG(q.modelDir.u8string() == "C:\\模型\\dir", [&] {
+        const auto actual = q.modelDir.u8string();
+        std::ostringstream msg;
+        msg << "modelDir.u8string() = \"" << actual << "\", hex bytes:"
+            << std::hex << std::setfill('0');
+        for (unsigned char byte : actual)
+            msg << ' ' << std::setw(2) << static_cast<unsigned int>(byte);
+        return msg.str();
+    }());
     CHECK(q.language == "zh" && q.threads == 2 && q.backend == Backend::Vulkan);
     CHECK(std::fabs(q.vad.threshold - 0.6f) < 1e-6f && q.vad.minSilenceMs == 700
           && q.vad.speechPadMs == 150 && q.vad.maxSegmentMs == 10000);

@@ -7,6 +7,7 @@
 #include "fake_host/fake_host_script.h"
 #include "subtitle/host/asr_protocol.h"
 
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -170,9 +171,15 @@ TEST(fakehost_crash)
     auto exit = s.proc.waitForExit(8000);
     CHECK(!exit.timedOut);
 #ifdef _WIN32
-    // MinGW/MSVC CRT 的 abort()：未处理 SIGABRT → 以退出码 3 终止（非 NTSTATUS 崩溃码区间）
-    CHECK(!exit.signaled);
-    CHECK(exit.code == 3);
+    // Windows CRT 的 abort() 可退出 3，也可通过 fast-fail 以 0xC0000409 终止。
+    char exitMessage[96];
+    std::snprintf(exitMessage, sizeof(exitMessage),
+                  "unexpected abort exit: code=0x%08lx, signaled=%d",
+                  static_cast<unsigned long>(static_cast<uint32_t>(exit.code)),
+                  exit.signaled ? 1 : 0);
+    CHECK_MSG((exit.code == 3 && !exit.signaled)
+                  || (exit.signaled && static_cast<uint32_t>(exit.code) == 0xC0000409u),
+              exitMessage);
 #else
     CHECK(exit.signaled);
     CHECK(exit.code == SIGABRT);
