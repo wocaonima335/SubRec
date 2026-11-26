@@ -7,9 +7,9 @@
 # and tag release steps. build/ci-tests also turns on SUBREC_BUILD_SUBTITLE and builds the AI
 # subtitle libraries and tools/asr_host (not part of the package).
 #
-# Installer addition: a third, tag-only release job creates reviewed draft assets.
-# The following describes the original two build jobs.
-# Two jobs:
+# A tag-only release job creates reviewed draft assets from the build job.
+# An independent asr-msvc job builds and uploads the standalone ASR host bundle.
+# The two application build jobs:
 #   ffmpeg (ubuntu-24.04)  builds SubRec's minimal FFmpeg n8.0.3 (+ x264, libvpl, nv-codec-headers,
 #                          AMF headers; GPL-2.0-or-later, no version3, no nonfree) from pinned
 #                          commits (packaging/ffmpeg/versions.env) by cross-compiling with
@@ -544,6 +544,94 @@ jobs:
           path: out/
           if-no-files-found: error
           retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 90 || 14 }}
+
+  asr-msvc:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      SHERPA_CACHE: ${{ runner.temp }}/sherpa-cache
+      SHERPA_UNPACK: ${{ runner.temp }}/sherpa-root
+      ASR_PAYLOAD: ${{ github.workspace }}/build/asr-payload
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up MSVC x64
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Cache sherpa Windows archive
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SHERPA_CACHE }}
+          key: asr-msvc-sherpa-win64-v1-${{ hashFiles('packaging/asr/manifest.json') }}
+
+      - name: Fetch and unpack verified sherpa Windows package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # fetch.py verifies cached archives too; cache and extraction must stay outside the repo.
+          python packaging/asr/fetch.py --cache "$env:SHERPA_CACHE" --asset sherpa-windows --download
+          if ($LASTEXITCODE -ne 0) { throw 'Sherpa archive verification/download failed' }
+          $manifest = Get-Content packaging/asr/manifest.json -Raw | ConvertFrom-Json
+          $asset = $manifest.assets.'sherpa-windows'
+          $archive = Join-Path $env:SHERPA_CACHE $asset.cache_path
+          # Require a fresh extraction so no stale files can enter the bundle.
+          New-Item -ItemType Directory -Path $env:SHERPA_UNPACK | Out-Null
+          tar -xf "$archive" -C "$env:SHERPA_UNPACK"
+          if ($LASTEXITCODE -ne 0) { throw 'Sherpa archive extraction failed' }
+          $root = Join-Path $env:SHERPA_UNPACK $asset.unpacked_directory
+          foreach ($file in 'include/sherpa-onnx/c-api/c-api.h', 'lib/sherpa-onnx-c-api.lib', 'lib/sherpa-onnx-c-api.dll') {
+            if (-not (Test-Path (Join-Path $root $file) -PathType Leaf)) { throw "Sherpa package is missing $file" }
+          }
+          "SHERPA_ONNX_ROOT=$root" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure standalone ASR host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cmake -S tools/asr_host -B build/asr-msvc -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DSUBREC_ASR_WITH_SHERPA=ON `
+            "-DSHERPA_ONNX_ROOT=$env:SHERPA_ONNX_ROOT" `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+          if ($LASTEXITCODE -ne 0) { throw 'ASR host configuration failed' }
+
+      - name: Build ASR host and tests
+        shell: pwsh
+        run: cmake --build build/asr-msvc --parallel --target subrec-asr asr_host_tests
+
+      - name: Run ASR tests without models
+        shell: pwsh
+        # tests/asr_host/CMakeLists.txt adds sherpa bin/ and lib/ to the test PATH.
+        run: ctest --test-dir build/asr-msvc -LE needs_asr_model --output-on-failure --timeout 180 --no-tests=error
+
+      - name: Assemble ASR payload without VAD
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path $env:ASR_PAYLOAD | Out-Null
+          python packaging/asr/assemble.py `
+            --sherpa-onnx-root "$env:SHERPA_ONNX_ROOT" `
+            --exe build/asr-msvc/subrec-asr.exe `
+            --payload "$env:ASR_PAYLOAD"
+          if ($LASTEXITCODE -ne 0) { throw 'ASR payload assembly failed' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: subrec-asr-win64
+          path: ${{ env.ASR_PAYLOAD }}
+          if-no-files-found: error
+          retention-days: 14
 
   release:
     needs: build
