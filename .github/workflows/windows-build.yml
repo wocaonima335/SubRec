@@ -634,6 +634,80 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Stage ASR model test payload
+        shell: pwsh
+        env:
+          ASR_TESTS_PAYLOAD: ${{ github.workspace }}/build/asr-tests-payload
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Require a fresh directory so stale files cannot enter this flat bundle.
+          New-Item -ItemType Directory -Path $env:ASR_TESTS_PAYLOAD | Out-Null
+          $files = @(
+            'build/asr-msvc/asr_host_tests/asr_host_tests.exe'
+            'build/asr-msvc/subrec-asr.exe'
+            "$env:SHERPA_ONNX_ROOT/lib/sherpa-onnx-c-api.dll"
+            "$env:SHERPA_ONNX_ROOT/lib/onnxruntime.dll"
+            "$env:SHERPA_ONNX_ROOT/lib/onnxruntime_providers_shared.dll"
+          )
+          foreach ($file in $files) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "ASR test payload is missing $file" }
+            Copy-Item -LiteralPath $file -Destination $env:ASR_TESTS_PAYLOAD
+          }
+          @'
+          subrec-asr-tests-win64: PC3 needs_asr_model tests
+
+          Run from the extracted artifact directory (cmd.exe):
+            asr_host_tests.exe sherpa_vad_stream_boundaries
+            asr_host_tests.exe sherpa_growing_wav_keywords_rtf
+
+          The custom runTestsSelected harness accepts exact registered test names
+          as argv entries after the executable, scanning the registry in registration
+          order. CTest uses COMMAND asr_host_tests ${case}.
+
+          Required for sherpa_growing_wav_keywords_rtf:
+            SUBREC_ASR_MODEL_DIR
+            SUBREC_ASR_TEST_WAV     (mono 16 kHz, 3..120 s)
+            SUBREC_ASR_TEST_KEYWORD (UTF-8, occurring early in a >=3 s speech segment)
+
+          Required for sherpa_vad_stream_boundaries:
+            SUBREC_ASR_TEST_WAV     (mono 16 kHz, at least 3 s;
+                                    must contain speech Silero detects)
+
+          VAD (both tests, loaded by createVad or by the spawned host):
+            Set SUBREC_ASR_VAD_MODEL to the full path to silero_vad.onnx,
+            or place silero_vad.onnx beside the process executable.
+            The VAD test runs in-process: beside asr_host_tests.exe.
+            growing_wav loads VAD inside subrec-asr.exe: beside that host,
+            or set the environment variable so the child inherits it.
+
+          Optional for sherpa_growing_wav_keywords_rtf:
+            SUBREC_ASR_TEST_LANGUAGE (default zh)
+            SUBREC_ASR_TEST_MAX_RTF  (default 1.0)
+
+          Model directory layout (resolveSherpaModel):
+            SUBREC_ASR_MODEL_DIR must contain tokens.txt and
+            model.int8.onnx (preferred) or model.onnx.
+
+          IMPORTANT PC3 LIMITATION:
+            asr_host_tests is compiled with
+              SUBREC_ASR_EXE="$<TARGET_FILE:subrec-asr>"
+            which resolves to an absolute path on the CI machine.
+            sherpa_growing_wav_keywords_rtf spawns that baked path, not the
+            subrec-asr.exe sitting next to the test executable. It will not find
+            the host on PC3 unless that exact CI path exists.
+            sherpa_vad_stream_boundaries does not spawn a host and is not affected.
+
+          No Silero VAD or SenseVoice models are bundled or downloaded by CI.
+          VAD is an S0 decision; supply the models locally as described above.
+          '@ | Set-Content -LiteralPath (Join-Path $env:ASR_TESTS_PAYLOAD 'README.txt') -Encoding utf8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: subrec-asr-tests-win64
+          path: ${{ github.workspace }}/build/asr-tests-payload
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
