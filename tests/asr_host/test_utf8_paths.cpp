@@ -59,7 +59,7 @@ TEST(utf8_path_chinese_spool_and_script)
                                            "exit 0\n"),
                   "write script under Chinese dir");
         HostSession s;
-        CHECK(s.proc.spawn(SUBREC_ASR_FAKEHOST_EXE, {"--script=" + scriptPath}));
+        CHECK(s.proc.spawn(asrFakeHostExe(), {"--script=" + scriptPath}));
         s.handshake();
         s.quit();
         auto exit = s.proc.waitForExit(5000);

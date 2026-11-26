@@ -20,7 +20,6 @@ using namespace subtitle;
 
 namespace {
 
-const char *kExe = SUBREC_ASR_FAKEHOST_EXE;
 int g_tmpCounter = 0;
 
 // 相对当前工作目录（= 构建目录）写脚本文件；路径保持 UTF-8，经 spawn 的宽字符命令行传给 fakehost
@@ -71,7 +70,7 @@ TEST(fakehost_handshake_and_loaded)
         "expect quit\n"
         "exit 7\n");
     HostSession s;
-    CHECK(s.proc.spawn(kExe, {"--script=" + script}));
+    CHECK(s.proc.spawn(asrFakeHostExe(), {"--script=" + script}));
     s.handshake();
     s.send(proto::Load{});
     proto::Message m;
@@ -85,7 +84,7 @@ TEST(fakehost_reply_hello_custom_protocol)
 {
     const std::string script = writeScript("reply-hello 1\nexit 0\n");
     HostSession s;
-    CHECK(s.proc.spawn(kExe, {"--script=" + script}));
+    CHECK(s.proc.spawn(asrFakeHostExe(), {"--script=" + script}));
     s.send(proto::Hello{});   // 主进程先打招呼也行（fakehost 不在脚本前读 stdin）
     proto::Message m;
     CHECK(s.waitFor("hello", m, 5000));
@@ -102,7 +101,7 @@ TEST(fakehost_expect_skips_other_types)
                                            "\"kind\":\"final\",\"b16k\":0,\"e16k\":16000}\n"
                                            "expect quit\nexit 0\n");
     HostSession s;
-    CHECK(s.proc.spawn(kExe, {"--script=" + script}));
+    CHECK(s.proc.spawn(asrFakeHostExe(), {"--script=" + script}));
     // 本脚本不 reply-hello：直接发命令。open 之前发别的命令会被记日志后忽略，expect 仍在等
     s.send(proto::Append{1, 100});
     s.send(proto::SetLevel{1, 1, 1, 0});
@@ -119,7 +118,7 @@ TEST(fakehost_hb_stream_and_off)
     const std::string script = writeScript("hb 200\nsleep 1000\nhb off\nsleep 300\n"
                                            "expect quit\nexit 0\n");
     HostSession s;
-    CHECK(s.proc.spawn(kExe, {"--script=" + script}));
+    CHECK(s.proc.spawn(asrFakeHostExe(), {"--script=" + script}));
     int hbCount = 0;
     int64_t lastSeq = -1;
     const int64_t deadline = HostSession::nowMs() + 2500;
@@ -151,7 +150,7 @@ TEST(fakehost_garbage_and_longline)
                                            "longline 1048600\n"
                                            "expect quit\nexit 0\n");
     HostSession s;
-    CHECK(s.proc.spawn(kExe, {"--script=" + script}));
+    CHECK(s.proc.spawn(asrFakeHostExe(), {"--script=" + script}));
     std::string line;
     CHECK(s.proc.readLine(line, 5000));
     CHECK(line == "definitely not json");
@@ -167,7 +166,7 @@ TEST(fakehost_crash)
 {
     const std::string script = writeScript("crash\n");
     HostSession s;
-    CHECK(s.proc.spawn(kExe, {"--script=" + script}));
+    CHECK(s.proc.spawn(asrFakeHostExe(), {"--script=" + script}));
     auto exit = s.proc.waitForExit(8000);
     CHECK(!exit.timedOut);
 #ifdef _WIN32
@@ -190,7 +189,7 @@ TEST(fakehost_eof_exits_zero)
 {
     const std::string script = writeScript("expect hello\nreply-hello\nexpect load\n");
     HostSession s;
-    CHECK(s.proc.spawn(kExe, {"--script=" + script}));
+    CHECK(s.proc.spawn(asrFakeHostExe(), {"--script=" + script}));
     s.handshake();
     s.proc.closeStdin();   // stdin EOF：expect 中 → 以 0 退出
     auto exit = s.proc.waitForExit(5000);
@@ -202,7 +201,7 @@ TEST(fakehost_quit_after_script_end)
     // 脚本执行完：继续发 hb、等 quit 或 EOF
     const std::string script = writeScript("reply-hello\nhb 150\n");
     HostSession s;
-    CHECK(s.proc.spawn(kExe, {"--script=" + script}));
+    CHECK(s.proc.spawn(asrFakeHostExe(), {"--script=" + script}));
     proto::Message m;
     CHECK(s.waitFor("hello", m, 5000));
     // 有 hb 在流（脚本仍在“结尾等待”阶段）
@@ -217,7 +216,7 @@ TEST(fakehost_hang_stops_output)
     // sleep 让 hb 先流一会儿，再 hang（脚本步骤是立即执行的，否则 hang 先于第一条 hb）
     const std::string script = writeScript("reply-hello\nhb 100\nsleep 600\nhang\n");
     HostSession s;
-    CHECK(s.proc.spawn(kExe, {"--script=" + script}));
+    CHECK(s.proc.spawn(asrFakeHostExe(), {"--script=" + script}));
     proto::Message m;
     CHECK(s.waitFor("hello", m, 5000));
     CHECK(s.waitFor("hb", m, 3000));   // hang 之前

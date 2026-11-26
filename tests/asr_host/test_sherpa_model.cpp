@@ -68,7 +68,7 @@ TEST(sherpa_growing_wav_keywords_rtf)
         writer(testpaths::fopenUtf8(spool.path.u8string(), "ab"));
     CHECK(writer);
     HostSession host;
-    CHECK(host.proc.spawn(SUBREC_ASR_EXE, {"--engine=sherpa-onnx"}));
+    CHECK(host.proc.spawn(asrExe(), {"--engine=sherpa-onnx"}));
     host.handshake();
     proto::Load load;
     load.request.engineId = "sherpa-onnx";

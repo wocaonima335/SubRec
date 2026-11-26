@@ -759,7 +759,7 @@ TEST(fault_illegal_instr_exit)
 {
     // illegalInstr 启动即退出（握手之前），不能用 HostSession::start（它要求 hello 回复）
     ChildProcess proc;
-    CHECK(proc.spawn(SUBREC_ASR_EXE, {"--engine=fake", "--fake=illegalInstr"},
+    CHECK(proc.spawn(asrExe(), {"--engine=fake", "--fake=illegalInstr"},
                      {{"SUBREC_ASR_TEST_HOOKS", "1"}}));
     auto exit = proc.waitForExit(8000);
     CHECK(!exit.timedOut);
@@ -902,7 +902,7 @@ TEST(host_hello_version_mismatch_exits_704)
 {
     // 直接发 protocol=1 的 hello（不做正常握手）
     ChildProcess proc;
-    CHECK(proc.spawn(SUBREC_ASR_EXE, {"--engine=fake"}, {{"SUBREC_ASR_TEST_HOOKS", "1"}}));
+    CHECK(proc.spawn(asrExe(), {"--engine=fake"}, {{"SUBREC_ASR_TEST_HOOKS", "1"}}));
     proto::Hello wrong;
     wrong.protocol = 1;
     proc.writeLine(proto::encode(proto::Message{wrong}));

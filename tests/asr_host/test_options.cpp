@@ -95,7 +95,7 @@ TEST(opts_fake_engine_requires_hooks)
 {
     // 子进程不设置 SUBREC_ASR_TEST_HOOKS：engineId=fake → EngineUnknown(300)（§8）
     HostSession s;
-    CHECK(s.proc.spawn(SUBREC_ASR_EXE, {"--engine=fake"}, {}, {"SUBREC_ASR_TEST_HOOKS"}));
+    CHECK(s.proc.spawn(asrExe(), {"--engine=fake"}, {}, {"SUBREC_ASR_TEST_HOOKS"}));
     s.handshake();
     proto::Load ld;
     ld.request.engineId = "fake";

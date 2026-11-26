@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -19,6 +21,34 @@
 #ifndef SUBREC_ASR_FAKEHOST_EXE
 #define SUBREC_ASR_FAKEHOST_EXE "subrec-asr-fakehost"
 #endif
+
+inline std::string asrExe()
+{
+#ifdef _WIN32
+    const wchar_t *value = _wgetenv(L"SUBREC_ASR_EXE");
+    if (value && *value)
+        return std::filesystem::path(value).u8string();
+#else
+    const char *value = std::getenv("SUBREC_ASR_EXE");
+    if (value && *value)
+        return value;
+#endif
+    return SUBREC_ASR_EXE;
+}
+
+inline std::string asrFakeHostExe()
+{
+#ifdef _WIN32
+    const wchar_t *value = _wgetenv(L"SUBREC_ASR_FAKEHOST_EXE");
+    if (value && *value)
+        return std::filesystem::path(value).u8string();
+#else
+    const char *value = std::getenv("SUBREC_ASR_FAKEHOST_EXE");
+    if (value && *value)
+        return value;
+#endif
+    return SUBREC_ASR_FAKEHOST_EXE;
+}
 
 // 一次与 subrec-asr 的会话：启动（hooks=1）→ 握手 → load fake。测试在其上追加 open/append/…
 struct HostSession {
@@ -41,7 +71,7 @@ struct HostSession {
         args.push_back("--engine=fake");
         if (!fakeArgs.empty())
             args.push_back("--fake=" + fakeArgs);
-        CHECK(proc.spawn(SUBREC_ASR_EXE, args, {{"SUBREC_ASR_TEST_HOOKS", "1"}}, unsetEnv));
+        CHECK(proc.spawn(asrExe(), args, {{"SUBREC_ASR_TEST_HOOKS", "1"}}, unsetEnv));
         handshake(role);
     }
 
