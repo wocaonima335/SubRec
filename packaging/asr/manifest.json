@@ -8,9 +8,9 @@
     "api": "C API only; use include/sherpa-onnx/c-api/c-api.h from the Windows full package; no fallback needed"
   },
   "vad_selection": {
-    "installer_default": null,
+    "installer_default": "vad-v6.2.3",
     "reserved": "vad-v6.2.3",
-    "status": "RESERVED ONLY. The file that actually ships is not selected until S0 A/B is approved (decision 10). Assembly defaults to no VAD; explicit --vad v6.2.3 requires file SHA256 verification. Do not track v6.3/master."
+    "status": "Selected installer default: v6.2.3; S0 passed 2026-11-26 (decision 10). Assembly omits VAD unless --vad v6.2.3 and --vad-file are passed, with size/SHA256 verification; releases may ship without VAD. Do not track v6.3/master."
   },
   "sensevoice": {
     "shipped": false,
@@ -48,7 +48,7 @@
       "git_blob_sha": "80c5592ef1f4c9ede3e357bbd02eb863358a6a9d",
       "git_blob_provenance": "Matches contents API; this is NOT the file SHA256.",
       "license": "MIT",
-      "role": "RESERVED for installer after S0 A/B approval (decision 10); not finalized",
+      "role": "Selected installer default; S0 passed 2026-11-26 (decision 10); optional in releases",
       "payload_name": "asr/silero_vad.onnx"
     }
   },
@@ -131,5 +131,5 @@
       "sha256": "2e63e9a38b6e8fc0c7bc37ce174caca1862870856c6daf5697cfb785e925520b"
     }
   },
-  "license_copy_policy": "Original bytes from /workspace/projects/pkgC-verify-win/licenses-src/ copied into packaging/licenses/asr/ and installed into payload licenses/asr/ with a SubRec bundle NOTICE.txt, including the reserved Silero license even when VAD is absent."
+  "license_copy_policy": "Original bytes from /workspace/projects/pkgC-verify-win/licenses-src/ copied into packaging/licenses/asr/ and installed into payload licenses/asr/ with a SubRec bundle NOTICE.txt, including the Silero license even when VAD is absent."
 }

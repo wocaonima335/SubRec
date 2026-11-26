@@ -64,7 +64,9 @@ preserves user settings and recordings and removes installed files and SubRec.lo
 
 可选 ASR 许可与来源 / Optional ASR licenses and sources
 仅在 payload 包含 asr/ 时分发运行库；现有无 ASR 安装包仍受支持。
-VAD 仅预留 v6.2.3，S0 A/B 批准后才最终选择实际随包文件；默认不复制。
+VAD v6.2.3 已选为安装器默认版本（S0 于 2026-11-26 通过，决策 10）。
+仅在传入 --vad v6.2.3 和 --vad-file 并通过大小/SHA256 校验后复制；发行包可不含 VAD。
+v4 仍仅用于 A/B 对照，不是安装器默认版本。
 SenseVoice 不随包，由 ModelManager 在用户接受 FunASR 1.1 许可后下载。
 
 ASR optional bundle / 可选 ASR 组件（M1 phase 1, 2026-11-25）
@@ -88,10 +90,10 @@ ASR optional bundle / 可选 ASR 组件（M1 phase 1, 2026-11-25）
         Model: https://raw.githubusercontent.com/snakers4/silero-vad/v6.2.3/src/silero_vad/data/silero_vad.onnx
         Size: 2,327,524 B; file SHA256: 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
         Git blob SHA: 80c5592ef1f4c9ede3e357bbd02eb863358a6a9d (NOT file SHA256).
-        RESERVED ONLY: the file that actually ships is not selected until S0 A/B
-        is approved (decision 10). Default assembly copies no VAD. Explicit
-        --vad v6.2.3 verifies SHA256 before copying as asr/silero_vad.onnx.
-        Do not track v6.3/master. This phase does not finalize the installer VAD.
+        Selected as the installer default (S0 passed 2026-11-26, decision 10).
+        Assembly copies VAD only when --vad v6.2.3 and --vad-file are passed and
+        verified by size/SHA256, copying as asr/silero_vad.onnx. Without those
+        flags, assembly omits VAD; a release may omit VAD. Do not track v6.3/master.
     sherpa v4-series Silero (MIT) is S0 A/B ONLY, NOT the installer default:
         https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
         Size: 643,854 B; SHA256: 9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6
@@ -112,4 +114,5 @@ ASR optional bundle / 可选 ASR 组件（M1 phase 1, 2026-11-25）
         This phase does not claim new online verification. The assemble script copies
         all three LICENSE files and NOTICE.txt, including Silero's license without VAD.
     清单与实现：packaging/asr/manifest.json；asr/ 缺席时现有打包流程保持兼容。
-    VAD 仅预留 v6.2.3，实际随包文件等 S0 A/B 批准；SenseVoice 不随包。
+    VAD v6.2.3 已选为安装器默认版本（S0 于 2026-11-26 通过）；发行包可不含 VAD。
+    v4 仍仅用于 A/B 对照；SenseVoice 不随包。

@@ -15,8 +15,9 @@ onnxruntime_providers_shared.dll next to subrec-asr.exe in asr/.
 The providers DLL is included defensively from the official package despite not
 being a load-time import of onnxruntime. C++ API DLL and sherpa CLI tools are excluded.
 
-VAD v6.2.3 is RESERVED ONLY, not finalized. The file that actually ships is not
-selected until S0 A/B is approved (decision 10). Assembly defaults to no VAD.
+VAD v6.2.3 is selected as the installer default (S0 passed 2026-11-26, decision 10).
+Assembly copies VAD only when --vad v6.2.3 and --vad-file are passed and the file
+passes size/SHA256 verification; a release may omit VAD.
 sherpa's v4-series Silero file is for S0 A/B only, not the installer default.
 SenseVoice-Small is NOT shipped. ModelManager downloads it only after acceptance
 of FunASR Model License 1.1. No SenseVoice asset is fetched by the packaging scripts.

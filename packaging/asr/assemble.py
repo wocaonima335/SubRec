@@ -43,7 +43,7 @@ def assemble(root, exe, payload, vad=None, vad_file=None):
         shutil.copyfile(source, target)
     for name in [*pins["licenses"], "NOTICE.txt"]:
         shutil.copyfile(license_root / name, targets[1] / name)
-    print(f"Assembled {targets[0]}; VAD: {vad or 'absent (S0 decision pending)'}")
+    print(f"Assembled {targets[0]}; VAD: {vad or 'absent (optional)'}")
 
 
 def main():
@@ -51,7 +51,7 @@ def main():
     parser.add_argument("--sherpa-onnx-root", type=Path, default=os.environ.get("SHERPA_ONNX_ROOT"))
     parser.add_argument("--exe", type=Path, required=True, help="built MSVC /MT host")
     parser.add_argument("--payload", type=Path, required=True)
-    parser.add_argument("--vad", choices=["v6.2.3"], help="reserved candidate; use only with S0 approval")
+    parser.add_argument("--vad", choices=["v6.2.3"], help="selected installer default v6.2.3; optional, requires --vad-file")
     parser.add_argument("--vad-file", type=Path)
     args = parser.parse_args()
     if args.sherpa_onnx_root is None:
