@@ -549,8 +549,6 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     env:
-      SHERPA_CACHE: ${{ runner.temp }}/sherpa-cache
-      SHERPA_UNPACK: ${{ runner.temp }}/sherpa-root
       ASR_PAYLOAD: ${{ github.workspace }}/build/asr-payload
     steps:
       - uses: actions/checkout@v4
@@ -572,11 +570,14 @@ jobs:
       - name: Cache sherpa Windows archive
         uses: actions/cache@v4
         with:
-          path: ${{ env.SHERPA_CACHE }}
+          path: ${{ runner.temp }}/sherpa-cache
           key: asr-msvc-sherpa-win64-v1-${{ hashFiles('packaging/asr/manifest.json') }}
 
       - name: Fetch and unpack verified sherpa Windows package
         shell: pwsh
+        env:
+          SHERPA_CACHE: ${{ runner.temp }}/sherpa-cache
+          SHERPA_UNPACK: ${{ runner.temp }}/sherpa-root
         run: |
           $ErrorActionPreference = 'Stop'
           # fetch.py verifies cached archives too; cache and extraction must stay outside the repo.
