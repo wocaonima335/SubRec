@@ -26,6 +26,7 @@ if(MSVC)
     # sherpa-onnx v2.0.2 shared-MT 包为静态 CRT（D12）；宿主与之保持一致。
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     add_compile_options(/utf-8 /W4)
+    add_compile_definitions(NOMINMAX)
 endif()
 
 get_filename_component(SUBREC_ASR_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
