@@ -194,7 +194,8 @@ void SubtitleMerger::onPartial(const PartialSegment &p)
     if (m_agreement.state().id != p.id) {
         if (m_agreement.n() != std::clamp(m_live.agreementN, 2, 3) ||
             m_agreement.guardMs() != std::max(0, m_live.confirmGuardMs))
-            m_agreement = LocalAgreement(m_live.agreementN, m_live.confirmGuardMs);
+            m_agreement = LocalAgreement(m_live.agreementN, m_live.confirmGuardMs,
+                                         m_agreement.headN(), m_agreement.headM());
         m_agreement.reset(p.id);
         if (m_level == DegradeLevel::L1FinalOnly) m_agreement.freeze();
     }
@@ -336,7 +337,8 @@ void SubtitleMerger::setLiveConfig(const LiveConfig &live)
     // confirmed prefix or unfreeze the same sentence because settings changed.
     if (m_agreement.state().id < 0 && (m_agreement.n() != std::clamp(live.agreementN, 2, 3) ||
         m_agreement.guardMs() != std::max(0, live.confirmGuardMs)))
-        m_agreement = LocalAgreement(live.agreementN, live.confirmGuardMs);
+        m_agreement = LocalAgreement(live.agreementN, live.confirmGuardMs,
+                                     m_agreement.headN(), m_agreement.headM());
     auto rules = m_fixer.rules(); rules.revisableCues = live.revisableCues; rules.cue = m_cueConfig;
     m_fixer = SentenceFixer(std::move(rules)); m_live = live;
     if (!live.writeConfirmedToPart) {

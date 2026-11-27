@@ -189,7 +189,7 @@ void SubtitleService::reloadSettings() {
     s->request.threads = std::clamp(cfg->value("asr/threads", 1).toInt(), 1, 4);
     s->live.partialIntervalMs = std::max(0, cfg->value("asr/partialIntervalMs", 600).toInt());
     s->live.maxSegmentMs = std::max(100, cfg->value("asr/maxSegmentMs", 10000).toInt());
-    s->live.agreementN = std::clamp(cfg->value("asr/agreementN", 2).toInt(), 2, 3);
+    s->live.agreementN = std::clamp(cfg->value("asr/agreementN", 3).toInt(), 2, 3);
     s->live.confirmGuardMs = std::max(0, cfg->value("asr/confirmGuardMs", 300).toInt());
     s->live.threadsWhileRecording = std::min(s->request.threads, QThread::idealThreadCount() > 4 ? 2 : 1);
     s->available = QFileInfo::exists(hostPath());

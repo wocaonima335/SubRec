@@ -68,7 +68,7 @@ DegradeThresholds thresholds() {
 struct Job {
     Job(JobId id, QString video, QString spool, EngineRequest request, CueConfig cues, bool live, LiveConfig config, IClock &clock)
         : id(id), video(std::move(video)), spool(std::move(spool)), request(std::move(request)), live(live),
-          agreement(config.agreementN, config.confirmGuardMs), fixer(FixerRules{}),
+          agreement(config.agreementN, config.confirmGuardMs, 2, 1), fixer(FixerRules{}),
           merger(doc, cues, fixer, agreement, clock), degrade(thresholds()), watchdog(watchdogConfig(), clock) {
         srt = srtPathForMp4(pathOf(this->video)); merger.setLiveConfig(config);
         if (!live) degrade.forceLevel(DegradeLevel::L3Deferred, "after");

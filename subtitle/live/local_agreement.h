@@ -26,7 +26,9 @@ namespace subtitle {
 
 class LocalAgreement {
 public:
-    LocalAgreement(int n, int guardMs);
+    // Optional head rule: only the first headM units may confirm after headN observations.
+    // Either headN or headM being zero disables the rule.
+    LocalAgreement(int n, int guardMs, int headN = 0, int headM = 0);
     void reset(SegId id);                           // 新段、splice、宿主重启、final 后
     // 返回本次新增确认的 token（可能为空）；已确认部分只增不减
     std::vector<Word> push(const PartialSegment &);
@@ -41,12 +43,16 @@ public:
 
     int n() const noexcept { return m_n; }
     int guardMs() const noexcept { return m_guardMs; }
+    int headN() const noexcept { return m_headN; }
+    int headM() const noexcept { return m_headM; }
 
 private:
     int m_n;
     int m_guardMs;
+    int m_headN;
+    int m_headM;
     ConfirmedPrefix m_state;
-    std::deque<std::vector<Word>> m_history;        // 最近 n 次规整后 token 序列（实现方可改）
+    std::deque<std::vector<Word>> m_history;        // 最近 max(n, enabled headN) 次 token 序列
     Stats m_stats;
 };
 

@@ -5,7 +5,7 @@ add_executable(subtitle_h_fixer_tests h_fixer.cpp)
 foreach(group IN ITEMS agreement document fixer)
     target_link_libraries(subtitle_h_${group}_tests PRIVATE subtitle_live)
 endforeach()
-set(h_agreement_cases timing guard punctuation regression resets freeze mismatch compatibility)
+set(h_agreement_cases timing guard punctuation regression resets freeze mismatch compatibility plan_b plan_b_config)
 set(h_document_cases idempotent out_of_order resume throttling provisional_on provisional_drop
     provisional_off boundaries states live_config refined_files)
 set(h_fixer_cases window merge_boundaries finished user_edited refined_merge)

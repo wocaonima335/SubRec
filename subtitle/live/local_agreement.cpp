@@ -49,8 +49,9 @@ std::vector<Group> groups(const std::vector<Word> &words)
     return out;
 }
 }
-LocalAgreement::LocalAgreement(int n, int guardMs)
-    : m_n(std::clamp(n, 2, 3)), m_guardMs(std::max(0, guardMs)) {}
+LocalAgreement::LocalAgreement(int n, int guardMs, int headN, int headM)
+    : m_n(std::clamp(n, 2, 3)), m_guardMs(std::max(0, guardMs)),
+      m_headN(headN > 0 ? std::clamp(headN, 2, 3) : 0), m_headM(std::max(0, headM)) {}
 void LocalAgreement::reset(SegId id)
 {
     m_state = {}; m_state.id = id; m_history.clear();
@@ -67,7 +68,9 @@ std::vector<Word> LocalAgreement::push(const PartialSegment &p)
         for (const auto &cp : points(p.text)) words.push_back({asrSamplesToMs(p.begin16k), asrSamplesToMs(p.upto16k), cp});
     }
     m_history.push_back(words);
-    if (m_history.size() > size_t(m_n)) m_history.pop_front();
+    const bool headEnabled = m_headN > 0 && m_headM > 0;
+    const auto depth = size_t(headEnabled ? std::max(m_n, m_headN) : m_n);
+    if (m_history.size() > depth) m_history.pop_front();
     // In the compatibility path every code point (including punctuation) is a unit.
     auto units = [&](const std::vector<Word> &w) {
         if (!fallback) return groups(w);
@@ -77,25 +80,36 @@ std::vector<Word> LocalAgreement::push(const PartialSegment &p)
     };
     const auto latest = units(words), confirmed = units(m_state.confirmed);
     size_t length = 0;
-    if (m_history.size() == size_t(m_n)) {
-        length = latest.size();
-        for (const auto &h : m_history) {
-            const auto g = units(h);
-            size_t i = 0;
-            while (i < length && i < g.size() && g[i].normalized == latest[i].normalized) ++i;
-            length = i;
-        }
+    const bool fullReady = m_history.size() >= size_t(m_n);
+    const bool headReady = headEnabled && m_history.size() >= size_t(m_headN);
+    if (fullReady || headReady) {
+        auto lcp = [&](int n) {
+            size_t common = latest.size();
+            for (size_t h = m_history.size() - size_t(n); h < m_history.size(); ++h) {
+                const auto g = units(m_history[h]);
+                size_t i = 0;
+                while (i < common && i < g.size() && g[i].normalized == latest[i].normalized) ++i;
+                common = i;
+            }
+            return common;
+        };
+        const size_t rawFull = fullReady ? lcp(m_n) : 0;
+        const size_t rawHead = headReady ? lcp(m_headN) : 0;
         // A revision that persists for n observations still cannot replace the frozen prefix.
         size_t match = 0;
         while (match < confirmed.size() && match < latest.size() &&
                confirmed[match].normalized == latest[match].normalized) ++match;
-        if (length < confirmed.size() || match < confirmed.size()) {
-            ++m_stats.regressions; length = 0;
-        }
-        if (!fallback) {
-            size_t safe = 0;
-            while (safe < length && latest[safe].endMs <= asrSamplesToMs(p.upto16k) - m_guardMs) ++safe;
-            length = safe;
+        if (std::max(rawFull, rawHead) < confirmed.size() || match < confirmed.size()) {
+            ++m_stats.regressions;
+        } else {
+            auto guarded = [&](size_t raw) {
+                if (fallback) return raw;
+                size_t safe = 0;
+                while (safe < raw && latest[safe].endMs <= asrSamplesToMs(p.upto16k) - m_guardMs) ++safe;
+                return safe;
+            };
+            length = fullReady ? guarded(rawFull) : 0;
+            if (headReady) length = std::max(length, std::min(guarded(rawHead), size_t(m_headM)));
         }
     }
     std::vector<Word> added;

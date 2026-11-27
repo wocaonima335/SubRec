@@ -89,6 +89,66 @@ void resets()
     CHECK(!r.merger.current()); CHECK(r.agreement.state().confirmed.empty());
     r.merger.onPartial(p); CHECK(r.agreement.state().confirmed.empty());
 }
+void plan_b()
+{
+    LocalAgreement la(3, 300, 2, 1); auto p = partial(1, 4000);
+    CHECK(la.headN() == 2); CHECK(la.headM() == 1);
+    // Both units are well behind the guard; only agreement delays the second.
+    auto sentence = [&](const std::string &first, const std::string &second) {
+        p.tokens = {{0, 500, first}, {500, 1000, second}}; p.text = first + second;
+        CHECK(la.push(p).empty()); CHECK(la.state().confirmedText.empty());
+        CHECK(la.push(p).size() == 1); CHECK(la.state().confirmedText == first);
+        CHECK(la.state().tentativeText == second);
+        CHECK(la.push(p).size() == 1); CHECK(la.state().confirmedText == p.text);
+    };
+    sentence("你", "好");
+    // A later unit also needs three observations after history is already full.
+    p.tokens.push_back({1000, 1500, "世"}); p.text += "世";
+    CHECK(la.push(p).empty()); CHECK(la.push(p).empty());
+    CHECK(la.state().confirmedText == "你好");
+    CHECK(la.push(p).size() == 1); CHECK(la.state().confirmedText == "你好世");
+    p.id = 2; sentence("新", "句");
+    la.reset(p.id); sentence("重", "置");
+    ++p.job; sentence("任", "务");
+
+    // The head rule still obeys the guard, including its inclusive boundary.
+    LocalAgreement guarded(3, 300, 2, 1); p = partial(1, 799);
+    p.tokens = {{0, 500, "字"}}; p.text = "字";
+    CHECK(guarded.push(p).empty()); CHECK(guarded.push(p).empty());
+    p.upto16k = 800 * 16; CHECK(guarded.push(p).size() == 1);
+
+    // Raw head agreement can recover before the full window agrees again.
+    LocalAgreement revised(3, 300, 2, 1); p = partial(1, 4000);
+    p.tokens = {{0, 500, "旧"}}; revised.push(p);
+    p.tokens[0].text = "新"; CHECK(revised.push(p).empty());
+    CHECK(revised.push(p).size() == 1); CHECK(revised.stats().regressions == 0);
+    p.tokens[0].text = "错";
+    for (int i = 1; i <= 3; ++i) {
+        CHECK(revised.push(p).empty()); CHECK(revised.state().confirmedText == "新");
+        CHECK(revised.stats().regressions == uint64_t(i));
+    }
+
+    LocalAgreement fallback(3, 100000, 2, 1); p = partial(1, 100);
+    p.tokens.clear(); p.text = "你好";
+    CHECK(fallback.push(p).empty()); fallback.push(p); CHECK(fallback.state().confirmedText == "你");
+    fallback.push(p); CHECK(fallback.state().confirmedText == "你好");
+}
+void plan_b_config()
+{
+    Rig r; r.agreement = LocalAgreement(3, 300, 2, 1);
+    LiveConfig live; live.agreementN = 3; live.confirmGuardMs = 400;
+    r.merger.setLiveConfig(live);
+    CHECK(r.agreement.guardMs() == 400); CHECK(r.agreement.headN() == 2); CHECK(r.agreement.headM() == 1);
+    auto p = partial(1, 5000);
+    r.merger.onPartial(p); r.merger.onPartial(p); CHECK(r.agreement.state().confirmedText == "你");
+    live.confirmGuardMs = 500; r.merger.setLiveConfig(live);
+    CHECK(r.agreement.guardMs() == 400); CHECK(r.agreement.state().confirmedText == "你");
+    p.id = 2; r.merger.onPartial(p);
+    CHECK(r.agreement.guardMs() == 500); CHECK(r.agreement.headN() == 2); CHECK(r.agreement.headM() == 1);
+    CHECK(r.agreement.state().confirmedText.empty());
+    r.merger.onPartial(p); CHECK(r.agreement.state().confirmedText == "你");
+    r.merger.onPartial(p); CHECK(r.agreement.state().confirmedText == "你好，世");
+}
 int main(int argc, char **argv)
 {
     try {
@@ -96,6 +156,7 @@ int main(int argc, char **argv)
         if (name == "timing") timing(); else if (name == "guard") guard();
         else if (name == "punctuation") punctuation(); else if (name == "regression") regression();
         else if (name == "freeze") freeze(); else if (name == "mismatch") mismatch();
-        else if (name == "compatibility") compatibility(); else if (name == "resets") resets(); else CHECK(false);
+        else if (name == "compatibility") compatibility(); else if (name == "resets") resets();
+        else if (name == "plan_b") plan_b(); else if (name == "plan_b_config") plan_b_config(); else CHECK(false);
     } catch (const std::exception &e) { std::cerr << e.what() << '\n'; return 1; }
 }
