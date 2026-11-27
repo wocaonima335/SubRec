@@ -187,7 +187,7 @@ void SubtitleService::reloadSettings() {
     s->request.language = cfg->value("asr/language", "zh").toString().toStdString();
     s->request.vad.speechPadMs = std::clamp(cfg->value("asr/speechPadMs", 150).toInt(), 0, 1000);
     s->request.threads = std::clamp(cfg->value("asr/threads", 1).toInt(), 1, 4);
-    s->live.partialIntervalMs = std::max(0, cfg->value("asr/partialIntervalMs", 1000).toInt());
+    s->live.partialIntervalMs = std::max(0, cfg->value("asr/partialIntervalMs", 600).toInt());
     s->live.maxSegmentMs = std::max(100, cfg->value("asr/maxSegmentMs", 10000).toInt());
     s->live.agreementN = std::clamp(cfg->value("asr/agreementN", 2).toInt(), 2, 3);
     s->live.confirmGuardMs = std::max(0, cfg->value("asr/confirmGuardMs", 300).toInt());
