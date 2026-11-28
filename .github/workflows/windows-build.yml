@@ -5,10 +5,13 @@
 # device-independent CTest set (label exactly "ci") right after the release app build,
 # in the same job. A failing test fails the job and blocks the later Deploy, packaging
 # and tag release steps. build/ci-tests also turns on SUBREC_BUILD_SUBTITLE and builds the AI
-# subtitle libraries and tools/asr_host (not part of the package).
+# subtitle libraries and tools/asr_host (this test tree is not packaged).
 #
 # A tag-only release job creates reviewed draft assets from the build job.
 # An independent asr-msvc job builds and uploads the standalone ASR host bundle.
+# A follow-on autotest job merges that host into the hooks-on application artifact only.
+# The official portable and installer share dist/SubRec: both link subtitle_service and
+# subtitle_models (STATIC), including LocalAgreement plan B, but neither ships asr/ or models.
 # The two application build jobs:
 #   ffmpeg (ubuntu-24.04)  builds SubRec's minimal FFmpeg n8.0.3 (+ x264, libvpl, nv-codec-headers,
 #                          AMF headers; GPL-2.0-or-later, no version3, no nonfree) from pinned
@@ -19,8 +22,10 @@
 #   build (windows-latest) builds SubRec against that FFMPEG_ROOT (Qt 6.8.0 + MinGW 13.1 + Ninja),
 #                          deploys it and packages the DLLs, licenses and sources/ into the zip.
 #                          The package carries the new-interface build (build/ci-new-ui,
-#                          SUBREC_BUILD_NEW_UI=ON); the old-interface build (build/ci) is still
-#                          built as a check but not packaged.
+#                          SUBREC_BUILD_NEW_UI=ON, SUBREC_BUILD_SUBTITLE=ON, hooks stripped);
+#                          the old-interface build (build/ci) is still a check, not packaged.
+#                          build/ci-subtitle-ui is reused for dist/SubRec-autotest (hooks on),
+#                          uploaded separately and never included in out/ or a release.
 #
 # - The new interface's icons (ui/icons/*.svg, iconfont.cn) have no resolved license; the
 #   maintainers accepted that risk for pre-releases. See THIRD_PARTY_LICENSES.md §3 and §5.
@@ -123,6 +128,7 @@ jobs:
     outputs:
       version: ${{ steps.ver.outputs.version }}
       stem: ${{ steps.package.outputs.stem }}
+      autotest_stem: ${{ steps.ver.outputs.stem }}
     env:
       # Build directory whose appSubRec.exe and POST_BUILD DLLs go into the package.
       SUBREC_PACKAGE_BUILD: build/ci-new-ui
@@ -262,7 +268,8 @@ jobs:
 
       # AI subtitle (M0 skeleton, docs/subtitle/work-packages.md): every subtitle library including the
       # Qt targets, the per-header checks and the ASR host from tools/asr_host, built with this MinGW
-      # toolchain. Not linked into appSubRec and not packaged; no models are downloaded.
+      # toolchain. These test-tree outputs are not packaged; the official app links the subtitle
+      # libraries from build/ci-new-ui. The standalone host comes from asr-msvc; no models downloaded.
       - name: Build AI subtitle libraries and ASR host
         run: >
           cmake --build build/ci-tests --parallel --target
@@ -295,12 +302,14 @@ jobs:
             -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT" `
             -DSUBREC_BUILD_LIFECYCLE_TESTS=ON `
             -DSUBREC_BUILD_SUBTITLE=ON `
+            -DSUBREC_STRIP_TEST_HOOKS=OFF `
             -DSUBREC_BUILD_NEW_UI=ON
           if ($LASTEXITCODE -ne 0) { throw 'subtitle UI test configuration failed' }
           cmake --build build/ci-subtitle-ui --target appSubRec --parallel
           if ($LASTEXITCODE -ne 0) { throw 'subtitle UI integration build failed' }
 
-      # Release configuration of the packaged build: same options as build/ci plus the new UI.
+      # Shared portable/installer payload: new UI and subtitles, with test hooks stripped.
+      # CMake links subtitle libraries into appSubRec.exe; it does not POST_BUILD-copy asr/.
       - name: Configure new UI integration
         shell: pwsh
         run: >
@@ -310,6 +319,7 @@ jobs:
           -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR"
           -DFFMPEG_ROOT="$env:SUBREC_FFMPEG_ROOT"
           -DSUBREC_BUILD_NEW_UI=ON
+          -DSUBREC_BUILD_SUBTITLE=ON
           -DSUBREC_BUILD_LIFECYCLE_TESTS=OFF
           -DSUBREC_STRIP_TEST_HOOKS=ON
 
@@ -545,6 +555,73 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ startsWith(github.ref, 'refs/tags/v') && 90 || 14 }}
 
+      # Reuse the fourth build tree; do not add another configure/build or alter dist/SubRec.
+      - name: Deploy autotest application (windeployqt, hooks on)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $build = 'build/ci-subtitle-ui'
+          $out = 'dist/SubRec-autotest'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item "$build/appSubRec.exe" $out/
+          Copy-Item "$build/*.dll" $out/   # FFmpeg and MinGW runtime DLLs (POST_BUILD)
+          foreach ($d in 'libstdc++-6.dll', 'libgcc_s_seh-1.dll', 'libwinpthread-1.dll') {
+            if (-not (Test-Path "$out/$d")) { throw "$d is missing from $build" }
+          }
+          windeployqt --release --qmldir ui/qml --qmldir qml --no-translations "$out/appSubRec.exe"
+          if ($LASTEXITCODE -ne 0) { throw "windeployqt failed ($LASTEXITCODE)" }
+          foreach ($m in 'QtQuick', 'QtQuick/Controls', 'QtQuick/Controls/Basic', 'QtQuick/Controls/Material',
+                         'QtQuick/Layouts', 'QtQuick/Window', 'QtQuick/Effects', 'QtQuick/Shapes',
+                         'QtQuick/Dialogs', 'QtCore', 'Qt/labs/folderlistmodel') {
+            if (-not (Test-Path "$out/qml/$m/qmldir")) { throw "QML module $m was not deployed" }
+          }
+          if (-not (Test-Path "$out/Qt6QuickShapes.dll")) { throw 'Qt6QuickShapes.dll was not deployed' }
+          # Reuse the already-collected license/source material, never the stripped executable.
+          foreach ($item in 'LICENSE.txt', 'THIRD_PARTY_LICENSES.md', 'SOURCES.txt', 'licenses', 'sources') {
+            if (-not (Test-Path "dist/SubRec/$item")) { throw "Official payload is missing $item" }
+            Copy-Item "dist/SubRec/$item" "$out/$item" -Recurse
+          }
+          @'
+          SubRec autotest application: new UI, subtitles ON, test hooks NOT stripped.
+          This test artifact is not an official portable release or installer payload.
+
+          main.cpp defines record_seconds_subtitle_live under #if defined(SUBREC_HAS_SUBTITLE).
+          runAutoScenario dispatches it when capture::test::autoTestScenarioActive() is true;
+          capture::test::hooksEnabled() permits its hooks in this build.
+
+          From the extracted directory (cmd.exe):
+            set SUBREC_AUTOTEST_SCENARIO=record_seconds_subtitle_live
+            set SUBREC_AUTOTEST_RECORD_MS=15000
+            appSubRec.exe
+          SUBREC_AUTOTEST_RECORD_MS is optional (default 15000 milliseconds).
+
+          capture/autotest_subtitle.h also requires service->available() and asr/mode != off.
+          Configure asr/mode=live and asr/modelDir pointing to your SenseVoice model directory
+          in the application's SubRec/SubRec settings before starting. SenseVoice is not shipped.
+          available() uses QFileInfo::exists(hostPath()), normally
+          applicationDirPath()/asr/subrec-asr (.exe appended on Windows).
+          The hooks-on SUBREC_TEST_ASR_EXE override, if set, changes this host path.
+
+          The intermediate *-win64-autotest-app artifact has no asr/ directory. Copy asr/
+          from subrec-asr-win64 beside appSubRec.exe (and licenses/asr into licenses/),
+          or use the final *-win64-autotest artifact assembled by the autotest job.
+          That final artifact includes asr/subrec-asr.exe, sherpa/onnxruntime DLLs and
+          optional silero_vad.onnx from subrec-asr-win64, plus its ASR licenses.
+
+          The independent asr-msvc job produces subrec-asr-win64. The official portable
+          and installer do NOT consume it: both use dist/SubRec with subtitles linked,
+          hooks stripped and no asr/ or SenseVoice model. The build job does not depend
+          on asr-msvc, so an ASR job failure does not block official packaging.
+          '@ | Set-Content -LiteralPath "$out/README.txt" -Encoding utf8
+
+      - name: Upload autotest application for ASR assembly
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.ver.outputs.stem }}-win64-autotest-app
+          path: dist/SubRec-autotest/
+          if-no-files-found: error
+          retention-days: 14
+
   asr-msvc:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -720,6 +797,48 @@ jobs:
         with:
           name: subrec-asr-tests-win64
           path: ${{ github.workspace }}/build/asr-tests-payload
+          if-no-files-found: error
+          retention-days: 14
+
+  # Only this test bundle depends on ASR; official packaging and release stay independent.
+  autotest:
+    needs: [build, asr-msvc]
+    runs-on: windows-latest
+    steps:
+      - name: Download hooks-on application
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.autotest_stem }}-win64-autotest-app
+          path: dist/SubRec-autotest/
+
+      - name: Download standalone ASR payload
+        uses: actions/download-artifact@v4
+        with:
+          name: subrec-asr-win64
+          path: asr-payload/
+
+      - name: Add ASR only to autotest payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = 'dist/SubRec-autotest'
+          foreach ($file in 'appSubRec.exe', 'README.txt') {
+            if (-not (Test-Path "$out/$file" -PathType Leaf)) { throw "Autotest payload is missing $file" }
+          }
+          foreach ($file in 'subrec-asr.exe', 'sherpa-onnx-c-api.dll', 'onnxruntime.dll', 'onnxruntime_providers_shared.dll') {
+            if (-not (Test-Path "asr-payload/asr/$file" -PathType Leaf)) { throw "ASR payload is missing $file" }
+          }
+          Copy-Item 'asr-payload/asr' "$out/asr" -Recurse
+          if (Test-Path 'asr-payload/licenses/asr' -PathType Container) {
+            New-Item -ItemType Directory -Force "$out/licenses" | Out-Null
+            Copy-Item 'asr-payload/licenses/asr' "$out/licenses/asr" -Recurse
+          }
+
+      - name: Upload autotest application with ASR
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.autotest_stem }}-win64-autotest
+          path: dist/SubRec-autotest/
           if-no-files-found: error
           retention-days: 14
 
